@@ -570,7 +570,8 @@ try {
     Write-Host 'PASS: cancellation after proven old removal restored exact old registration, every old payload byte and seeded profile data.'
 
     # The preceding fresh-setup workflow step already exercises the new EXE's real UIA Install action.
-    # Here exercise its embedded MSI through the same MsiInstallProduct API, without uninstalling old first.
+    # Exercise the same embedded MSI INSTALL sequence through MsiInstallProduct, without uninstalling old first.
+    # The native UI opens its session before record registration and invokes that sequence with MsiDoAction.
     [void]$attemptedProducts.Add($new.ProductCode)
     Invoke-UpgradeMsi 'Install' $new 'new-upgrade'
     Assert-Installed $new

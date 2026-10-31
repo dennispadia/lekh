@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Controls;
 
 namespace Lekh.Setup
@@ -27,6 +28,7 @@ namespace Lekh.Setup
             {
                 Progress();
                 NativeProgressRecords();
+                NativeRecordWire();
                 Identity();
                 PreviousVersions();
                 UpgradeSequence();
@@ -102,6 +104,169 @@ namespace Lekh.Setup
             }
             finally { Native.MsiCloseHandle(record); }
         }
+        [DllImport("msi.dll", ExactSpelling = true)] private static extern int MsiProcessMessage(uint install, uint type, uint record);
+        [DllImport("msi.dll", ExactSpelling = true)] private static extern uint MsiDatabaseCommit(uint database);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint MsiGetSummaryInformationW(uint database, string path, uint updates, out uint summary);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint MsiSummaryInfoSetPropertyW(uint summary, uint property, uint type, int number, IntPtr time, string text);
+        [DllImport("msi.dll", ExactSpelling = true)] private static extern uint MsiSummaryInfoPersist(uint summary);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        private static extern uint MsiGetPropertyW(uint install, string name, StringBuilder value, ref uint length);
+        private static void FixtureSql(uint database, string query)
+        {
+            uint view;
+            Native.Check(Native.MsiDatabaseOpenView(database, query, out view), "Open wire fixture SQL");
+            try { Native.Check(Native.MsiViewExecute(view, 0), "Execute wire fixture SQL"); }
+            finally { Native.MsiCloseHandle(view); }
+        }
+        private static string CreateWireFixture(string path)
+        {
+            string code = "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}";
+            uint database, summary = 0;
+            Native.Check(Native.MsiOpenDatabase(path, new IntPtr(3), out database), "Create wire fixture");
+            try
+            {
+                FixtureSql(database, "CREATE TABLE `Property` (`Property` CHAR(72) NOT NULL, `Value` CHAR(0) LOCALIZABLE PRIMARY KEY `Property`)");
+                foreach (string[] row in new string[][] {
+                    new[] { "ProductCode", code }, new[] { "ProductName", "Read-only MSI wire fixture" },
+                    new[] { "ProductVersion", "0.0.1" }, new[] { "ProductLanguage", "1033" },
+                    new[] { "Manufacturer", "Lekh installer tests" }, new[] { "MSIINSTALLPERUSER", "1" }
+                }) FixtureSql(database, "INSERT INTO `Property` (`Property`, `Value`) VALUES ('" + row[0] + "', '" + row[1] + "')");
+                Native.Check(MsiGetSummaryInformationW(database, null, 4, out summary), "Open wire fixture summary");
+                Native.Check(MsiSummaryInfoSetPropertyW(summary, 7, 30, 0, IntPtr.Zero, "x64;1033"), "Set wire fixture architecture");
+                Native.Check(MsiSummaryInfoSetPropertyW(summary, 9, 30, 0, IntPtr.Zero, "{" + Guid.NewGuid().ToString().ToUpperInvariant() + "}"), "Set wire fixture package code");
+                Native.Check(MsiSummaryInfoSetPropertyW(summary, 14, 3, 500, IntPtr.Zero, null), "Set wire fixture installer version");
+                Native.Check(MsiSummaryInfoSetPropertyW(summary, 15, 3, 8, IntPtr.Zero, null), "Set wire fixture limited privileges");
+                Native.Check(MsiSummaryInfoPersist(summary), "Persist wire fixture summary");
+                Native.Check(MsiDatabaseCommit(database), "Commit wire fixture");
+            }
+            finally { if (summary != 0) Native.MsiCloseHandle(summary); Native.MsiCloseHandle(database); }
+            return code;
+        }
+        private static string SessionProperty(uint handle, string name)
+        {
+            StringBuilder value = new StringBuilder(1);
+            uint length = 0;
+            uint result = MsiGetPropertyW(handle, name, value, ref length);
+            if (result != 0 && result != 234) Native.Check(result, "Measure wire session property");
+            value = new StringBuilder(checked((int)length + 1));
+            length = (uint)value.Capacity;
+            Native.Check(MsiGetPropertyW(handle, name, value, ref length), "Read wire session property");
+            return value.ToString();
+        }
+        private static void NativeRecordWire()
+        {
+            string directory = Path.Combine(Environment.CurrentDirectory, "build", "tests", "msi-wire-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            string package = Path.Combine(directory, "wire.msi");
+            string code = null;
+            IntPtr expectedContext = new IntPtr(0x1234567887654321L);
+            bool initializationProgress = false;
+            Native.RecordHandler initial = null;
+            Native.RecordHandler observer = (context, type, record) =>
+            {
+                if ((type & 0xff000000) == 0x0a000000 && record == 0) initializationProgress = true;
+                return 0;
+            };
+            bool observing = false;
+            try
+            {
+                code = CreateWireFixture(package);
+                Native.Check(Native.MsiSetExternalUIRecord(observer, 0xffffu, expectedContext, out initial), "Observe package initialization");
+                observing = true;
+                List<uint> types = new List<uint>();
+                List<uint> handles = new List<uint>();
+                List<SetupUpdate> updates = new List<SetupUpdate>();
+                bool contextMatches = true, borrowedRecordValid = true;
+                NativeEngine engine = new NativeEngine(update => updates.Add(update), text => { });
+                Native.RecordHandler receiver = (context, type, record) =>
+                {
+                    types.Add(type); handles.Add(record);
+                    contextMatches &= context == expectedContext;
+                    borrowedRecordValid &= record != 0 && Native.MsiRecordGetFieldCount(record) != UInt32.MaxValue;
+                    return engine.Callback(context, type, record);
+                };
+                using (FileStream guard = new FileStream(package, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (MsiSession session = new MsiSession(package, true))
+                {
+                    Check(types.Count == 0 && handles.Count == 0 && !engine.CallbackFailed,
+                        "Package initialization completes before the production record receiver is registered.");
+                    Check(SessionProperty(session.Handle, "ProductCode") == code, "Restricted session is a real MSI package handle, not a fake record handle.");
+                    Check(SessionProperty(session.Handle, "ProductName") == "Read-only MSI wire fixture", "Restricted package property queries work without installation.");
+                    session.SetProperties(SetupPolicy.InstallProperties);
+                    Check(SessionProperty(session.Handle, "REBOOT") == "ReallySuppress" &&
+                        SessionProperty(session.Handle, "MSIRESTARTMANAGERCONTROL") == "DisableShutdown" &&
+                        SessionProperty(session.Handle, "MSIDISABLERMRESTART") == "1", "Production no-shutdown/restart properties are set in the opened session.");
+                    bool denied = false;
+                    try { session.Install(); } catch (InvalidOperationException) { denied = true; }
+                    Check(denied, "Read-only integration session explicitly prohibits calling INSTALL.");
+                    session.Register(receiver, NativeEngine.RecordFilter, expectedContext);
+                    WithProgressRecord(4, new int?[] { 0, 100, 0, 0 }, record =>
+                        Check(MsiProcessMessage(session.Handle, 0x0a000040, record) == 1, "Actual MSI routes progress through the registered Winapi delegate."));
+                    Check(types.Count == 1 && types[0] == 0x0a000040 && contextMatches && borrowedRecordValid && !engine.CallbackFailed,
+                        "Real callback ABI preserves the 64-bit context, high-byte type/low flags, and borrowed record handle.");
+                    Check(updates[updates.Count - 1].Percent == 0, "Real wire reset record reaches progress parsing.");
+                    WithProgressRecord(2, new int?[] { 2, 40 }, record =>
+                        Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && updates[updates.Count - 1].Percent == 40,
+                            "Real wire increments reach native progress, not a label timer."));
+                    WithProgressRecord(3, new int?[] { 1, null, 0 }, record =>
+                        Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && !engine.CallbackFailed,
+                            "Real wire delivery preserves valid null optional fields after package initialization."));
+                    WithProgressRecord(4, new int?[] { 0, null, 0, 0 }, record =>
+                        Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 2 && engine.CallbackFailed,
+                            "Required-field validation still rejects malformed records delivered by the actual MSI callback."));
+                }
+                Native.RecordHandler restored;
+                Native.Check(Native.MsiSetExternalUIRecord(null, 0, IntPtr.Zero, out restored), "Inspect restored wire observer");
+                Check(restored != null && Marshal.GetFunctionPointerForDelegate(restored) == Marshal.GetFunctionPointerForDelegate(observer),
+                    "Session disposal restores the actual previous external record handler.");
+                using (MsiSession filtered = new MsiSession(package, true))
+                {
+                    int delivered = 0;
+                    Native.RecordHandler actionOnly = (context, type, record) => { delivered++; return 1; };
+                    filtered.Register(actionOnly, 1u << 8, expectedContext);
+                    WithProgressRecord(4, new int?[] { 0, 100, 0, 0 }, record => { MsiProcessMessage(filtered.Handle, 0x0a000000, record); });
+                    Check(delivered == 0, "INSTALLLOGMODE_ACTIONSTART does not subscribe to INSTALLMESSAGE_PROGRESS: filter bits are not message high bytes.");
+                    WithProgressRecord(3, new int?[] { null, null, null }, record =>
+                    {
+                        Native.Check(MsiRecordSetStringW(record, 1, "WireAction"), "Set wire action name");
+                        Native.Check(MsiRecordSetStringW(record, 2, "Synthetic action message only"), "Set wire action description");
+                        Check(MsiProcessMessage(filtered.Handle, 0x08000000, record) == 1 && delivered == 1, "Actual MSI action-start filter maps to high-byte ACTIONSTART.");
+                    });
+                }
+                bool mtaWire = System.Threading.Tasks.Task.Run(() =>
+                {
+                    NativeEngine mtaEngine = new NativeEngine(update => { }, text => { });
+                    using (MsiSession mta = new MsiSession(package, true))
+                    {
+                        mta.SetProperties(SetupPolicy.InstallProperties + " REINSTALL=ALL REINSTALLMODE=omus");
+                        if (SessionProperty(mta.Handle, "REINSTALL") != "ALL" || SessionProperty(mta.Handle, "REINSTALLMODE") != "omus") return false;
+                        mta.Register(mtaEngine.Callback, NativeEngine.RecordFilter, IntPtr.Zero);
+                        bool accepted = false;
+                        WithProgressRecord(4, new int?[] { 0, 100, 0, 0 }, record =>
+                            accepted = MsiProcessMessage(mta.Handle, 0x0a000000, record) == 1 && !mtaEngine.CallbackFailed);
+                        return accepted;
+                    }
+                }).GetAwaiter().GetResult();
+                Check(mtaWire, "The production Task.Run/MTA session route initializes COM, sets exact reinstall properties and receives valid MSI records.");
+                NativeEngine lifecycle = new NativeEngine(update => { }, text => { });
+                Check(lifecycle.Callback(IntPtr.Zero, 0x0c000000, 0) == 1 &&
+                    lifecycle.Callback(IntPtr.Zero, 0x0d000000, 0) == 1 && lifecycle.Callback(IntPtr.Zero, 0x0e000000, 0) == 1 && !lifecycle.CallbackFailed,
+                    "Only documented initialize/terminate/show-dialog lifecycle messages are handled without reading a record.");
+                Check(lifecycle.Callback(IntPtr.Zero, 0x0a000000, 0) == 2 && lifecycle.CallbackFailed &&
+                    lifecycle.FailureMessage.Contains("type=0x0A000000") && lifecycle.FailureMessage.Contains("handle=0x00000000"),
+                    "Null-handle progress is still an error after subscription, with exact wire diagnostics.");
+                Console.WriteLine("PASS: actual restricted MSI wire proves open-before-register, valid borrowed records, filter/ABI routing and strict malformed-record rejection; no INSTALL executed. Opening emitted null progress on this run: " + initializationProgress + ".");
+            }
+            finally
+            {
+                if (observing) { Native.RecordHandler ignored; Native.MsiSetExternalUIRecord(initial, 0, IntPtr.Zero, out ignored); }
+                GC.KeepAlive(observer);
+                File.Delete(package);
+                Directory.Delete(directory);
+            }
+        }
         private static void NativeProgressRecords()
         {
             const uint progressMessage = 0x0a000000;
@@ -172,7 +337,8 @@ namespace Lekh.Setup
                 {
                     Check(invalid.Callback(IntPtr.Zero, progressMessage, record) == 2 && invalid.CallbackFailed && !invalid.CanCancel,
                         "Malformed required fields still fail safely through the actual native callback boundary.");
-                    Check(invalid.FailureMessage.Contains("progress record: count=" + values.Length), "Malformed record diagnostics retain exact count and relevant fields.");
+                    Check(invalid.FailureMessage.Contains("count=" + values.Length) && invalid.FailureMessage.Contains("type=0x0A000000") &&
+                        invalid.FailureMessage.Contains("handle=0x"), "Malformed record diagnostics retain exact count, wire type, handle and relevant fields.");
                 });
             }
             WithProgressRecord(2, new int?[] { 2, null }, record =>

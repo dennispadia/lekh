@@ -220,8 +220,89 @@ namespace Lekh.Setup
         }
     }
 
+    internal sealed class MsiSession : IDisposable
+    {
+        private readonly bool restricted;
+        private uint handle, previousUI;
+        private bool comInitialized, uiConfigured, registered, disposed;
+        private Native.RecordHandler callback, previous;
+        internal uint Handle { get { if (disposed) throw new ObjectDisposedException("MsiSession"); return handle; } }
+        internal MsiSession(string package, bool readOnly = false)
+        {
+            restricted = readOnly;
+            uint apartment = System.Threading.Thread.CurrentThread.GetApartmentState() == System.Threading.ApartmentState.STA ? 2u : 0u;
+            int result = Native.CoInitializeEx(IntPtr.Zero, apartment);
+            if (result < 0) throw new InvalidOperationException("Initialize MSI COM apartment failed (HRESULT 0x" + result.ToString("X8") + ").");
+            comInitialized = true;
+            try
+            {
+                previousUI = Native.MsiSetInternalUI(2, IntPtr.Zero);
+                if (previousUI == 0) throw new InvalidOperationException("Could not configure Windows Installer UI.");
+                uiConfigured = true;
+                Native.Check(Native.MsiOpenPackageEx(package, restricted ? 1u : 0u, out handle), "Open Windows Installer session");
+            }
+            catch (Exception error)
+            {
+                try { Dispose(); }
+                catch (Exception cleanup) { throw new AggregateException("Opening MSI session and cleanup failed.", error, cleanup); }
+                throw;
+            }
+        }
+        internal void SetProperties(string properties)
+        {
+            foreach (string property in properties.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                int separator = property.IndexOf('=');
+                if (separator <= 0) throw new InvalidDataException("Invalid Windows Installer property.");
+                Native.Check(Native.MsiSetProperty(Handle, property.Substring(0, separator), property.Substring(separator + 1)), "Set MSI " + property.Substring(0, separator));
+            }
+        }
+        internal void Register(Native.RecordHandler handler, uint filter, IntPtr context)
+        {
+            if (registered) throw new InvalidOperationException("The MSI session already has an external record handler.");
+            uint activeHandle = Handle;
+            if (activeHandle == 0) throw new InvalidOperationException("An open MSI session is required before record-handler registration.");
+            callback = handler;
+            Native.Check(Native.MsiSetExternalUIRecord(callback, filter, context, out previous), "Register installer progress");
+            registered = true;
+        }
+        internal uint Install()
+        {
+            if (restricted) throw new InvalidOperationException("A read-only MSI test session cannot install a product.");
+            if (!registered) throw new InvalidOperationException("Installer record handling must be registered before INSTALL.");
+            return Native.MsiDoAction(Handle, "INSTALL");
+        }
+        public void Dispose()
+        {
+            if (disposed) return;
+            disposed = true;
+            try
+            {
+                if (registered)
+                {
+                    Native.RecordHandler ignored;
+                    Native.Check(Native.MsiSetExternalUIRecord(previous, 0, IntPtr.Zero, out ignored), "Restore installer progress handler");
+                }
+            }
+            finally
+            {
+                try { if (handle != 0) Native.Check(Native.MsiCloseHandle(handle), "Close Windows Installer session"); }
+                finally
+                {
+                    try { if (uiConfigured) Native.MsiSetInternalUI(previousUI, IntPtr.Zero); }
+                    finally
+                    {
+                        if (comInitialized) Native.CoUninitialize();
+                        GC.KeepAlive(callback);
+                    }
+                }
+            }
+        }
+    }
+
     internal sealed class NativeEngine
     {
+        internal const uint RecordFilter = 0xfffu | (1u << 25);
         private readonly Action<SetupUpdate> update;
         private readonly Action<string> log;
         private readonly MsiProgress progress = new MsiProgress();
@@ -324,6 +405,8 @@ namespace Lekh.Setup
                 switch (message)
                 {
                     case 0x0a000000:
+                        if (record == 0)
+                            throw new InvalidDataException("Windows Installer progress callback has no record (type=0x" + type.ToString("X8") + ", handle=0x00000000).");
                         if (!progressObserved)
                         {
                             log("First " + Native.DescribeProgressRecord(record));
@@ -366,6 +449,7 @@ namespace Lekh.Setup
                         int buttons = (int)(type & 0x0f);
                         return buttons == 2 ? 3 : buttons == 4 ? 7 : buttons == 0 ? 1 : 2;
                     case 0x04000000: return 1;
+                    case 0x0c000000: case 0x0d000000: case 0x0e000000: return 1;
                     default: return 0;
                 }
                 return CancellationReply(message);
@@ -387,31 +471,25 @@ namespace Lekh.Setup
             string code = Payload.ProductCode(package);
             string properties = PropertiesForProduct(code);
             Native.Check(Native.MsiEnableLog(0x1fff, logPath, 0), "Enable Windows Installer logging");
-            uint previousUI = Native.MsiSetInternalUI(2, IntPtr.Zero);
-            if (previousUI == 0) throw new InvalidOperationException("Could not configure Windows Installer UI.");
-            Native.RecordHandler callback = Callback, previous = null;
-            bool registered = false;
             try
             {
-                uint filter = 0xfffu | (1u << 25);
-                Native.Check(Native.MsiSetExternalUIRecord(callback, filter, IntPtr.Zero, out previous), "Register installer progress");
-                registered = true;
-                uint result = Native.MsiInstallProduct(package, properties);
-                Installed = SetupPolicy.IsSuccess(result);
-                if (Installed && previousProduct != null && !repair && !RemovalConfirmed)
-                    throw new InvalidDataException("Windows did not report the required previous-version removal checkpoint. Inspect the MSI log before using this installation.");
-                return result;
+                // Microsoft opens the package before subscribing to record-based UI messages.
+                // Package initialization can emit a null-handle progress notification, not a progress record.
+                using (MsiSession session = new MsiSession(package))
+                {
+                    session.SetProperties(properties);
+                    log("Opened Windows Installer session before registering external UI records.");
+                    session.Register(Callback, RecordFilter, IntPtr.Zero);
+                    uint result = session.Install();
+                    Installed = SetupPolicy.IsSuccess(result);
+                    if (Installed && previousProduct != null && !repair && !RemovalConfirmed)
+                        throw new InvalidDataException("Windows did not report the required previous-version removal checkpoint. Inspect the MSI log before using this installation.");
+                    return result;
+                }
             }
             finally
             {
-                if (registered)
-                {
-                    Native.RecordHandler ignored;
-                    Native.Check(Native.MsiSetExternalUIRecord(previous, 0, IntPtr.Zero, out ignored), "Restore installer progress handler");
-                }
-                Native.MsiSetInternalUI(previousUI, IntPtr.Zero);
                 Native.Check(Native.MsiEnableLog(0, null, 0), "Close installer logging");
-                GC.KeepAlive(callback);
             }
         }
     }
@@ -525,10 +603,16 @@ namespace Lekh.Setup
     {
         [UnmanagedFunctionPointer(CallingConvention.Winapi)]
         internal delegate int RecordHandler(IntPtr context, uint message, uint record);
-        [DllImport("msi.dll", CharSet = CharSet.Unicode, EntryPoint = "MsiInstallProductW")]
-        internal static extern uint MsiInstallProduct(string package, string properties);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, EntryPoint = "MsiOpenPackageExW", ExactSpelling = true)]
+        internal static extern uint MsiOpenPackageEx(string package, uint flags, out uint handle);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, EntryPoint = "MsiSetPropertyW", ExactSpelling = true)]
+        internal static extern uint MsiSetProperty(uint install, string name, string value);
+        [DllImport("msi.dll", CharSet = CharSet.Unicode, EntryPoint = "MsiDoActionW", ExactSpelling = true)]
+        internal static extern uint MsiDoAction(uint install, string action);
+        [DllImport("ole32.dll", ExactSpelling = true)] internal static extern int CoInitializeEx(IntPtr reserved, uint apartment);
+        [DllImport("ole32.dll", ExactSpelling = true)] internal static extern void CoUninitialize();
         [DllImport("msi.dll")] internal static extern uint MsiSetInternalUI(uint level, IntPtr window);
-        [DllImport("msi.dll")] internal static extern uint MsiSetExternalUIRecord(RecordHandler handler, uint filter, IntPtr context, out RecordHandler previous);
+        [DllImport("msi.dll", ExactSpelling = true)] internal static extern uint MsiSetExternalUIRecord(RecordHandler handler, uint filter, IntPtr context, out RecordHandler previous);
         [DllImport("msi.dll", CharSet = CharSet.Unicode, EntryPoint = "MsiEnableLogW")]
         internal static extern uint MsiEnableLog(uint mode, string path, uint attributes);
         [DllImport("msi.dll")] internal static extern int MsiRecordGetInteger(uint record, uint field);
@@ -596,7 +680,9 @@ namespace Lekh.Setup
         internal static string DescribeProgressRecord(uint record)
         {
             uint count = MsiRecordGetFieldCount(record);
-            StringBuilder description = new StringBuilder("Windows Installer progress record: count=" + count);
+            if (count == UInt32.MaxValue)
+                throw new InvalidDataException("Invalid Windows Installer progress record handle=0x" + record.ToString("X8") + ".");
+            StringBuilder description = new StringBuilder("Windows Installer progress record: type=0x0A000000 handle=0x" + record.ToString("X8") + " count=" + count);
             for (uint field = 1; field <= Math.Min(count, 4u); field++)
             {
                 int number = MsiRecordGetInteger(record, field);
