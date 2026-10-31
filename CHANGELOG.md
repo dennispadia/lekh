@@ -11,6 +11,8 @@
 - Detect previous Lekh registration before installation, show version/save-close guidance, visibly remove the old payload before installing the new one inside a rollback-safe Windows Installer transaction. Preserve repair, downgrade safeguards and user profiles.
 - Add exact-source, reference, metadata, export, native editing/shortcut/scroll/menu tests and genuine hosted 0.8.1 -> 0.9.0 removal/cancellation-rollback/upgrade/repair validation.
 
+Published as **[Lekh 0.9.0](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)** with independently verified Windows EXE, source ZIP and checksums. The [official build](https://github.com/dennispadia/lekh/actions/runs/41245290389) passed real fresh installation and genuine 0.8.1 -> 0.9.0 removal-before-new, cancellation restoring the entire old payload, upgrade, repair and profile-preserving uninstall. Earlier published assets remain unchanged.
+
 ## 0.8.1
 
 - Make all five alert types directly editable in Visual, including rich body content, type changes, natural paragraph entry/exit and undo/redo. Preserve unchanged source syntax and safely serialize edits.

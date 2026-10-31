@@ -2,7 +2,7 @@
 
 A local-first Windows desktop application for writing Markdown with a friendly visual editor and exporting to Word and PDF.
 
-This guide describes **Lekh 0.9.0**, including fully editable Visual publishing blocks, independently placed variant content, separate Alerts/Blocks tools, synchronized scrolling, and offline grammar checking. See the [README](../README.md) for the latest published installer.
+This guide describes **[Lekh 0.9.0](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)**, including fully editable Visual publishing blocks, independently placed variant content, separate Alerts/Blocks tools, synchronized scrolling, and offline grammar checking. See the [README](../README.md) for the verified public installer.
 
 ## Open the application
 
@@ -12,7 +12,7 @@ For a source checkout, double-click **Launch.cmd** in the project root. The deve
 
 Lekh uses a standalone `%APPDATA%\Lekh` profile for preferences, recent files, Chromium storage, and recovery drafts. Application files install to `%LOCALAPPDATA%\lekh`. **An existing Lekh profile is retained during upgrades; saved Markdown files can be opened normally.** It does not import another product's profile, use migration aliases, or uninstall another product. Its independent MSI upgrade code stays stable for future Lekh releases. Close Lekh before upgrading and choose it explicitly for `.md` file associations if desired.
 
-The 0.8.1 release passed a genuine published 0.8.0 upgrade and repair test on a clean Windows runner, including byte-identical preservation of seeded profile settings and a recovery sentinel through upgrade, repair, and uninstall. Other upgrade paths have not been verified. See [build and validation details](BUILDING.md#build-outputs).
+The 0.9.0 release passed a genuine published **0.8.1 -> 0.9.0** upgrade test on a clean Windows runner. Setup identifies the installed version and asks users to save and close; old registration and payload removal are verified before the new payload stage. Cancellation after removal restores the exact old registration and every old payload byte. Upgrade, repair and uninstall preserve seeded profile settings and a recovery sentinel. Other upgrade paths have not been verified. See [build and validation details](BUILDING.md#build-outputs).
 
 No Microsoft Word, Pandoc, account, or internet connection is required to edit or export documents after setup. Images hosted on websites are deliberately not downloaded.
 

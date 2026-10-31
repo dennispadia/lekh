@@ -4,9 +4,9 @@
 
 **Lekh: Markdown editor** is a calm, local-first Windows Markdown editor with editable **Visual + Source**, paired split tabs, offline Mermaid diagrams, and **Word/PDF export**.
 
-**Version 0.8.1** is published with directly editable alerts, clearer publishing tools, document-scoped variant controls, and readable Dark tabs, alongside offline English grammar checks. Lekh has its own application, installer, and settings identities. No settings, recovery data, or installation identities are imported from another product.
+**Version 0.9.0** is published with fully editable Visual publishing blocks, independently placed variant content, separate Alerts/Blocks tools, synchronized scrolling, and a visibly staged, rollback-safe upgrade installer. Offline English grammar checks remain included. Lekh has its own application, installer, and settings identities. No settings, recovery data, or installation identities are imported from another product.
 
-**[Download Lekh 0.8.1 for Windows x64 (.exe)](https://github.com/dennispadia/lekh/releases/download/v0.8.1/Lekh-Markdown-editor-Setup-0.8.1-x64.exe)** · [Release notes and source ZIP](https://github.com/dennispadia/lekh/releases/tag/v0.8.1) · [User guide](docs/USER_GUIDE.md)
+**[Download Lekh 0.9.0 for Windows x64 (.exe)](https://github.com/dennispadia/lekh/releases/download/v0.9.0/Lekh-Markdown-editor-Setup-0.9.0-x64.exe)** · [Release notes and source ZIP](https://github.com/dennispadia/lekh/releases/tag/v0.9.0) · [User guide](docs/USER_GUIDE.md)
 
 The public EXE, source ZIP, and checksums were independently downloaded and verified. Earlier published assets remain unchanged.
 
@@ -81,7 +81,7 @@ The following captures show the Lekh interface with sample documents, not person
 
 Requires **Windows 10/11 x64 and .NET Framework 4.8 or newer**, normally included in Windows. Other operating systems and architectures are not packaged or tested.
 
-Use the **[0.8.1 release](https://github.com/dennispadia/lekh/releases/tag/v0.8.1)** and compare the download with its [checksums](https://github.com/dennispadia/lekh/releases/download/v0.8.1/SHA256SUMS.txt). The offline EXE includes the application and its grammar engine; recipients do not need to build from source.
+Use the **[0.9.0 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)** and compare the download with its [checksums](https://github.com/dennispadia/lekh/releases/download/v0.9.0/SHA256SUMS.txt). The offline EXE includes the application and its grammar engine; recipients do not need to build from source.
 
 For a verified installer built from this checkout:
 
@@ -101,7 +101,7 @@ The offline setup embeds the runtime and internal MSI; recipients do not need No
 
 Lekh uses a standalone profile and installation directory. It does not import another product's drafts or preferences, migrate aliases, or replace/uninstall another product. Saved Markdown files can be opened normally; an existing Lekh profile is retained during a Lekh upgrade. Close Lekh before upgrading; setup asks rather than force-closing the editor.
 
-The [verified 0.8.1 Windows build](https://github.com/dennispadia/lekh/actions/runs/41187571071) tested fresh installation, a genuine published **0.8.0 -> 0.8.1** upgrade, repair restoring a missing application payload, and uninstall while preserving seeded profile files. Other upgrade paths are not claimed as tested.
+The [verified 0.9.0 Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389) tested fresh installation and genuine published **0.8.1 -> 0.9.0** removal-before-new, cancellation/rollback restoring every old payload byte, upgrade, repair and profile-preserving uninstall. Setup detects the old version, asks users to save/close, and visibly removes it before installing the new payload inside rollback protection. Other upgrade paths are not claimed as tested.
 
 **Unsigned software:** application, setup EXE, and internal MSI are not code-signed. Windows, browser, or organization policies may warn about or block them. Verify checksums and follow your organization's policies; do not disable security protections. See [signing status](docs/PUBLISHING.md#code-signing-policy-pending).
 

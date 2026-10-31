@@ -15,9 +15,9 @@ GitHub's browser uploader does not apply `.gitignore` for you. Do not drag the e
 
 ## Create release downloads
 
-The repository is `dennispadia/lekh`. **[Lekh 0.8.1](https://github.com/dennispadia/lekh/releases/tag/v0.8.1)** is published with directly editable alerts, refined publishing tools, document-scoped variant controls, readable Dark tabs, and the offline grammar engine. Its EXE, source ZIP and checksums were independently downloaded and verified; earlier releases remain unchanged.
+The repository is `dennispadia/lekh`. **[Lekh 0.9.0](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)** is published with fully editable Visual publishing blocks, independently placed variant content, separate Alerts/Blocks tools, synchronized scrolling, and a visibly staged rollback-safe upgrade installer. Its EXE, source ZIP and checksums were independently downloaded and verified; earlier releases remain unchanged.
 
-The current **0.9.0** checkout adds fully editable publishing containers/fields, distributed variant content, separate contextual Alerts/Blocks tools, synchronized scrolling and visible rollback-safe previous-version removal. Publish it only after the current hosted **0.8.1 -> 0.9.0** upgrade/cancellation-rollback/repair gate succeeds, in addition to unit, packaged desktop and setup checks. The old payload/profile restoration assertion is mandatory; do not replace it with a skipped or label-only scenario.
+The complete **0.9.0** unit, packaged desktop, setup and genuine hosted **0.8.1 -> 0.9.0** removal/cancellation-rollback/upgrade/repair gates passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389). The old payload/profile restoration assertion remains mandatory; do not replace it with a skipped or label-only scenario.
 
 Lekh's independent identities are npm package `lekh`, application ID `com.lekh.desktop`, `%APPDATA%\Lekh` profile, and `%LOCALAPPDATA%\lekh` application directory. The executable is `Lekh - Markdown editor.exe`. The independent MSI upgrade code is `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`; keep it stable for future Lekh upgrades and consistent with installer policy and verification tests. Existing Lekh profiles are retained during upgrades. No migration aliases or automatic removal of another product are included.
 
@@ -38,12 +38,12 @@ npm.cmd run release:checksums
 
 For later releases, increment `version` using `npm version <version> --no-git-tag-version`, keep the lockfile synchronized, and update the changelog.
 
-**Validation and release status:** **0.8.1** passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41187571071), full extracted-app desktop suite, offline grammar/publishing checks, native setup engine/previews, and fresh per-user installation/registration/uninstallation with profile preservation on a GitHub-hosted runner. The hosted upgrade test installed the genuine published **0.8.0**, upgraded to **0.8.1**, removed the old registration, restored a deliberately missing application payload through real Windows Installer repair, and preserved seeded profile settings and a recovery sentinel through upgrade, repair, and uninstall. Other upgrade paths remain unverified. The independently downloaded public EXE also passed local non-installing payload/story checks and all ten native previews. Never rewrite Git history or replace existing published release binaries, source archives, or checksums. Neither workflow signs artifacts or enforces Authenticode signatures. Keep the unsigned-software warning until trusted signing is implemented and verified.
+**Validation and release status:** **0.9.0** passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389), full extracted-app desktop suite, offline grammar/publishing checks, native setup engine/previews, and fresh per-user installation/registration/uninstallation with profile preservation on a GitHub-hosted runner. The hosted upgrade test installed the genuine published **0.8.1**, proved old removal before the new payload, cancelled and restored the exact old registration and every old payload byte, then upgraded to **0.9.0**, repaired a deliberately missing `app.asar`, and preserved seeded profile settings and a recovery sentinel through upgrade, repair, and uninstall. Other upgrade paths remain unverified. The independently downloaded public EXE also passed local non-installing payload/story checks and all fifteen native previews. Never rewrite Git history or replace existing published release binaries, source archives, or checksums. Neither workflow signs artifacts or enforces Authenticode signatures. Keep the unsigned-software warning until trusted signing is implemented and verified.
 
 On GitHub:
 
 1. Open the repository's **Releases > Draft a new release**.
-2. Create a tag matching the verified version, such as `v0.8.1`, targeting the reviewed commit only when ready to publish.
+2. Create a tag matching the verified version, such as `v0.9.0`, targeting the reviewed commit only when ready to publish.
 3. Add a description of the release, tested scenarios, known limitations, the unsigned-installer warning, and a link for questions, bugs, and enhancement requests.
 4. Attach these files from `release`:
    - `Lekh-Markdown-editor-Setup-<version>-x64.exe`
