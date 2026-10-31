@@ -111,6 +111,34 @@ namespace Lekh.Setup
         {
             if (value != 0 && value != 1) throw new InvalidDataException("Windows Installer progress field " + field + " must contain 0 or 1.");
         }
+        public void Message(string packet)
+        {
+            if (String.IsNullOrEmpty(packet) || packet.Length > 256) throw new InvalidDataException("Invalid formatted Windows Installer progress packet.");
+            List<int> fields = new List<int>();
+            int position = 0;
+            while (position < packet.Length)
+            {
+                if (fields.Count == 4 || position + 3 > packet.Length || packet[position] != '1' + fields.Count ||
+                    packet[position + 1] != ':' || packet[position + 2] != ' ')
+                    throw new InvalidDataException("Formatted Windows Installer progress fields must be ordered 1 through 4.");
+                position += 3;
+                int start = position;
+                if (position < packet.Length && packet[position] == '-') position++;
+                while (position < packet.Length && packet[position] >= '0' && packet[position] <= '9') position++;
+                string token = packet.Substring(start, position - start);
+                int value = Int32.MinValue;
+                if (token.Length != 0 && !Int32.TryParse(token, System.Globalization.NumberStyles.AllowLeadingSign,
+                    System.Globalization.CultureInfo.InvariantCulture, out value))
+                    throw new InvalidDataException("Formatted Windows Installer progress contains a noninteger or overflowing field.");
+                fields.Add(value);
+                if (position < packet.Length)
+                {
+                    if (packet[position++] != ' ') throw new InvalidDataException("Invalid formatted Windows Installer progress delimiter.");
+                }
+            }
+            Message(fields[0], fields.Count > 1 ? fields[1] : Int32.MinValue, fields.Count > 2 ? fields[2] : Int32.MinValue,
+                fields.Count > 3 ? fields[3] : Int32.MinValue, (uint)fields.Count);
+        }
         public void Message(int kind, int value, int direction, int script, uint fieldCount = 4)
         {
             RequireFields(fieldCount, 1);
@@ -308,7 +336,7 @@ namespace Lekh.Setup
         private readonly MsiProgress progress = new MsiProgress();
         private volatile bool cancelRequested, canCancel = true;
         private bool cancelSent, repair, executing;
-        private bool progressObserved;
+        private bool progressObserved, advisoryObserved;
         private readonly InstalledProduct previousProduct;
         private readonly Action verifyRemoval;
         private readonly Func<bool> payloadPresent;
@@ -414,8 +442,27 @@ namespace Lekh.Setup
                         }
                         try
                         {
-                            progress.Message(Native.MsiRecordGetInteger(record, 1), Native.MsiRecordGetInteger(record, 2),
-                                Native.MsiRecordGetInteger(record, 3), Native.MsiRecordGetInteger(record, 4), Native.MsiRecordGetFieldCount(record));
+                            uint count = Native.MsiRecordGetFieldCount(record);
+                            if (count == 0)
+                            {
+                                // FieldCount excludes field 0. Server records can carry serialized progress there.
+                                string packet = Native.RecordString(record, 0);
+                                if (packet.Length == 0)
+                                {
+                                    if (!advisoryObserved)
+                                    {
+                                        log("Windows Installer empty progress advisory: keeping current stage and progress; no update.");
+                                        advisoryObserved = true;
+                                    }
+                                    return CancellationReply(message);
+                                }
+                                progress.Message(packet);
+                            }
+                            else
+                            {
+                                progress.Message(Native.MsiRecordGetInteger(record, 1), Native.MsiRecordGetInteger(record, 2),
+                                    Native.MsiRecordGetInteger(record, 3), Native.MsiRecordGetInteger(record, 4), count);
+                            }
                         }
                         catch (InvalidDataException error)
                         {
@@ -683,7 +730,7 @@ namespace Lekh.Setup
             if (count == UInt32.MaxValue)
                 throw new InvalidDataException("Invalid Windows Installer progress record handle=0x" + record.ToString("X8") + ".");
             StringBuilder description = new StringBuilder("Windows Installer progress record: type=0x0A000000 handle=0x" + record.ToString("X8") + " count=" + count);
-            for (uint field = 1; field <= Math.Min(count, 4u); field++)
+            for (uint field = 0; field <= Math.Min(count, 4u); field++)
             {
                 int number = MsiRecordGetInteger(record, field);
                 StringBuilder text = new StringBuilder(129);

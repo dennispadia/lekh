@@ -210,6 +210,17 @@ namespace Lekh.Setup
                     WithProgressRecord(2, new int?[] { 2, 40 }, record =>
                         Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && updates[updates.Count - 1].Percent == 40,
                             "Real wire increments reach native progress, not a label timer."));
+                    int beforeEmpty = updates.Count;
+                    WithProgressRecord(0, new int?[] { }, record =>
+                    {
+                        Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && !engine.CallbackFailed,
+                            "The real MSI API delivers a legitimate nonzero-handle, zero-field empty advisory.");
+                        Check(updates.Count == beforeEmpty && updates[updates.Count - 1].Percent == 40 &&
+                            updates[updates.Count - 1].Stage == "preparing", "Real empty advisory does not change current stage or progress.");
+                        Native.Check(MsiRecordSetStringW(record, 0, "1: 2 2: 5 "), "Set real format-only wire packet");
+                        Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && updates[updates.Count - 1].Percent == 45 &&
+                            !engine.CallbackFailed, "Real MSI format-only field-zero payload updates progress through strict parsing.");
+                    });
                     WithProgressRecord(3, new int?[] { 1, null, 0 }, record =>
                         Check(MsiProcessMessage(session.Handle, 0x0a000000, record) == 1 && !engine.CallbackFailed,
                             "Real wire delivery preserves valid null optional fields after package initialization."));
@@ -285,6 +296,15 @@ namespace Lekh.Setup
             NativeEngine engine = new NativeEngine(update => updates.Add(update), text => logs.Add(text));
             WithProgressRecord(4, new int?[] { 0, 100, 0, 0 }, record =>
                 Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1, "Native reset record accepted."));
+            int beforeAdvisory = updates.Count;
+            WithProgressRecord(0, new int?[] { }, record =>
+            {
+                Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1 && !engine.CallbackFailed,
+                    "A valid zero-field, empty-format progress record is an advisory, not malformed numbered data.");
+                Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1 && updates.Count == beforeAdvisory &&
+                    updates[updates.Count - 1].Percent == 0, "Repeated no-data advisories preserve current progress and stage without updates.");
+            });
+            Check(logs.FindAll(text => text.Contains("empty progress advisory")).Count == 1, "No-data advisory logging is bounded to one entry.");
             WithProgressRecord(3, new int?[] { 1, 5, 1 }, record =>
                 Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1, "Three-field implicit-action progress accepted without unused field 4."));
             Check(engine.Callback(IntPtr.Zero, 0x09000000, 0) == 1 && updates[updates.Count - 1].Percent == 5, "Implicit native action ticks applied.");
@@ -325,7 +345,7 @@ namespace Lekh.Setup
                 Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1, "Zero added ticks are valid."));
             Check(logs[0].Contains("count=4") && logs[0].Contains("field 1 integer=0"), "First actual native progress record is logged with its field count and values.");
             foreach (int?[] values in new int?[][] {
-                new int?[] { }, new int?[] { null, 100 }, new int?[] { 4, 100 },
+                new int?[] { null, 100 }, new int?[] { 4, 100 },
                 new int?[] { 0, 100, 0 }, new int?[] { 0, null, 0, 0 }, new int?[] { 0, -1, 0, 0 },
                 new int?[] { 0, 100, null, 0 }, new int?[] { 0, 100, 2, 0 }, new int?[] { 0, 100, 0, null }, new int?[] { 0, 100, 0, 2 },
                 new int?[] { 1, 5 }, new int?[] { 1, null, 1 }, new int?[] { 1, -1, 1 }, new int?[] { 1, 5, null }, new int?[] { 1, 5, 2 },
@@ -364,6 +384,32 @@ namespace Lekh.Setup
             unchanged.Message(2, 20, Int32.MinValue, Int32.MinValue, 2);
             Reject(() => unchanged.Message(0, 999, 2, 0), "Malformed required direction remains an error.");
             Check(unchanged.Percent == 20, "Rejected records cannot mutate the previous progress state.");
+            NativeEngine formatted = new NativeEngine(update => updates.Add(update), text => { });
+            foreach (string packet in new[] { "1: 0 2: 100 3: 0 4: 0", "1: 1 2: 5 3: 1 ", "1: 1 2:  3: 0", "1: 2 2: 20 ", "1: 3 2: 100" })
+            {
+                WithProgressRecord(0, new int?[] { }, record =>
+                {
+                    Native.Check(MsiRecordSetStringW(record, 0, packet), "Set formatted progress packet");
+                    Check(formatted.Callback(IntPtr.Zero, progressMessage, record) == 1 && !formatted.CallbackFailed,
+                        "Valid MSI serialized progress in field 0 is parsed, not ignored.");
+                });
+            }
+            Check(updates[updates.Count - 1].Percent == 10, "Serialized increment/addition packets update genuine progress.");
+            foreach (string packet in new[] {
+                " ", "not progress", "1:", "1: 4 2: 5", "1: 0 2: 100 3: 0", "1: 0 2:  3: 0 4: 0",
+                "1: 0 2: 100 3: 2 4: 0", "1: 0 2: 100 3: 0 4: 2", "1: 1 2:  3: 1",
+                "1: 2 2: -1", "1: 2 2: 2147483648", "1: 2 2: 1x", "1: 2 2: 1 2: 2",
+                "1: 2 3: 1", "1: 2 2: 1 5: 0", "1: 2 2: 1  ", "1: 2\n2: 1", new string('x', 300)
+            })
+            {
+                WithProgressRecord(0, new int?[] { }, record =>
+                {
+                    Native.Check(MsiRecordSetStringW(record, 0, packet), "Set malformed serialized progress");
+                    NativeEngine invalid = new NativeEngine(update => { }, text => { });
+                    Check(invalid.Callback(IntPtr.Zero, progressMessage, record) == 2 && invalid.CallbackFailed &&
+                        invalid.FailureMessage.Contains("field 0"), "Present but malformed field-zero payloads still fail safely and retain field-zero diagnostics.");
+                });
+            }
         }
         private static void Identity()
         {
