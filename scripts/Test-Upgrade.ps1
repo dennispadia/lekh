@@ -122,8 +122,35 @@ public static class UpgradeVerificationInstaller
         }
         throw new InvalidOperationException("MSI property changed repeatedly: " + property);
     }
+    public static bool NeedsPreviousRemoval(string operation, string previousCode)
+    {
+        // PowerShell binds JSON null to String.Empty for C# string parameters.
+        bool absent = String.IsNullOrEmpty(previousCode);
+        if (operation == "Uninstall")
+        {
+            if (!absent) throw new InvalidOperationException("An exact-product uninstall must not request previous-version removal verification.");
+            return false;
+        }
+        if (operation != "Install" && operation != "RollbackUpgrade")
+            throw new InvalidOperationException("Unsupported native MSI operation.");
+        if (absent)
+        {
+            if (operation == "RollbackUpgrade")
+                throw new InvalidOperationException("Rollback proof requires a previous exact ProductCode.");
+            return false;
+        }
+        Guid product;
+        if (previousCode.Length != 38 || previousCode[0] != '{' || previousCode[37] != '}' || !Guid.TryParse(previousCode, out product))
+            throw new InvalidOperationException("Previous-version verification requires a valid braced ProductCode.");
+        return true;
+    }
+    public static void AssertRemovalCheckpoint(bool required, bool observed)
+    {
+        if (required && !observed) throw new InvalidOperationException("Required real removal checkpoint was never observed.");
+    }
     public static uint Execute(string operation, string target, string log, string previousCode, string directory)
     {
+        bool verifyPrevious = NeedsPreviousRemoval(operation, previousCode);
         const string properties = "REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=DisableShutdown MSIDISABLERMRESTART=1";
         uint result = MsiEnableLogW(0x1fff, log, 3); // Append; flush each line for timeout diagnostics.
         if (result != 0) throw new Win32Exception((int)result, "Cannot enable MSI logging.");
@@ -139,7 +166,7 @@ public static class UpgradeVerificationInstaller
                 if ((message & 0xff000000) != 0x08000000) return 0;
                 string action = ActionName(record);
                 File.AppendAllText(log + ".stages.log", "ACTION " + action + Environment.NewLine);
-                if (action == "LekhPreviousVersionRemoved" && previousCode != null)
+                if (action == "LekhPreviousVersionRemoved" && verifyPrevious)
                 {
                     foreach (uint scope in new uint[] { 1, 2, 4 })
                         if (ProductProperty(previousCode, scope, "ProductName") != null)
@@ -164,7 +191,7 @@ public static class UpgradeVerificationInstaller
             else if (operation == "Uninstall") result = MsiConfigureProductExW(target, 0, 2, properties); // INSTALLSTATE_ABSENT
             else throw new InvalidOperationException("Unsupported native MSI operation.");
             if (callbackFailure != null) throw new InvalidOperationException("Removal checkpoint verification failed.", callbackFailure);
-            if (previousCode != null && !removalVerified) throw new InvalidOperationException("Required real removal checkpoint was never observed.");
+            AssertRemovalCheckpoint(verifyPrevious, removalVerified);
             return result;
         }
         finally
@@ -385,12 +412,31 @@ function Get-PayloadHashes {
     if ($hashes.Count -lt 2 -or -not $hashes.ContainsKey('resources\app.asar')) { throw 'Incomplete installed payload.' }
     return $hashes
 }
+function Get-UpgradeWorkerCommand([string]$InputPath) {
+    if ([string]::IsNullOrEmpty($InputPath)) { throw 'An owned worker input path is required.' }
+    $path64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($InputPath))
+    $header = "`$inputPath = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$path64'))"
+    $body = @'
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$inputData = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([IO.File]::ReadAllText($inputPath))) | ConvertFrom-Json
+$request = $inputData.Request
+if (-not $request.ExplicitOptIn -or -not $request.CleanRunnerVerified -or
+    $env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted') {
+    throw "Refusing unapproved MSI worker (opt-in=$($request.ExplicitOptIn); clean=$($request.CleanRunnerVerified); actions=$env:GITHUB_ACTIONS; runner=$env:RUNNER_ENVIRONMENT)."
+}
+Add-Type -TypeDefinition $inputData.NativeSource
+exit [int][UpgradeVerificationInstaller]::Execute($request.Operation, $request.Target, $request.Log, $request.PreviousCode, $request.Directory)
+'@
+    return $header + "`n" + $body
+}
 function Invoke-UpgradeMsi([ValidateSet('Install', 'Repair', 'Uninstall', 'RollbackUpgrade')][string]$Operation, $Product, [string]$Label) {
     Assert-HostedRunner
     if (-not $cleanRunnerVerified -or -not $ownedProducts.ContainsKey($Product.ProductCode) -or
         $ownedProducts[$Product.ProductCode].Path -cne $Product.Path) { throw 'Refusing unowned MSI operation.' }
     Assert-AppNotRunning
     $log = Join-Path $work "$Label.log"
+    $inputPath = $null
     if ($Operation -eq 'Repair') {
         # /fomus is real maintenance, not another fresh installation.
         # https://learn.microsoft.com/windows/win32/msi/reinstallmode
@@ -413,25 +459,33 @@ function Invoke-UpgradeMsi([ValidateSet('Install', 'Repair', 'Uninstall', 'Rollb
             CleanRunnerVerified = $cleanRunnerVerified
             PreviousCode = $previousCode
             Directory = $installDirectory
-        } | ConvertTo-Json -Compress
-        $request64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($request))
-        $native64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($nativeSource))
-        $command = @"
-`$ErrorActionPreference = 'Stop'
-`$request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$request64')) | ConvertFrom-Json
-if (-not `$request.ExplicitOptIn -or -not `$request.CleanRunnerVerified -or
-    `$env:GITHUB_ACTIONS -cne 'true' -or `$env:RUNNER_ENVIRONMENT -cne 'github-hosted') { throw 'Refusing unapproved MSI worker.' }
-Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$native64')))
-exit [int][UpgradeVerificationInstaller]::Execute(`$request.Operation, `$request.Target, `$request.Log, `$request.PreviousCode, `$request.Directory)
-"@
+        }
+        $payload = @{ Request = $request; NativeSource = $nativeSource } | ConvertTo-Json -Depth 4 -Compress
+        $inputPath = Join-Path $work "$Label.worker-input.b64"
+        $output = [IO.File]::Open($inputPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $bytes = [Text.Encoding]::ASCII.GetBytes([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload)))
+            $output.Write($bytes, 0, $bytes.Length)
+        } finally { $output.Dispose() }
+        $command = Get-UpgradeWorkerCommand $inputPath
         $program = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
         $arguments = @('-NoProfile', '-NonInteractive', '-EncodedCommand',
             [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command)))
     }
     $process = $null
+    $inputGuard = $null
     try {
-        $process = Start-Process -FilePath $program -ArgumentList $arguments -PassThru `
-            -RedirectStandardOutput (Join-Path $work "$Label.stdout.log") -RedirectStandardError (Join-Path $work "$Label.stderr.log")
+        $start = @{
+            FilePath = $program
+            ArgumentList = $arguments
+            PassThru = $true
+            RedirectStandardOutput = (Join-Path $work "$Label.stdout.log")
+            RedirectStandardError = (Join-Path $work "$Label.stderr.log")
+        }
+        if ($null -ne $inputPath) {
+            $inputGuard = [IO.File]::Open($inputPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        }
+        $process = Start-Process @start
         $null = $process.Handle
         if (-not $process.WaitForExit(240000)) {
             # Only this owned caller may be stopped; never kill an application or MSI service.
@@ -448,6 +502,7 @@ exit [int][UpgradeVerificationInstaller]::Execute(`$request.Operation, `$request
         if ($process.ExitCode -eq 3010) { Write-Host "$Label requested a restart; restart suppressed, checking registration and bytes without rebooting." }
     } finally {
         if ($null -ne $process) { $process.Dispose() }
+        if ($null -ne $inputGuard) { $inputGuard.Dispose() }
     }
 }
 

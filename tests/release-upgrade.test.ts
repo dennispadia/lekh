@@ -11,6 +11,7 @@ const scriptPath = fileURLToPath(scriptUrl);
 const script = (await readFile(scriptUrl, 'utf8')).replace(/\r\n/g, '\n');
 const workflow = (await readFile(new URL('../.github/workflows/windows.yml', import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
 const nativeSource = /\$nativeSource = @'\r?\n([\s\S]*?)\r?\n'@/.exec(script)?.[1];
+const workerCommand = /function Get-UpgradeWorkerCommand[\s\S]*?@'\n([\s\S]*?)\n'@/.exec(script)?.[1];
 
 function inOrder(text: string, ...fragments: string[]) {
   let previous = -1;
@@ -29,8 +30,11 @@ test('real upgrade operations require explicit consent and both exact hosted-run
   inOrder(operation, 'Assert-HostedRunner', '-not $cleanRunnerVerified', '-not $ownedProducts.ContainsKey($Product.ProductCode)', 'Assert-AppNotRunning', 'Start-Process');
   assert.ok(operation.includes('ExplicitOptIn = $InstallOnHostedRunner.IsPresent'));
   assert.ok(operation.includes('CleanRunnerVerified = $cleanRunnerVerified'));
-  assert.ok(operation.includes("-not `$request.ExplicitOptIn -or -not `$request.CleanRunnerVerified"));
-  assert.ok(operation.includes("`$env:GITHUB_ACTIONS -cne 'true' -or `$env:RUNNER_ENVIRONMENT -cne 'github-hosted'"));
+  assert.ok(workerCommand?.includes("-not $request.ExplicitOptIn -or -not $request.CleanRunnerVerified"));
+  assert.ok(workerCommand?.includes("$env:GITHUB_ACTIONS -cne 'true' -or $env:RUNNER_ENVIRONMENT -cne 'github-hosted'"));
+  assert.ok(operation.includes('$command = Get-UpgradeWorkerCommand $inputPath'));
+  assert.ok(operation.includes('[IO.FileShare]::Read'));
+  assert.ok(workerCommand?.includes('[IO.File]::ReadAllText($inputPath)'));
   assert.doesNotMatch(script, /-Verb\s+RunAs|UACONLY\s*[,)]|AlwaysInstallElevated|DisableMSI|SuppressIces|SuppressValidation|taskkill|Stop-Process\s+-Name/i);
 });
 
@@ -102,6 +106,120 @@ test('registration checks distinguish absence from native errors and check all o
     assert.ok(installed.includes(`ProductProperty($Product.ProductCode, 2, '${field}')`));
   }
   assert.ok(installed.includes('$related.Count -ne 1 -or $related[0] -ine $Product.ProductCode'));
+});
+
+test('the real PowerShell-to-C# null boundary cannot require a checkpoint for baseline install or cleanup', {
+  skip: process.platform !== 'win32',
+}, () => {
+  assert.ok(nativeSource);
+  const command = `
+    $ErrorActionPreference = 'Stop'
+    $ProgressPreference = 'SilentlyContinue'
+    $inputData = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())) | ConvertFrom-Json
+    Add-Type -TypeDefinition $inputData.NativeSource
+    Add-Type -TypeDefinition 'public static class UpgradeBoundaryProbe { public static int Length(string value) { return value == null ? -1 : value.Length; } }'
+    $request = '{"PreviousCode":null}' | ConvertFrom-Json
+    if ([UpgradeBoundaryProbe]::Length($request.PreviousCode) -ne 0) { throw 'Expected actual PowerShell null-to-empty string binding.' }
+    foreach ($operation in @('Install', 'Uninstall')) {
+      foreach ($previous in @($request.PreviousCode, '')) {
+        $required = [UpgradeVerificationInstaller]::NeedsPreviousRemoval($operation, $previous)
+        if ($required) { throw ($operation + ' incorrectly requires removal proof for absent previous product.') }
+        [UpgradeVerificationInstaller]::AssertRemovalCheckpoint($required, $false)
+      }
+    }
+    $product = '{7508FB6F-D56C-4DC7-8225-2E576F1403DC}'
+    foreach ($operation in @('Install', 'RollbackUpgrade')) {
+      $required = [UpgradeVerificationInstaller]::NeedsPreviousRemoval($operation, $product)
+      if (-not $required) { throw 'A real previous product must require proof.' }
+      $failed = $false
+      try { [UpgradeVerificationInstaller]::AssertRemovalCheckpoint($required, $false) }
+      catch { $failed = $_.Exception.ToString().Contains('Required real removal checkpoint was never observed.') }
+      if (-not $failed) { throw 'Missing genuine removal proof was accepted.' }
+      [UpgradeVerificationInstaller]::AssertRemovalCheckpoint($required, $true)
+    }
+    foreach ($previous in @($request.PreviousCode, '', ' ', 'not-a-product-code', '7508FB6F-D56C-4DC7-8225-2E576F1403DC')) {
+      $failed = $false
+      try { [void][UpgradeVerificationInstaller]::NeedsPreviousRemoval('RollbackUpgrade', $previous) } catch { $failed = $true }
+      if (-not $failed) { throw 'Rollback without an exact previous product was accepted.' }
+    }
+    foreach ($previous in @(' ', 'not-a-product-code')) {
+      $failed = $false
+      try { [void][UpgradeVerificationInstaller]::NeedsPreviousRemoval('Install', $previous) } catch { $failed = $true }
+      if (-not $failed) { throw 'Malformed previous product was silently treated as absent.' }
+    }
+    $failed = $false
+    try { [void][UpgradeVerificationInstaller]::NeedsPreviousRemoval('Uninstall', $product) } catch { $failed = $true }
+    if (-not $failed) { throw 'Uninstall must not sweep a previous product.' }
+    Write-Output 'PASS: actual JSON-null binding, baseline/cleanup exemption, mandatory genuine upgrade/rollback proof; no product operations.'
+  `;
+  const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+    Buffer.from(command, 'utf16le').toString('base64')], {
+    encoding: 'utf8', timeout: 30_000,
+    input: Buffer.from(JSON.stringify({ NativeSource: nativeSource }), 'utf8').toString('base64'),
+  });
+  assert.match(output, /PASS: actual JSON-null binding/);
+  inOrder(nativeSource, 'bool verifyPrevious = NeedsPreviousRemoval(operation, previousCode)', 'MsiEnableLogW(0x1fff',
+    'MsiInstallProductW(target, properties)', 'AssertRemovalCheckpoint(verifyPrevious, removalVerified)');
+});
+
+test('the actual guarded-file worker launch supports large native source without the Windows command-line limit', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  assert.ok(workerCommand);
+  assert.ok(Buffer.from(workerCommand, 'utf16le').toString('base64').length < 4096);
+  const directory = join(fileURLToPath(new URL('..', import.meta.url)), 'build', 'tests', `upgrade-transport-${randomUUID()}`);
+  await mkdir(directory, { recursive: true });
+  const stub = `public static class UpgradeVerificationInstaller {
+    public static uint Execute(string operation, string target, string log, string previousCode, string directory) {
+      if (operation != "Install" || !string.IsNullOrEmpty(previousCode)) throw new System.InvalidOperationException("Unexpected stub request.");
+      return 0;
+    }
+  } /*${'x'.repeat(60_000)}*/`;
+  const command = `
+    $ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'
+    $request = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())) | ConvertFrom-Json
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($request.Path, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+    foreach ($name in @('Assert-HostedRunner', 'Get-UpgradeWorkerCommand', 'Invoke-UpgradeMsi')) {
+      $definition = $ast.Find({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+      }, $true)
+      . ([scriptblock]::Create($definition.Extent.Text))
+    }
+    function Assert-AppNotRunning { } # Transport-only test double; no product/process operations.
+    $InstallOnHostedRunner = [Management.Automation.SwitchParameter]::new($true)
+    $cleanRunnerVerified = $true
+    $work = $request.Directory
+    $installDirectory = $request.Directory
+    $nativeSource = $request.Stub
+    $product = [pscustomobject]@{ ProductCode = '{7508FB6F-D56C-4DC7-8225-2E576F1403DC}'; Path = 'transport-only.msi' }
+    $new = [pscustomobject]@{ ProductCode = '{11111111-2222-3333-4444-555555555555}' }
+    $ownedProducts = @{ $product.ProductCode = $product }
+    Invoke-UpgradeMsi 'Install' $product 'transport-only'
+    Write-Output 'PASS: actual Start-Process, read-locked payload file, large stub compilation and five-argument worker boundary; no product operations.'
+  `;
+  try {
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64')], {
+      encoding: 'utf8', timeout: 30_000,
+      input: Buffer.from(JSON.stringify({ Path: scriptPath, Directory: directory, Stub: stub }), 'utf8').toString('base64'),
+      env: { ...process.env, GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted' },
+    });
+    assert.match(output, /PASS: actual Start-Process, read-locked payload file/);
+    assert.equal((await readFile(join(directory, 'transport-only.stderr.log'), 'utf8')).trim(), '');
+  } catch (error) {
+    let workerError = '';
+    try { workerError = (await readFile(join(directory, 'transport-only.stderr.log'), 'utf8')).slice(0, 3000); } catch { }
+    let flags = '';
+    try {
+      const payload = JSON.parse(Buffer.from(await readFile(join(directory, 'transport-only.worker-input.b64'), 'utf8'), 'base64').toString('utf8')) as { Request?: { ExplicitOptIn?: boolean; CleanRunnerVerified?: boolean } };
+      flags = JSON.stringify(payload.Request);
+    } catch { }
+    throw new Error(`Guarded-file transport failed (request=${flags}): ${workerError}`, { cause: error });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('the test upgrades a genuinely registered old product before real repair, without uninstalling old first', () => {
@@ -340,7 +458,8 @@ test('hosted upgrade proves true removal before payload and cancellation restore
     'PathExistsExact(Path.Combine(directory, "Lekh - Markdown editor.exe"))',
     'PathExistsExact(Path.Combine(directory, "resources", "app.asar"))', 'removalVerified = true',
     'operation == "RollbackUpgrade") return 2');
-  assert.ok(nativeSource.includes('previousCode != null && !removalVerified'));
+  assert.ok(nativeSource.includes('AssertRemovalCheckpoint(verifyPrevious, removalVerified)'));
+  assert.ok(nativeSource.includes('if (required && !observed) throw'));
   assert.ok(nativeSource.includes('catch (FileNotFoundException) { return false; }'));
   assert.ok(nativeSource.includes('catch (DirectoryNotFoundException) { return false; }'));
   assert.ok(script.includes("$sequence.RemoveExistingProducts -ne $sequence.InstallInitialize + 1"));
@@ -371,20 +490,22 @@ test('PowerShell parses the script and compiles native declarations without invo
   skip: process.platform !== 'win32',
 }, () => {
   assert.ok(nativeSource);
-  const source64 = Buffer.from(nativeSource, 'utf8').toString('base64');
-  const path64 = Buffer.from(scriptPath, 'utf8').toString('base64');
   const command = `
     $ErrorActionPreference = 'Stop'
     $ProgressPreference = 'SilentlyContinue'
+    $inputData = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::In.ReadToEnd())) | ConvertFrom-Json
     $tokens = $null; $errors = $null
-    $path = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${path64}'))
+    $path = $inputData.Path
     $null = [Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
     if ($errors.Count -gt 0) { throw ($errors | Out-String) }
-    Add-Type -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${source64}')))
+    Add-Type -TypeDefinition $inputData.NativeSource
     Write-Output 'Parsed and compiled; no product operations.'
   `;
   const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
-    Buffer.from(command, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 30_000 });
+    Buffer.from(command, 'utf16le').toString('base64')], {
+    encoding: 'utf8', timeout: 30_000,
+    input: Buffer.from(JSON.stringify({ Path: scriptPath, NativeSource: nativeSource }), 'utf8').toString('base64'),
+  });
   assert.match(output, /Parsed and compiled; no product operations\./);
 });
 
