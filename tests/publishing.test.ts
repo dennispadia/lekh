@@ -143,7 +143,8 @@ test('image directives expose ordinary image tokens with safe alt, caption, bord
 test('frontmatter is collapsed, escaped, retained in tokens and excluded from article headings and exports', async () => {
   const source = '---\r\ntitle: "<script>Bad</script>"\r\ndescription: hidden metadata\r\n---\r\n\r\n# Actual article\r\n';
   const html = documentPreviewHTML(source, '');
-  assert.match(html, /<details class="publishing-metadata"><summary>Document metadata<\/summary>/);
+  assert.match(html, /<pre class="publishing-metadata">/);
+  assert.doesNotMatch(html, /Document metadata<\/summary>/);
   assert.doesNotMatch(html, /<details[^>]+open|<script/);
   assert.match(html, /&lt;script&gt;Bad&lt;\/script&gt;/);
   assert.deepEqual(headings(source).map(heading => [heading.displayText, heading.line]), [['Actual article', 5]]);
@@ -173,10 +174,10 @@ test('unknown, invalid, unclosed, and unresolved blocks never disappear or execu
     assert.equal(block.raw, source);
     const html = documentPreviewHTML(source, '');
     assert.match(html, /publishing-unsupported/);
-    assert.match(html, /not rendered|Unclosed|unclosed|Invalid|Invalid or unclosed|source retained/i);
+    assert.match(html, /not rendered|not loaded|Unclosed|unclosed|Invalid|Invalid or unclosed|source retained/i);
     assert.doesNotMatch(html, /<script|src="javascript:|onclick="bad"/);
     const xml = await wordXML(source);
-    assert.match(xml, /source retained|Source retained|not rendered/i);
+    assert.match(xml, /source retained|Source retained|not rendered|not loaded/i);
     assert.match(xml, /Consolas/);
   }
 });
@@ -469,18 +470,22 @@ test('all five measured light/dark palettes use matching label colors and light 
   assert.match(publishingCSS, /\.publishing-callout \.publishing-callout-title \{[^}]*color: var\(--publishing-border\)/);
 });
 
-test('PDF embeds a rebased publishing image only with the explicit project image grant', async () => {
+test('local images remain scoped to the Markdown folder unless embedded or project access is granted', async () => {
   const root = path.join(process.cwd(), `.publishing-export-${randomUUID()}`);
   const document = path.join(root, 'docs', 'article.md');
   try {
     await mkdir(path.dirname(document), { recursive: true });
     await mkdir(path.join(root, 'assets'));
+    await writeFile(path.join(path.dirname(document), 'pixel.png'), png);
     await writeFile(document, '# Article');
     await writeFile(path.join(root, 'assets', 'pixel.png'), png);
-    const source = ':::image type=content source="../assets/pixel.png" alt-text="Authorized pixel" :::\n';
-    await assert.rejects(() => toPrintHTML(source, document), /inside the Markdown file's folder/);
-    const html = await toPrintHTML(source, document, undefined, root);
+    const source = ':::image type=content source="pixel.png" alt-text="Local pixel" :::\n';
+    const html = await toPrintHTML(source, document);
     assert.match(html, /src="data:image\/png;base64,/);
-    assert.match(html, /alt="Authorized pixel"/);
+    assert.match(html, /alt="Local pixel"/);
+    const externalImage = ':::image type=content source="../assets/pixel.png" alt-text="Outside pixel" :::\n';
+    await assert.rejects(() => toPrintHTML(externalImage, document), /inside the Markdown file's folder/);
+    const granted = await toPrintHTML(externalImage, document, undefined, root);
+    assert.match(granted, /alt="Outside pixel"/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -23,7 +23,7 @@ Free to use and modify under the [MIT license](LICENSE). **[Open a GitHub issue]
 | **Links and tables** | Edit link text/addresses in place, remove links without deleting text, choose table dimensions, and add/remove table rows and columns. |
 | **Code and diagrams** | Search the offline language catalog, highlight code, copy raw code, and insert editable Mermaid diagrams at the current selection. Code is displayed, never executed. |
 | **Editable alerts** | Add Note, Tip, Important, Caution or Warning from the separate **Alerts** toolbar menu, then type and format directly in Visual. Each type has its own icon, label and matching Light/Dark colors. |
-| **Editable publishing blocks** | **Blocks** has tabbed examples, selectors, independently placed variant content, steps, image descriptions and metadata. Edit names, options, fields and rich bodies directly in Visual. Existing include directives remain editable. |
+| **Editable publishing blocks** | **Blocks** has tabbed examples, selectors, independently placed variant content, image descriptions and YAML metadata. Edit names, options, fields and rich bodies directly in Visual. Existing include directives remain editable. |
 | **Synchronized scrolling** | Visual + Source scroll together in both directions by default. Content anchors account for wrapped Source lines and different rendered block heights. Paired documents remain independent. |
 | **Find/Replace** | Match case, Unicode whole words, regex, match counts, navigation, and replacement. |
 | **Writing assistance** | Optional offline English grammar checks powered by the bundled Harper engine. Review, apply, ignore, or ignore a suggestion throughout the current document. No text is sent online or changed automatically. |
@@ -54,11 +54,10 @@ Interactive HTML exports retain every tab and variant in one self-contained file
 Variant controls live within the document's Visual area or read-only preview, never above the Source column.
 Tabbed examples have explicit readable text and surface colors in both themes.
 
-**Every supported publishing block is editable in Visual.** Tab names and every tab body, selector prompts/options, structured steps, described images and metadata fields no longer require Edit source.
+**Every supported publishing block is editable in Visual.** Tab names and every tab body, selector prompts/options, described images and metadata YAML no longer require Edit source. Renamed tab names are also reflected in their `#tab/` identifiers in Source.
 Insert a selector once, then use **Blocks > Add variant content** to place content for its existing options anywhere in the document. Inactive content has **Show and edit**, and stable option IDs preserve connections when labels change.
-Metadata is collapsed outside the article body, with editable title/description and a YAML field for arbitrary keys and comments. Unsupported or over-depth syntax stays visible and editable in its inline block field.
-Existing local include directives require a saved document and an explicit, per-document project-folder grant. No remote content is fetched, and access can be revoked from **More tools > Stop local includes**.
-Include names/paths are editable in Visual; **Open shared file in Visual** edits the included file in its own tab without flattening the parent directive. Saving shared content refreshes authorized parent previews.
+Metadata stays outside the article body and is edited in one YAML field for arbitrary keys and comments. Unsupported or over-depth syntax stays visible and editable in its inline block field.
+Local include directives are preserved as inert source and are never opened, expanded, or fetched. Relative local images remain available from the Markdown file's folder; use **More > Allow local image folder...** only when a document needs image assets elsewhere in its project.
 Publishing systems can supply additional metadata or build-time configuration; Lekh is not a replacement for their final validation pipeline.
 
 ## Screenshots

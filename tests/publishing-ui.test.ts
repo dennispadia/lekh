@@ -11,9 +11,11 @@ test('toolbar exposes every alert type and reusable authoring building block', (
     assert.ok(publishingTemplates.some(item => item.id === `callout-${kind}`));
     assert.match(publishingTemplateMarkdown(`callout-${kind}`)!, new RegExp(`> \\[!${kind.toUpperCase()}\\]`));
   }
-  for (const kind of ['tabs', 'selector', 'steps', 'image', 'metadata']) {
+  for (const kind of ['tabs', 'selector', 'image', 'metadata']) {
     assert.ok(publishingTemplates.some(item => item.id === `publishing-${kind}`));
   }
+  assert.ok(!publishingTemplates.some(item => String(item.id) === 'publishing-steps'));
+  assert.equal(publishingTemplateMarkdown('publishing-steps'), undefined);
   for (const item of publishingTemplates) {
     assert.ok(item.description.length > 20);
     assert.match(publishingIcon(item.icon), /<svg[^>]*aria-hidden="true"/);
@@ -32,6 +34,36 @@ test('variant creation is a single prerequisite-aware tool, not two independent 
   assert.equal(variantInsertionTemplate(true).label, 'Add variant content\u2026');
   assert.equal(publishingTemplates.filter(item => item.category === 'content' && item.id === 'publishing-selector').length, 1);
   assert.ok(!publishingTemplates.some(item => item.category === 'content' && String(item.id) === 'publishing-zone'));
+});
+
+test('metadata editing exposes only the complete YAML field without a heading', async () => {
+  const source = await readFile(new URL('../src/editable-publishing.ts', import.meta.url), 'utf8');
+  const metadata = source.slice(source.indexOf('const MetadataNode ='), source.indexOf('const IncludeNode ='));
+  assert.match(metadata, /field\(context, 'Metadata YAML'/);
+  assert.match(metadata, /yaml\.wrapper\.dataset\.lekhMetadata/);
+  assert.match(metadata, /yaml\.wrapper\.querySelector\('span'\)\?\.remove\(\)/);
+  assert.doesNotMatch(metadata, /Document title|Document description|All metadata \(YAML\)|<summary>|Make these choices editable/);
+});
+
+test('tabbed and variant documents disable Word and PDF exports in the app menus', async () => {
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const styles = await readFile(new URL('../src/style.css', import.meta.url), 'utf8');
+  assert.match(renderer, /control\.disabled = interactiveExportRequired \|\| exportCheckPending/);
+  assert.match(styles, /\[data-action="export-docx"\]:disabled.*opacity:\s*\.45/);
+  assert.match(styles, /\[data-action="export-pdf"\]:disabled.*opacity:\s*\.45/);
+  assert.match(electron, /id: 'export-docx'/);
+  assert.match(electron, /id: 'export-pdf'/);
+  assert.match(electron, /if \(item\) item\.enabled = !interactive/);
+});
+
+test('the toolbar and insert menu provide one insert-or-refresh table-of-contents action', async () => {
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(renderer, /button\('insert:toc', 'Table of contents'/);
+  assert.doesNotMatch(renderer, /insert:toc-update|Update table of contents/);
+  assert.match(electron, /label: 'Table of contents', click: \(\) => action\('insert:toc'\)/);
+  assert.doesNotMatch(electron, /insert:toc-update|Update table of contents/);
 });
 
 test('alert markers inside quoted fences and comments do not truncate the surrounding alert', () => {
@@ -55,18 +87,20 @@ test('formatting selected text retains Markdown, code and literal replacement ch
   assert.equal(callout.split('\n').slice(1).map(line => line.slice(2)).join('\n'), selected);
   assert.ok(publishingTemplateMarkdown('publishing-tabs', selected)!.includes(selected));
   assert.ok(publishingTemplateMarkdown('publishing-selector', selected)!.includes(selected));
-  assert.ok(publishingTemplateMarkdown('publishing-steps', selected)!.includes(selected));
   assert.equal(publishingTemplateMarkdown('unknown'), undefined);
 });
 
-test('local include access is document-scoped, explicitly granted and revocable', async () => {
-  const source = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
-  assert.match(source, /handle\('publishing:allow-includes'/);
-  assert.match(source, /properties: \['openDirectory'\]/);
-  assert.match(source, /publishingRoots\.set\(String\(id\), \{ root \}\)/);
-  assert.match(source, /handle\('publishing:revoke-includes'/);
-  assert.match(source, /publishingRoots\.delete\(String\(id\)\)/);
-  assert.match(source, /const imageRoot = grant\?\.root \?\? null/);
-  assert.match(source, /preparePublishing\(content, currentPath, imageRoot\)/);
-  assert.match(source, /publishingRoots\.get\(String\(id\)\) !== grant/);
+test('local include directives remain inert and have no authorization or file-opening actions', async () => {
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const bridge = await readFile(new URL('../src/bridge.ts', import.meta.url), 'utf8');
+  const renderer = await readFile(new URL('../src/editable-publishing.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(electron, /publishing:(?:allow|revoke|open)-includes|readAuthorizedInclude/);
+  assert.doesNotMatch(bridge, /allowPublishingIncludes|revokePublishingIncludes|openPublishingInclude/);
+  assert.doesNotMatch(renderer, /Allow project folder|Open shared file in Visual/);
+  assert.match(renderer, /Include directive \(not loaded\)/);
+  assert.match(renderer, /Referenced files are not opened or included/);
+  assert.match(bridge, /allowImageFolder/);
+  assert.match(bridge, /revokeImageFolder/);
+  assert.match(electron, /imageRoots\.set\(String\(id\), \{ root \}\)/);
+  assert.match(electron, /const imageRoot = grant\?\.root \?\? null/);
 });

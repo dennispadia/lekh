@@ -13,7 +13,7 @@ import { themes } from '../lib/themes.js';
 import { formattingShortcuts } from '../lib/shortcuts.js';
 import { fileArguments } from '../lib/launch.js';
 import { productName, productTitle, userDataDirectory } from '../lib/branding.js';
-import { preparePublishing, readAuthorizedInclude } from '../lib/includes.js';
+import { prepareVariantConfiguration } from '../lib/variant-config.js';
 import { publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { interactiveExportMessage } from '../lib/publishing.js';
 import type { ContextMenuItem, EditorContext, OpenedFile, Result } from '../src/bridge.js';
@@ -32,7 +32,7 @@ let rendererReady = false;
 interface NativeDocument { path: string | null; diskContent: string | null }
 const documents = new Map<string, NativeDocument>();
 // Grant identity changes even when the same folder is authorized again.
-const publishingRoots = new Map<string, { root: string }>();
+const imageRoots = new Map<string, { root: string }>();
 let dirty = false;
 let allowClose = false;
 let recentFiles: string[] = [];
@@ -180,7 +180,6 @@ function insertItems(): MenuItemConstructorOptions[] {
     { label: 'Code fence', accelerator: 'CmdOrCtrl+Shift+K', click: () => action('format:codeblock') },
     { label: 'Math block (Source)', accelerator: 'CmdOrCtrl+Shift+M', click: () => action('insert:math') },
     { label: 'Table of contents', click: () => action('insert:toc') },
-    { label: 'Update table of contents', click: () => action('insert:toc-update') },
     { label: 'Mermaid diagram (Source)', click: () => action('insert:mermaid') },
     { label: 'YAML front matter (Source)', click: () => action('insert:frontmatter') },
     { type: 'separator' },
@@ -336,9 +335,9 @@ function installIPC(): void {
   });
   handle('editor:copy-image', async (id: unknown, source: unknown) => {
     contentArgument(source);
-    const grant = publishingRoots.get(String(id));
+    const grant = imageRoots.get(String(id));
     const { data } = await readImage(source, documentFor(id).path, grant?.root);
-    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local image access changed. Try copying the image again.');
+    if (imageRoots.get(String(id)) !== grant) throw new Error('Local image access changed. Try copying the image again.');
     const image = nativeImage.createFromBuffer(data);
     if (image.isEmpty()) throw new Error('This image could not be decoded for copying.');
     clipboard.writeImage(image);
@@ -358,7 +357,12 @@ function installIPC(): void {
     const variantTool = Menu.getApplicationMenu()?.getMenuItemById('publishing-selector');
     if (variantTool) variantTool.label = variantInsertionTemplate(Boolean(context.hasVariantSelector)).label;
     const exportHint = Menu.getApplicationMenu()?.getMenuItemById('export-interactive-hint');
-    if (exportHint) exportHint.visible = Boolean(context.hasInteractivePublishing);
+    const interactive = Boolean(context.hasInteractivePublishing);
+    if (exportHint) exportHint.visible = interactive;
+    for (const id of ['export-docx', 'export-pdf']) {
+      const item = Menu.getApplicationMenu()?.getMenuItemById(id);
+      if (item) item.enabled = !interactive;
+    }
     for (let level = 0; level <= 6; level++) {
       const item = Menu.getApplicationMenu()?.getMenuItemById(`paragraph-${level}`);
       if (item) item.checked = context.heading === level;
@@ -413,13 +417,13 @@ function installIPC(): void {
   handle('document:release', async (id: unknown) => {
     documentFor(id);
     documents.delete(String(id));
-    publishingRoots.delete(String(id));
+    imageRoots.delete(String(id));
   });
-  handle('publishing:allow-includes', async (id: unknown) => {
+  handle('images:allow-folder', async (id: unknown) => {
     const document = documentFor(id);
-    if (!document.path) throw new Error('Save this document before allowing local includes.');
+    if (!document.path) throw new Error('Save this document before allowing access to a project image folder.');
     const selected = await dialog.showOpenDialog(window, {
-      title: 'Allow local includes for this document', buttonLabel: 'Allow this folder',
+      title: 'Allow project images for this document', buttonLabel: 'Allow this folder',
       properties: ['openDirectory'],
     });
     if (selected.canceled) return false;
@@ -429,31 +433,20 @@ function installIPC(): void {
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error('Choose a project folder that contains this saved document.');
     }
-    publishingRoots.set(String(id), { root });
+    imageRoots.set(String(id), { root });
     return true;
   });
-  handle('publishing:prepare', async (id: unknown, content: unknown) => {
+  handle('variant-config:prepare', async (id: unknown, content: unknown) => {
     const document = documentFor(id);
     contentArgument(content);
-    const grant = publishingRoots.get(String(id));
-    const prepared = await preparePublishing(content, document.path, grant?.root ?? null);
-    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Refresh the preview.');
+    const grant = imageRoots.get(String(id));
+    const prepared = await prepareVariantConfiguration(content, document.path, grant?.root ?? null);
+    if (imageRoots.get(String(id)) !== grant) throw new Error('Local asset access changed. Refresh the preview.');
     return prepared;
   });
-  handle('publishing:open-include', async (id: unknown, source: unknown) => {
-    const document = documentFor(id);
-    if (!document.path || typeof source !== 'string' || !source.trim() || /[\r\n]/.test(source)) {
-      throw new Error('Save this document and choose a valid local include path.');
-    }
-    const grant = publishingRoots.get(String(id));
-    if (!grant) throw new Error('Allow this document’s local project folder before opening an included file.');
-    const included = await readAuthorizedInclude(source, document.path, grant.root);
-    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Allow the folder again before opening this file.');
-    return openDocument(included.path, included.content);
-  });
-  handle('publishing:revoke-includes', async (id: unknown) => {
+  handle('images:revoke-folder', async (id: unknown) => {
     documentFor(id);
-    publishingRoots.delete(String(id));
+    imageRoots.delete(String(id));
   });
   handle('document:save', async (id: unknown, content: unknown, saveAs: unknown) => {
     const document = documentFor(id);
@@ -527,14 +520,14 @@ function installIPC(): void {
     contentArgument(content);
     if (format !== 'pdf' && format !== 'docx' && format !== 'html') throw new Error('Unsupported export format.');
     if (format !== 'html' && requiresInteractiveExport(content)) throw new Error(interactiveExportMessage);
-    const grant = publishingRoots.get(String(id));
+    const grant = imageRoots.get(String(id));
     const imageRoot = grant?.root ?? null;
-    const assertPublishingAccess = () => {
-      if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Retry the export.');
+    const assertAssetAccess = () => {
+      if (imageRoots.get(String(id)) !== grant) throw new Error('Local asset access changed. Retry the export.');
     };
-    const prepared = await preparePublishing(content, currentPath, imageRoot);
-    assertPublishingAccess();
-    if (format !== 'html' && requiresInteractiveExport(prepared.markdown)) throw new Error(interactiveExportMessage);
+    const prepared = await prepareVariantConfiguration(content, currentPath, imageRoot);
+    assertAssetAccess();
+    if (format !== 'html' && requiresInteractiveExport(prepared)) throw new Error(interactiveExportMessage);
     const selection = await dialog.showSaveDialog(window, {
       title: `Export ${format.toUpperCase()}`,
       defaultPath: currentPath ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}.${format}`) : `Untitled.${format}`,
@@ -544,9 +537,9 @@ function installIPC(): void {
     if ([...documents.values()].some(document => document.path && samePath(selection.filePath!, document.path))) {
       throw new Error('Export cannot replace an open Markdown source file.');
     }
-    assertPublishingAccess();
-    const data = await exportWithDiagrams(prepared.markdown, currentPath, format, imageRoot);
-    assertPublishingAccess();
+    assertAssetAccess();
+    const data = await exportWithDiagrams(prepared, currentPath, format, imageRoot);
+    assertAssetAccess();
     await atomicWrite(selection.filePath, data);
     return selection.filePath;
   });
@@ -633,8 +626,8 @@ function createWindow(): void {
           { label: 'Split / Unsplit', click: () => action('split') },
           { type: 'separator' },
           { label: 'Writing assistance', click: () => action('writing-assistance') },
-          { label: 'Allow local includes...', click: () => action('allow-includes') },
-          { label: 'Stop local includes', click: () => action('revoke-includes') },
+          { label: 'Allow local image folder...', click: () => action('allow-image-folder') },
+          { label: 'Stop local image folder access', click: () => action('revoke-image-folder') },
           { label: 'Getting started', click: () => action('help') },
         ] },
         { label: 'Table', submenu: [
@@ -680,8 +673,8 @@ function createWindow(): void {
       { label: 'Clear recent files', click: send('clear-recent') },
       { type: 'separator' },
       { label: 'Export interactive HTML (.html)...', click: send('export-html') },
-      { label: 'Export Word (.docx)...', click: send('export-docx') },
-      { label: 'Export PDF...', accelerator: 'CmdOrCtrl+P', click: send('export-pdf') },
+      { id: 'export-docx', label: 'Export Word (.docx)...', click: send('export-docx') },
+      { id: 'export-pdf', label: 'Export PDF...', accelerator: 'CmdOrCtrl+P', click: send('export-pdf') },
       { id: 'export-interactive-hint', label: 'Tabs and variants require HTML export', enabled: false, visible: false },
       { type: 'separator' }, { role: 'quit' },
     ] },
@@ -701,8 +694,6 @@ function createWindow(): void {
       { label: 'Visual + Source', click: send('side-by-side') },
       { label: 'Visual / source', accelerator: 'CmdOrCtrl+/', click: send('mode') },
       { label: 'Source + Preview', click: send('preview') },
-      { label: 'Allow local includes...', click: send('allow-includes') },
-      { label: 'Stop local includes', click: send('revoke-includes') },
       { label: 'Writing assistance', click: send('writing-assistance') },
       { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+Shift+B', click: send('sidebar') },
       { label: 'Focus mode', accelerator: 'F9', click: send('focus') },
@@ -746,9 +737,9 @@ if (primaryInstance) void app.whenReady().then(async () => {
       const source = parameters.get('source');
       if (!source) throw new Error('Missing image source.');
       const documentId = parameters.get('document');
-      const grant = publishingRoots.get(documentId ?? '');
+      const grant = imageRoots.get(documentId ?? '');
       const { data, mime } = await readImage(source, documentFor(documentId).path, grant?.root);
-      if (publishingRoots.get(documentId ?? '') !== grant) throw new Error('Local image access changed. Refresh the preview.');
+      if (imageRoots.get(documentId ?? '') !== grant) throw new Error('Local image access changed. Refresh the preview.');
       return new Response(new Uint8Array(data), { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('Image could not be displayed:', error);

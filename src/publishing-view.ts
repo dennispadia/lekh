@@ -11,10 +11,10 @@ export function choosePublishingVariant(pane: HTMLElement, id: string): void {
 }
 
 export async function publishingHTML(markdown: string, documentId: string): Promise<string> {
-  if ((/\[!INCLUDE\b/.test(markdown) || /^zone_pivot_groups\s*:/m.test(markdown)) && documentId) {
-    const result = await window.lekh.preparePublishing(documentId, markdown);
+  if (/^zone_pivot_groups\s*:/m.test(markdown) && documentId) {
+    const result = await window.lekh.prepareVariantConfiguration(documentId, markdown);
     if (!result.ok) throw new Error(result.error);
-    markdown = result.value.markdown;
+    markdown = result.value;
   }
   const template = document.createElement('template');
   template.innerHTML = documentPreviewHTML(markdown, documentId);

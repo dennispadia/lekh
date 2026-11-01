@@ -8,7 +8,7 @@ import TaskItem from '@tiptap/extension-task-item';
 import { Markdown } from '@tiptap/markdown';
 import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, requiresInteractiveExport, wordCount } from '../lib/markdown.js';
 import { replaceSearchMatches, type SearchMatch, type SearchResult } from '../lib/search.js';
-import { tableOfContents, updateTableOfContents } from '../lib/contents.js';
+import { hasMarkedTableOfContents, tableOfContents, updateTableOfContents } from '../lib/contents.js';
 import type { Result } from './bridge.js';
 import { isTheme, restoreTheme, themes, type Theme } from '../lib/themes.js';
 import { createPair, DEFAULT_SIDEBAR_WIDTH, groupTabs, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, pairFor, sidebarWidth, splitRatio, type SplitPair } from '../lib/workspace.js';
@@ -128,9 +128,9 @@ app.innerHTML = `
       ${button('link', 'Insert / edit link', 'link', 'icon-only')}${button('image', 'Insert image', 'image', 'icon-only')}${button('table', 'Insert table', 'table', 'icon-only')}
       ${formatButton('codeblock', 'Code block')}${formatButton('rule', 'Horizontal rule')}
       <span class="divider"></span>
-      ${button('insert:toc', 'Insert table of contents', 'contents', 'icon-only')}${button('insert:toc-update', 'Update table of contents', 'refresh', 'icon-only')}${button('insert:mermaid', 'Mermaid diagram', 'diagram', 'icon-only')}
+      ${button('insert:toc', 'Table of contents', 'contents', 'icon-only')}${button('insert:mermaid', 'Mermaid diagram', 'diagram', 'icon-only')}
       <button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span></button>
-      <button type="button" data-action="publishing-menu" aria-label="Insert publishing block" title="Editable tabs, selectors, variant content, steps and metadata" aria-haspopup="menu" aria-controls="publishing-menu" aria-expanded="false">${icon('blocks')}<span>Blocks</span></button>
+      <button type="button" data-action="publishing-menu" aria-label="Insert publishing block" title="Editable tabs, selectors, variant content, images and metadata" aria-haspopup="menu" aria-controls="publishing-menu" aria-expanded="false">${icon('blocks')}<span>Blocks</span></button>
       <div class="toolbar-more"><button type="button" data-action="format-menu" aria-label="More tools and views" title="More tools and views" aria-haspopup="menu" aria-controls="format-menu" aria-expanded="false">${icon('more')}</button></div>
       <span class="toolbar-spacer"></span>
       ${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}
@@ -153,7 +153,7 @@ app.innerHTML = `
   </main>
   <div id="tabs-menu" class="dropdown view-menu" role="menu" aria-label="Open documents" hidden></div>
   ${(['alerts', 'content'] as const).map(category => `<div id="${category === 'alerts' ? 'alerts-menu' : 'publishing-menu'}" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="${category === 'alerts' ? 'Alerts' : 'Content blocks'}" hidden>${publishingTemplates.filter(item => item.category === category).map(item => `<button type="button" data-action="insert:${item.id}" class="publishing-menu-${item.color || 'generic'}" title="${item.description}" aria-description="${item.description}">${publishingIcon(item.icon)}<span>${item.label}</span></button>`).join('')}</div>`).join('')}
-  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('visual', 'Visual only')}${button('source', 'Source only')}${button('preview', 'Source + Preview (read-only)')}${button('allow-includes', 'Allow local includes…')}${button('revoke-includes', 'Stop local includes')}${button('writing-assistance', 'Writing assistance')}${button('help', 'Getting started', 'help')}</div>
+  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('visual', 'Visual only')}${button('source', 'Source only')}${button('preview', 'Source + Preview (read-only)')}${button('writing-assistance', 'Writing assistance')}${button('allow-image-folder', 'Allow local image folder...')}${button('revoke-image-folder', 'Stop local image folder access')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-image-dialog" aria-labelledby="publishing-image-title"><form method="dialog">
     <h2 id="publishing-image-title">Describe this image</h2>
@@ -232,18 +232,18 @@ app.innerHTML = `
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
-    <p><b>Alerts and Blocks:</b> Alerts has Note, Tip, Important, Caution and Warning. Blocks has editable tabs, selectors, steps, image descriptions and metadata. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata and block titles directly where displayed; expand <b>All metadata (YAML)</b> or image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Blocks menu entry changes to <b>Add variant content</b> for placing more content elsewhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Existing includes have editable names/paths; allow the project folder, then open the shared file in Visual to edit its own contents. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
+    <p><b>Alerts and Blocks:</b> Alerts has Note, Tip, Important, Caution and Warning. Blocks has editable tabs, selectors, image descriptions and YAML metadata. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Blocks menu entry changes to <b>Add variant content</b> for placing more content elsewhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Local include directives are preserved but never loaded. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
     <p><b>Visual + Source:</b> scrolling is synchronized in both directions by default, using document anchors and wrapped source lines. Paired documents remain independent.</p>
     <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the button to the left of Visual/Source or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
     <p><b>Find</b>: click Find or press Ctrl+F to open or close the find bar. Close and Escape also dismiss it; the search and replacement text are retained.</p>
     <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts, Insert &gt; Publishing blocks, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Create a Variant selector first; its menu entry then changes to Add variant content. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
-    <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use <b>Update table of contents</b> after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Source mode</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
+    <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use the same <b>Table of contents</b> button to refresh the existing marked list after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Source mode</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
     <p><b>Links:</b> in Visual, click a link to edit its text and address, or right-click and choose <b>Edit link...</b>. The link toolbar button and <b>Ctrl+K</b> also edit the selected link. <b>Remove link</b> keeps its text. <b>Ctrl+click</b> opens a link after confirmation; generated contents links still navigate normally.</p>
     <p><b>Source</b> lets you edit the exact Markdown text. Use it for advanced syntax or HTML the visual editor doesn't support. Visual editing may normalize Markdown syntax; switching Visual/Source modes resets that tab's undo history.</p>
     <p><b>Save</b> keeps a regular UTF-8 Markdown file. <b>Export</b> creates a separate HTML, Word, or PDF document, including the active tab's unsaved edits. HTML works offline and retains interactive tabs and variants.</p>
     <p>Insert, paste or drop an image, then choose embedding or a saved document's <b>assets</b> folder. Clipboard bitmaps become PNG. Right-click an image for <b>Copy image</b>. Embedded images travel with the Markdown; relative assets must be kept with its folder. Remote images are not fetched. Word supports PNG, JPEG, and GIF; PDF also supports WebP.</p>
     <p><b>Ctrl+N</b> New tab &nbsp; <b>Ctrl+O</b> Open &nbsp; <b>Ctrl+S</b> Save<br><b>Ctrl+W</b> Close tab &nbsp; <b>Ctrl+Tab</b> Next tab<br><b>Ctrl+Alt+S</b> Save all &nbsp; <b>Ctrl+P</b> PDF<br><b>Ctrl+0-6</b> Paragraph / Headings &nbsp; <b>Ctrl+T</b> Table<br><b>Ctrl+F</b> Find &nbsp; <b>Ctrl+/</b> Switch mode &nbsp; <b>F9</b> Focus</p>
-    <p><b>Source + Preview</b> shows a read-only rendering beside your editable Markdown, with optional synchronized scrolling. Mermaid diagrams render locally. Use the single-row toolbar or Insert menu for a Mermaid template and to update a marked table of contents.</p>
+    <p><b>Source + Preview</b> shows a read-only rendering beside your editable Markdown, with optional synchronized scrolling. Mermaid diagrams render locally. Use the single-row toolbar or Insert menu for a Mermaid template and the Table of contents action.</p>
     <p>Local draft recovery covers every unsaved tab. Save regularly; recovery is not a substitute for backups. Rendered math is not supported.</p>
     <form method="dialog"><button class="primary">Let's write</button></form>
   </dialog>
@@ -472,6 +472,20 @@ function refreshPreview(tab: DocumentTab): void {
   });
 }
 
+function refreshLocalImages(id: string): void {
+  for (const tab of tabs) {
+    if (tab.id !== id) continue;
+    for (const image of tab.pane.querySelectorAll<HTMLImageElement>('img[data-lekh-source]')) {
+      const source = image.getAttribute('src');
+      if (!source) continue;
+      const refreshed = new URL(source);
+      if (refreshed.protocol !== 'lekh-image:') continue;
+      refreshed.searchParams.set('refresh', String(Date.now()));
+      image.src = refreshed.href;
+    }
+  }
+}
+
 function togglePreview(): void {
   if (!activeTab) return;
   const enabled = !activeTab.preview;
@@ -650,11 +664,6 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
         await insertPublishingBlock('publishing-zone', position + selector.nodeSize);
       }).then(() => {
         if (documentId === id && mode === 'visual' && !busy && editor.isEditable && !document.querySelector('dialog[open]')) editor.view.focus();
-      }); },
-      allowIncludes: () => { void run(async () => { activateTab(id); await dispatch('allow-includes'); }); },
-      openInclude: path => { void run(async () => {
-        const opened = unwrap(await window.lekh.openPublishingInclude(id, path));
-        if (opened) { addTab(opened.id, opened.content, opened.path.split(/[\\/]/).at(-1)!, opened.path); switchMode('visual'); }
       }); },
     }),
     PublishingNode.configure({
@@ -1310,8 +1319,8 @@ async function insertPublishingBlock(kind: string, insertionPosition?: number): 
   const metadata = kind === 'publishing-metadata';
   if (metadata && publishingBlockRanges(markdown).some(block => block.kind === 'metadata' && block.from === 0)) {
     switchMode('visual');
-    const block = visual.querySelector<HTMLDetailsElement>('[data-lekh-metadata]');
-    if (block) { block.open = true; block.scrollIntoView({ block: 'nearest' }); block.querySelector<HTMLInputElement>('input')?.focus(); }
+    const block = visual.querySelector<HTMLLabelElement>('[data-lekh-metadata]');
+    if (block) { block.scrollIntoView({ block: 'nearest' }); block.querySelector<HTMLTextAreaElement>('textarea')?.focus(); }
     return true;
   }
   if (mode === 'visual') {
@@ -1475,7 +1484,7 @@ function updateToolbar(): void {
   }
   const restriction = element('export-restriction');
   restriction.hidden = !interactiveExportRequired && !exportCheckPending;
-  restriction.textContent = exportCheckPending ? 'Checking included content for tabbed examples and variants...' :
+  restriction.textContent = exportCheckPending ? 'Checking local variant configuration for tabbed examples and variants...' :
     'Tabbed examples and variants require HTML. Word and PDF are not supported for this document.';
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="export-docx"],[data-action="export-pdf"]')) {
     control.disabled = interactiveExportRequired || exportCheckPending;
@@ -1519,21 +1528,21 @@ function invalidateExportCheck(): void {
   updateToolbar();
 }
 
-async function checkIncludedExportRestrictions(): Promise<void> {
-  if (!documentId || rawInteractiveExportRequired || !(/\[!INCLUDE\b/i.test(markdown) || /^zone_pivot_groups\s*:/m.test(markdown))) return;
+async function checkLocalVariantExportRestrictions(): Promise<void> {
+  if (!documentId || rawInteractiveExportRequired || !/^zone_pivot_groups\s*:/m.test(markdown)) return;
   const id = documentId;
   const content = markdown;
   const revision = ++exportCheckRevision;
   exportCheckPending = true;
   updateToolbar();
   try {
-    const prepared = unwrap(await window.lekh.preparePublishing(id, content));
+    const prepared = unwrap(await window.lekh.prepareVariantConfiguration(id, content));
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
-      interactiveExportRequired = requiresInteractiveExport(prepared.markdown);
+      interactiveExportRequired = requiresInteractiveExport(prepared);
     }
   } catch (error) {
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
-      notify(`Could not check included content for export: ${error instanceof Error ? error.message : String(error)}`, true);
+      notify(`Could not check local variant configuration for export: ${error instanceof Error ? error.message : String(error)}`, true);
     }
   } finally {
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
@@ -1614,10 +1623,18 @@ function insertAdvanced(kind: string): void {
 }
 
 function insertContents(): void {
+  if (hasMarkedTableOfContents(markdown)) {
+    const updated = updateTableOfContents(markdown);
+    if (mode === 'visual') editor.commands.setContent(updated, { contentType: 'markdown', emitUpdate: false });
+    else source.value = updated;
+    changed(updated);
+    notify('Table of contents updated. Surrounding Markdown is unchanged.');
+    return;
+  }
   const contents = `${tableOfContents(markdown)}\n\n`;
   if (mode === 'source') insertSource(contents);
   else editor.chain().focus().insertContent(contents, { contentType: 'markdown' }).run();
-  notify('Inserted a marked table of contents. Use Insert > Update table of contents after changing headings.');
+  notify('Inserted a marked table of contents. Use the same button to refresh it after changing headings.');
 }
 
 async function save(saveAs = false): Promise<boolean> {
@@ -1864,13 +1881,6 @@ async function dispatch(action: string): Promise<void> {
     if (await insertPublishingBlock(kind)) return;
     if (kind === 'before' || kind === 'after') insertParagraph(kind === 'after');
     else if (kind === 'toc') insertContents();
-    else if (kind === 'toc-update') {
-      const content = updateTableOfContents(markdown);
-      if (mode === 'visual') editor.commands.setContent(content, { contentType: 'markdown', emitUpdate: false });
-      else source.value = content;
-      changed(content);
-      notify('Table of contents updated. Surrounding Markdown is unchanged.');
-    }
     else if (kind === 'mermaid') {
       const template = 'flowchart LR\n  A[Start] --> B[Write something]';
       if (mode === 'visual') {
@@ -1888,28 +1898,28 @@ async function dispatch(action: string): Promise<void> {
     return;
   }
   switch (action) {
-    case 'revoke-includes': {
-      unwrap(await window.lekh.revokePublishingIncludes(documentId));
+    case 'revoke-image-folder': {
+      unwrap(await window.lekh.revokeImageFolder(documentId));
       invalidateExportCheck();
+      refreshLocalImages(documentId);
       for (const tab of tabs) {
         if (tab.id !== documentId) continue;
         tab.previewMarkdown = undefined;
         refreshPreview(tab);
       }
-      window.dispatchEvent(new CustomEvent('lekh-publishing-refresh', { detail: documentId }));
-      notify('Local includes are no longer allowed for this document.');
+      notify('Project-folder image access has been stopped for this document.');
       break;
     }
-    case 'allow-includes': {
-      if (unwrap(await window.lekh.allowPublishingIncludes(documentId))) {
+    case 'allow-image-folder': {
+      if (unwrap(await window.lekh.allowImageFolder(documentId))) {
         invalidateExportCheck();
+        refreshLocalImages(documentId);
         for (const tab of tabs) {
           if (tab.id !== documentId) continue;
           tab.previewMarkdown = undefined;
           refreshPreview(tab);
         }
-        window.dispatchEvent(new CustomEvent('lekh-publishing-refresh', { detail: documentId }));
-        notify('Local includes are allowed only within the selected project folder for this document and session.');
+        notify('Project-folder images are allowed only within the selected folder for this document and session.');
       }
       break;
     }
@@ -2147,7 +2157,7 @@ document.addEventListener('click', event => {
       element(action).hidden = false;
       positionViewMenu();
       target.closest('button')!.setAttribute('aria-expanded', 'true');
-      if (action === 'export-menu') void checkIncludedExportRestrictions();
+      if (action === 'export-menu') void checkLocalVariantExportRestrictions();
     }
     return;
   }
@@ -2560,7 +2570,7 @@ for (const id of dropdownIds) {
     menu.hidden = false;
     positionViewMenu();
     trigger.setAttribute('aria-expanded', 'true');
-    if (id === 'export-menu') void checkIncludedExportRestrictions();
+    if (id === 'export-menu') void checkLocalVariantExportRestrictions();
     const items = menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
     items[event.key === 'ArrowUp' ? items.length - 1 : 0].focus();
   });

@@ -97,7 +97,15 @@ test('PDF and Word export syntax colors without editor controls or altered code'
 test('Word defines rich typography instead of relying on the consumer default heading styles', async () => {
   const zip = unzipEntries(await toDocx('# Title\n\n## Section\n\n### Detail\n\n#### Four\n\n##### Five\n\n###### Six\n\nBody text.', async () => { throw new Error('Unexpected image'); }));
   const styles = zip.get('word/styles.xml')!.toString();
-  assert.match(styles, /<w:docDefaults>[\s\S]*w:ascii="Segoe UI"[\s\S]*w:sz w:val="22"/);
+  const defaults = styles.match(/<w:docDefaults>[\s\S]*?<\/w:docDefaults>/)?.[0];
+  assert.ok(defaults);
+  assert.match(defaults, /w:ascii="Segoe UI"/);
+  assert.match(defaults, /w:sz w:val="24"/);
+  const paragraphSpacing = defaults.match(/<w:spacing\b[^>]*>/)?.[0];
+  assert.ok(paragraphSpacing);
+  assert.match(paragraphSpacing, /w:after="160"/);
+  assert.match(paragraphSpacing, /w:line="420"/);
+  assert.doesNotMatch(paragraphSpacing, /w:before="(?:[1-9]\d*)"/);
   for (const [index, size] of [51, 32, 26, 23, 22, 20].entries()) {
     const heading = styles.match(new RegExp(`<w:style[^>]*w:styleId="Heading${index + 1}"[\\s\\S]*?</w:style>`))?.[0];
     assert.ok(heading, `Heading ${index + 1} has an explicit style`);

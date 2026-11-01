@@ -49,8 +49,8 @@ const headingLevels = [
 const styles: IStylesOptions = {
   default: {
     document: {
-      run: { font: 'Segoe UI', size: 22, color: ink.text },
-      paragraph: { spacing: { before: 160, after: 160, line: 444 } },
+      run: { font: 'Segoe UI', size: 24, color: ink.text },
+      paragraph: { spacing: { before: 0, after: 160, line: 420 } },
     },
     hyperlink: { run: { color: ink.accent, underline: { type: UnderlineType.SINGLE } } },
     ...Object.fromEntries(headingSizes.map((size, index) => [`heading${index + 1}`, {
@@ -109,7 +109,7 @@ export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagr
       widowControl: true,
       numbering: marker ? { reference: list.reference, level: list.level } : undefined,
       indent: left && currentCell === null ? { left, ...(marker ? { hanging: 240 } : {}) } : undefined,
-      spacing: list ? { before: 45, after: 45, line: 444 } : undefined,
+      spacing: list ? { before: 45, after: 45, line: 420 } : undefined,
       ...(quote && currentCell === null ? {
         shading: { fill: ink.soft },
         border: { left: { color: ink.accent, style: BorderStyle.SINGLE, size: 18, space: 12 } },

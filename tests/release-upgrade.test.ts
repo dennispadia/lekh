@@ -38,11 +38,11 @@ test('real upgrade operations require explicit consent and both exact hosted-run
   assert.doesNotMatch(script, /-Verb\s+RunAs|UACONLY\s*[,)]|AlwaysInstallElevated|DisableMSI|SuppressIces|SuppressValidation|taskkill|Stop-Process\s+-Name/i);
 });
 
-test('the only old installer is the immutable public 0.9.0 asset, verified before extraction', () => {
-  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.0/Lekh-Markdown-editor-Setup-0.9.0-x64.exe'"));
-  assert.ok(script.includes("$oldSetupHash = 'af80dec1d9099e7ee228b299c56f43298044391d95ffad6ca5028912aab0448e'"));
-  assert.ok(script.includes('$oldSetupBytes = 197566464L'));
-  assert.ok(script.includes("$manifest.version -cne '0.9.1'"));
+test('the only old installer is the immutable public 0.9.1 asset, verified before extraction', () => {
+  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.1/Lekh-Markdown-editor-Setup-0.9.1-x64.exe'"));
+  assert.ok(script.includes("$oldSetupHash = 'fef16e72c9e699edf567003b10b1b12b3109b9531d9b54bc08a63d991a3bdae9'"));
+  assert.ok(script.includes('$oldSetupBytes = 197578240L'));
+  assert.ok(script.includes("$manifest.version -cne '0.9.2'"));
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
   inOrder(execution,
     'Invoke-WebRequest -UseBasicParsing -Uri $oldSetupUrl -OutFile $oldSetup -TimeoutSec 180 -UseDefaultCredentials:$false',
@@ -86,7 +86,7 @@ test('both embedded MSIs are validated for distinct identity, version and non-el
     "$_[0] -ine $upgradeCode",
   ]) assert.ok(validation.includes(guard), `Missing package guard: ${guard}`);
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
-  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.9.0'", 'Read-ValidatedMsi $newMsi $manifest.version',
+  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.9.1'", 'Read-ValidatedMsi $newMsi $manifest.version',
     '$old.ProductCode -ieq $new.ProductCode',
     '$newMsiHash = (Get-FileHash -LiteralPath $newMsi -Algorithm SHA256).Hash',
     '$newMsiHash -cne',

@@ -114,6 +114,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .dropdown button { width: 100%; justify-content: flex-start; padding: 10px; height: auto; gap: 10px; }
 .dropdown kbd { margin-left: auto; color: var(--muted); font: 11px "Segoe UI", sans-serif; }
 #export-restriction { max-width: 260px; margin: 4px; padding: 9px 10px; border-radius: 6px; background: var(--soft); color: var(--text); font-size: 12px; line-height: 1.4; }
+[data-action="export-docx"]:disabled, [data-action="export-pdf"]:disabled { opacity: .45; cursor: not-allowed; }
+[data-action="export-docx"]:disabled:hover, [data-action="export-pdf"]:disabled:hover { background: transparent; }
 #format-menu { max-height: calc(100vh - 180px); overflow-y: auto; }
 #sidebar-toggle { position: absolute; top: 10px; left: 6px; width: 28px; height: 28px; padding: 5px; color: var(--muted); background: var(--soft); }
 .icon-only { padding: 7px; width: 32px; }

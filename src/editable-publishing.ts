@@ -12,12 +12,10 @@ interface Options {
   schema: (() => Schema) | null;
   documentId: string;
   reportError: (message: string) => void;
-  allowIncludes: () => void;
-  openInclude: (source: string) => void;
   addVariantContent: (position: number) => void;
 }
 export type VariantOption = { id: string; label: string };
-const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message), allowIncludes: () => {}, openInclude: () => {},
+const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message),
   addVariantContent: () => { throw new Error('Variant content insertion is unavailable.'); } };
 let nextTabGroup = 0;
 const idPattern = /^[a-z0-9][\w-]*$/i;
@@ -94,6 +92,12 @@ const label = (value: unknown) => String(value ?? '').replace(/[\r\n]/g, ' ').re
 function includeMarkdown(attrs: Record<string, unknown>): string {
   const source = String(attrs.source ?? '').replace(/[()<>\s&]/g, character => encodeURIComponent(character));
   return `[!INCLUDE [${label(attrs.label)}](${source})]`;
+}
+function tabId(value: string, used: Map<string, number>): string {
+  const base = value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'example';
+  const count = used.get(base) ?? 0;
+  used.set(base, count + 1);
+  return `${base}${count ? `-${count + 1}` : ''}`;
 }
 function children(tokens: MarkdownToken[], helpers: MarkdownParseHelpers): JSONContent[] {
   const content = (helpers.parseBlockChildren ?? helpers.parseChildren)(tokens);
@@ -381,10 +385,11 @@ const TabsNode = Node.create<Options>({
   renderMarkdown(node, helpers) {
     const raw = original(node, this.options.schema?.() ?? null);
     if (raw !== null) return raw;
+    const usedIds = new Map<string, number>();
     const panels = (node.content ?? []).map(panel => {
       const content = body(panel, helpers);
       return node.attrs?.syntax === 'directive' ? `:::tab ${String(panel.attrs?.label).replace(/[\r\n]/g, ' ')}\n${content}\n:::tab-end`
-        : `${'#'.repeat(Math.min(6, Math.max(1, Number(panel.attrs?.level))))} [${label(panel.attrs?.label)}](#tab/${panel.attrs?.id})\n\n${content}`;
+        : `${'#'.repeat(Math.min(6, Math.max(1, Number(panel.attrs?.level))))} [${label(panel.attrs?.label)}](#tab/${tabId(String(panel.attrs?.label), usedIds)})\n\n${content}`;
     }).join('\n\n');
     return node.attrs?.syntax === 'directive' ? `:::tabs\n${panels}\n:::tabs-end` : `${panels}\n\n---`;
   },
@@ -571,35 +576,6 @@ const SelectorNode = Node.create<Options>({
   },
 });
 
-function metadataValue(yaml: string, key: string): string {
-  const value = new RegExp(`^${key}:[ \\t]*(.*)$`, 'm').exec(yaml)?.[1] ?? '';
-  const doubleQuoted = /^("(?:\\.|[^"\\])*")\s*(?:#.*)?$/.exec(value);
-  if (doubleQuoted) { try { return JSON.parse(doubleQuoted[1]) as string; } catch { return value; } }
-  const singleQuoted = /^'((?:[^']|'')*)'\s*(?:#.*)?$/.exec(value);
-  return singleQuoted ? singleQuoted[1].replace(/''/g, "'") : value.replace(/\s+#.*$/, '').trim();
-}
-export function updateMetadataValue(yaml: string, key: 'title' | 'description', value: string): string {
-  const pattern = new RegExp(`^${key}:[^\\r\\n]*`, 'm');
-  const line = `${key}: ${JSON.stringify(value)}`;
-  const current = pattern.exec(yaml)?.[0];
-  if (current && /:\s*[|>]/.test(current)) throw new Error('This field uses multiline YAML. Expand All metadata (YAML) to edit it without flattening the value.');
-  let comment = '';
-  let quoted = '';
-  for (let index = (current?.indexOf(':') ?? -1) + 1; current && index < current.length; index++) {
-    const char = current[index];
-    if (quoted) {
-      if (char === '\\' && quoted === '"') index++;
-      else if (char === quoted) {
-        if (quoted === "'" && current[index + 1] === "'") index++;
-        else quoted = '';
-      }
-    } else if (char === '"' || char === "'") quoted = char;
-    else if (char === '#' && /\s/.test(current[index - 1] ?? '')) { comment = ` ${current.slice(index)}`; break; }
-  }
-  const newline = yaml.includes('\r\n') ? '\r\n' : '\n';
-  return current ? yaml.replace(pattern, () => line + comment) : `${yaml.trimEnd()}${newline}${line}${newline}`;
-}
-
 const MetadataNode = Node.create<Options>({
   name: 'lekhMetadata', group: 'block', atom: true, addOptions: () => defaults,
   addAttributes: () => ({ ...provenance(), yaml: { default: '', rendered: false, parseHTML: element => element.textContent ?? '' } }),
@@ -612,70 +588,19 @@ const MetadataNode = Node.create<Options>({
     return ({ editor, node, getPos }) => {
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-metadata-block publishing-editable'; dom.contentEditable = 'false';
-      const details = document.createElement('details'); details.className = 'publishing-metadata'; details.dataset.lekhMetadata = '';
-      details.open = true;
-      const summary = document.createElement('summary'); summary.textContent = 'Document metadata';
-      const fields = (['title', 'description'] as const).map(key => {
-        const input = field(context, key === 'title' ? 'Document title' : 'Document description',
-          () => metadataValue(String(context.node.attrs.yaml), key), value => {
-            try { set({ yaml: updateMetadataValue(String(context.node.attrs.yaml), key, value) }); }
-            catch (error) { input.input.setCustomValidity(error instanceof Error ? error.message : String(error)); }
-          });
-        return input;
-      });
-      const yaml = field(context, 'Metadata YAML (all fields)', () => String(context.node.attrs.yaml), value => {
+      const yaml = field(context, 'Metadata YAML', () => String(context.node.attrs.yaml), value => {
         const first = value.split(/\r?\n/).find(line => line.trim() && !line.trimStart().startsWith('#')) ?? '';
         const error = /^(?:---|\.\.\.)[ \t]*$/m.test(value) ? 'Metadata delimiter lines belong outside the YAML fields.' :
           !/^(?:[\w.-]+|"[^"]+"|'[^']+')[ \t]*:/.test(first) ? 'Keep at least one name: value metadata field, or delete the metadata block.' : '';
         yaml.input.setCustomValidity(error);
         if (!error) set({ yaml: value });
       }, true);
-      const advanced = document.createElement('details'); advanced.className = 'publishing-advanced';
-      const allFields = document.createElement('summary'); allFields.textContent = 'All metadata (YAML)';
-      advanced.append(allFields, yaml.wrapper);
-      details.append(summary, ...fields.map(field => field.wrapper), advanced, paragraphAfter(context));
-      const configured = document.createElement('div');
-      const customize = tool('Make these choices editable', () => {
-        const position = getPos();
-        if (!editor.isEditable || typeof position !== 'number' || !editor.markdown) { options.reportError('Wait for the current operation to finish.'); return; }
-        if (documentVariantOptions(editor).length) { options.reportError('This document already has an editable selector. Edit its choices directly.'); return; }
-        const title = configured.querySelector<HTMLElement>('.publishing-selector-title')?.textContent ?? 'Choose an option';
-        const choices = [...configured.querySelectorAll<HTMLElement>('[data-publishing-variant]')].map(control => ({ id: control.dataset.publishingVariant!, label: control.textContent ?? '' }));
-        if (!choices.length) { options.reportError('Allow the project folder to load the configured choices first.'); return; }
-        const raw = `:::selector title="${quote(title)}"\n${choices.map(option => `- [${label(option.label)}](#variant/${option.id})`).join('\n')}\n:::selector-end`;
-        editor.commands.insertContentAt(position + context.node.nodeSize, editor.markdown.parse(raw).content ?? []);
-      });
-      customize.hidden = true;
-      dom.append(details, configured, customize);
-      let revision = 0; let destroyed = false; let lastConfiguration = '';
-      const refreshConfiguration = async (force = false) => {
-        const yaml = String(context.node.attrs.yaml);
-        const signature = `${yaml}\u0000${documentVariantOptions(editor).length > 0}`;
-        if (!force && signature === lastConfiguration) return;
-        lastConfiguration = signature;
-        const current = ++revision;
-        if (!/^zone_pivot_groups\s*:/m.test(yaml) || documentVariantOptions(editor).length) { configured.replaceChildren(); customize.hidden = true; return; }
-        try {
-          const html = await publishingHTML(`---\n${yaml}\n---`, options.documentId);
-          if (destroyed || current !== revision) return;
-          const template = document.createElement('template'); template.innerHTML = html;
-          const selector = template.content.querySelector<HTMLElement>('[data-publishing-selector]');
-          configured.replaceChildren();
-          if (selector) configured.append(selector);
-          customize.hidden = !selector;
-          initializePublishing(configured, options.reportError);
-        } catch (error) {
-          if (!destroyed && current === revision) { configured.textContent = `Configured variants could not be loaded: ${String(error)}`; options.reportError(configured.textContent); }
-        }
-      };
-      const refreshed = (event: Event) => { if (event instanceof CustomEvent && event.detail === options.documentId) void refreshConfiguration(true); };
-      const documentUpdated = () => { void refreshConfiguration(); };
-      window.addEventListener('lekh-publishing-refresh', refreshed);
-      editor.on('update', documentUpdated);
-      void refreshConfiguration();
+      yaml.wrapper.dataset.lekhMetadata = '';
+      yaml.input.placeholder = 'Add YAML metadata…';
+      yaml.wrapper.querySelector('span')?.remove();
+      dom.append(yaml.wrapper);
       return { dom, ...ignoreControls(dom),
-        update: updated => { if (updated.type !== node.type) return false; context.node = updated; [...fields, yaml].forEach(field => field.refresh()); void refreshConfiguration(); return true; },
-        destroy: () => { destroyed = true; revision++; editor.off('update', documentUpdated); window.removeEventListener('lekh-publishing-refresh', refreshed); } };
+        update: updated => { if (updated.type !== node.type) return false; context.node = updated; yaml.refresh(); return true; } };
     };
   },
 });
@@ -693,34 +618,18 @@ const IncludeNode = Node.create<Options>({
     return ({ editor, node, getPos }) => {
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-include publishing-editable'; dom.dataset.lekhInclude = ''; dom.contentEditable = 'false';
-      const title = document.createElement('strong'); title.textContent = 'Local include';
-      const name = field(context, 'Include name', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
-      const source = field(context, 'Include path', () => String(context.node.attrs.source), value => set({ source: value }), false, true);
-      const hint = document.createElement('p'); hint.className = 'publishing-field-hint'; hint.textContent = 'The path is editable here. Shared text belongs to its own file; allow its project folder, then open that file in Visual to edit it.';
-      const preview = document.createElement('div'); preview.className = 'publishing-include-preview';
-      let revision = 0; let destroyed = false; let timer: ReturnType<typeof setTimeout> | undefined;
-      const refreshPreview = async () => {
-        const current = ++revision;
-        try {
-          const html = await publishingHTML(includeMarkdown(context.node.attrs), options.documentId);
-          if (!destroyed && current === revision) { preview.innerHTML = html; preview.classList.remove('publishing-error'); }
-        } catch (error) {
-          if (!destroyed && current === revision) { preview.textContent = `Include preview unavailable: ${String(error)}`; preview.classList.add('publishing-error'); }
-        }
-      };
-      const refreshed = (event: Event) => { if (event instanceof CustomEvent && event.detail === options.documentId) void refreshPreview(); };
-      window.addEventListener('lekh-publishing-refresh', refreshed);
-      dom.append(title, name.wrapper, source.wrapper, hint, tool('Allow project folder…', options.allowIncludes),
-        tool('Open shared file in Visual', () => options.openInclude(String(context.node.attrs.source))), preview, paragraphAfter(context));
-      void refreshPreview();
-      return { dom, ...ignoreControls(dom),
-        update: updated => {
-          if (updated.type !== node.type) return false;
-          context.node = updated; name.refresh(); source.refresh(); revision++;
-          clearTimeout(timer); timer = setTimeout(() => { void refreshPreview(); }, 300);
-          return true;
-        },
-        destroy: () => { destroyed = true; revision++; clearTimeout(timer); window.removeEventListener('lekh-publishing-refresh', refreshed); } };
+        const title = document.createElement('strong'); title.textContent = 'Include directive (not loaded)';
+        const name = field(context, 'Include name', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
+        const source = field(context, 'Include path', () => String(context.node.attrs.source), value => set({ source: value }), false, true);
+        const hint = document.createElement('p'); hint.className = 'publishing-field-hint'; hint.textContent = 'The directive is preserved in Markdown. Referenced files are not opened or included.';
+        dom.append(title, name.wrapper, source.wrapper, hint, paragraphAfter(context));
+        return { dom, ...ignoreControls(dom),
+          update: updated => {
+            if (updated.type !== node.type) return false;
+            context.node = updated; name.refresh(); source.refresh();
+            return true;
+          },
+        };
     };
   },
 });

@@ -98,7 +98,7 @@ The same commands are available from the native Insert menu and right-click **In
 Each alert has a semantic icon, text label and colored leading border. Meaning does not depend on color alone.
 Undo/redo includes alert insertion, body edits and type changes. Unchanged non-reference alerts retain their source syntax; edited alerts save as ordinary `> [!TYPE]` Markdown.
 During Visual edits, reference links and images may be written with resolved inline destinations to keep dependencies valid across blocks. Manage shared reference definitions in Source when removing a block that owns them.
-Supported containers, including tabs and variant bodies around an alert, are editable too. Shared included text belongs to its own file; use its **Open shared file in Visual** button to edit that file.
+Supported containers, including tabs and variant bodies around an alert, are editable too. Local include directives stay visible but are not loaded.
 
 ![Directly editable alerts in Light](images/alerts-light.png)
 
@@ -106,10 +106,10 @@ Supported containers, including tabs and variant bodies around an alert, are edi
 
 #### Tabs and variant selectors
 
-**Blocks** includes **Tabbed examples, Variant selector, Structured steps, Image with description, and Document metadata**. Variant content is a follow-on action after creating a selector, not a separate starting option.
-Select existing content before choosing tabs, steps or variant content to retain it inside the new body. A selector inserts only choices, retaining selected prose separately rather than bundling variant bodies.
+**Blocks** includes **Tabbed examples, Variant selector, Image with description, and Document metadata**. Variant content is a follow-on action after creating a selector, not a separate starting option.
+Select existing content before choosing tabs or variant content to retain it inside the new body. A selector inserts only choices, retaining selected prose separately rather than bundling variant bodies.
 
-**Tabbed examples:** select a tab and type/format directly in its body, with no separate tab-name form above the content. Double-click the name on the tab, or focus it and press **F2**, to rename it in place. **Enter** finishes renaming; **Escape** restores the previous name. The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Keep at least one tab or delete the entire group. **Write after block** places a normal paragraph after the group.
+**Tabbed examples:** select a tab and type/format directly in its body, with no separate tab-name form above the content. Double-click the name on the tab, or focus it and press **F2**, to rename it in place. **Enter** finishes renaming; **Escape** restores the previous name. The Source heading's `#tab/` identifier follows the tab label (for example, **Service Principal** becomes `#tab/serviceprincipal`). The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Keep at least one tab or delete the entire group. **Write after block** places a normal paragraph after the group.
 
 **Variant selector and distributed content:**
 
@@ -135,32 +135,21 @@ Read-only previews hide inactive content. Interactive HTML export retains all al
 
 ![Right-click publishing tools stay anchored beside their parent menu](images/context-publishing-dark.png)
 
-![Edit tab names, rich example bodies and structured procedures directly in Visual](images/publishing-editing-dark.png)
+![Edit tab names and rich example bodies directly in Visual](images/publishing-editing-dark.png)
 
-#### Metadata, includes and complex blocks
+#### Metadata and complex blocks
 
-**Structured steps** have a rich editable body. Use ordinary list/paragraph formatting and **Write after block** to continue outside the container.
 **Image with description** has editable source, alternate text and caption fields. A complex image's long description is rich editable content; **Add long description** creates one for an ordinary described image.
-**Document metadata** shows its title and description as directly editable text outside article content; collapse the block when finished. **All metadata (YAML)** keeps the full YAML editor out of the way until needed. Arbitrary keys and comments are retained. Multiline YAML values are edited in that YAML editor, not flattened into a simple input. Keep at least one `name: value` field or delete the entire block; delimiter lines are managed separately. Lekh does not evaluate YAML tags or claim complete schema validation.
+**Document metadata** is a single YAML field outside article content. Edit every field, including multiline values, directly in the box; arbitrary keys and comments are retained. Keep at least one `name: value` field or delete the entire block; delimiter lines are managed separately. Lekh does not evaluate YAML tags or claim complete schema validation.
 
-Block titles, include names/paths and image captions are edited directly where displayed. Image source and alternate text remain available under **Image source and alternate text**, while long descriptions, structured steps and variant content use normal rich document editing. These controls keep undo/redo and accessible field names without repeating visible form labels.
-Documents containing tabbed examples, variant selectors, or variant content cannot be exported to DOCX or PDF. Choose **Export → Interactive HTML** instead; the Export menu explains the restriction. It also applies when an authorized local include supplies one of these blocks. Documents with metadata alone still support DOCX and PDF.
+Image captions are edited directly where displayed. Image source and alternate text remain available under **Image source and alternate text**, while long descriptions and variant content use normal rich document editing. These controls keep undo/redo and accessible field names without repeating visible form labels.
+Documents containing tabbed examples, variant selectors, or variant content cannot be exported to DOCX or PDF. Those export options are disabled in the menu; choose **Export → Interactive HTML** instead. Local include directives are not resolved, so export restrictions are based only on the current document. Documents with metadata alone still support DOCX and PDF.
 Unsupported or over-depth directives remain source-preserving and visibly identified. **Edit block** opens their raw syntax inline within Visual, without switching the document to Source.
 
-![Edit metadata fields and arbitrary YAML directly in the Visual document](images/publishing-fields-dark.png)
+![Edit the complete metadata YAML directly in the Visual document](images/publishing-fields-dark.png)
 
-For existing local include directives, Lekh retains editing and permission controls even though there is no Local include insertion option:
-
-1. Save the Markdown document inside its project folder.
-2. Choose **More tools > Allow local includes**, or **View > Allow local includes**.
-3. Select a folder containing this document and the intended included files.
-4. Preview and exports may now resolve bounded local includes inside that folder. Paths escaping it, missing files, cycles and size/depth limits are reported explicitly.
-   Edit an include's name/path directly in its Visual card. **Open shared file in Visual** opens only that authorized Markdown file in its own tab, even if its child includes need fixing. Changes are saved explicitly to the shared file; the parent's directive is not flattened or rewritten. Saving refreshes authorized parent previews.
-5. Choose **Stop local includes** to revoke access, or close the document. Grants are not remembered between sessions.
-
-Opening a shared file does not transfer the parent's include/image grant. Allow that new document's project folder separately if it needs sibling assets or further includes.
-If publishing labels are defined in a local `zone-pivot-groups.yml`, allow the project folder so available definitions can be used. **Make these choices editable** creates one explicit Visual selector for this document; it does not modify the external configuration. This also enables independent variant-content insertion. Otherwise selectors show discovered IDs with an explanation.
-Lekh never downloads includes, images or publishing configuration from the internet.
+Existing local include directives remain visible and editable as source-preserving blocks, but referenced files are never opened or loaded. Lekh does not fetch remote content. Relative images inside the Markdown file's folder continue to work; use **More (...) > Allow local image folder...** to grant this document access to images in a containing project folder. That grant is session-only and can be removed with **Stop local image folder access**.
+If publishing labels are defined in a local `zone-pivot-groups.yml`, allowing the image folder also lets Lekh use those definitions. **Make these choices editable** creates one explicit Visual selector for this document; it does not modify the external configuration. This also enables independent variant-content insertion. Otherwise selectors show discovered IDs with an explanation.
 Features requiring a publishing site's complete build pipeline are not simulated as successful output; unsupported syntax remains identified and preserved.
 
 ### Editor views and formatting
@@ -236,7 +225,7 @@ Paragraph and Insert commands are also available under the native **Edit** menu.
 
 **Footnote, link reference, math block, and YAML** commands insert editable Markdown syntax in **Source mode**. From Visual mode they insert at the document's end (YAML goes at the top); from Source mode they use the current selection. YAML insertion refuses to duplicate an existing opening front-matter block. Footnotes and link references use unique reference numbers. Math and footnotes do not have formatted rendering or structured export support yet; keep them in Source mode to preserve the syntax. YAML is preserved in the metadata view and omitted from article-body exports. Standard Markdown link references are resolved by the renderer/exporter.
 
-**Table of contents** inserts a list enclosed by `<!-- lekh:toc -->` and `<!-- /lekh:toc -->`. Choose **Insert > Update table of contents** (also under **More formatting**) after changing headings. Update replaces only that marked block, preserving surrounding source; duplicate heading names get distinct anchors. Visual editing preserves the block as a single contents node. Update requires exactly one well-formed marked block outside code fences; unmarked lists must be replaced with a newly inserted marked contents list. Its links navigate within Visual, Preview/PDF, and exported Word documents; Word uses heading bookmarks for internal destinations.
+**Table of contents** is one action: it inserts a marked list when none exists, then refreshes that same list when used again after changing headings. The list is enclosed by `<!-- lekh:toc -->` and `<!-- /lekh:toc -->`; refresh replaces only that marked block, preserving surrounding source. Duplicate heading names get distinct anchors. Visual editing preserves the block as a single contents node. Refresh requires exactly one well-formed marked block outside code fences; unmarked lists must be replaced with a newly inserted marked contents list. Its links navigate within Visual, Preview/PDF, and exported Word documents; Word uses heading bookmarks for internal destinations.
 
 ### Mermaid diagrams
 
@@ -296,7 +285,7 @@ Choose **Export → Interactive HTML** to create one `.html` file, then open it 
 
 Click an example tab or use Left/Right, Home and End to navigate its tabs. Variant choices update matching content throughout the document, including content above the selector. Heading links reveal the tab and variant containing their destination, including nested examples. If variant content has no selector, HTML provides one using the variant IDs. When JavaScript is disabled, all labeled alternatives remain visible instead of becoming inaccessible.
 
-The HTML file contains **all** alternatives, including those not currently selected, and any authorized included content. Share it only with people allowed to see the entire document. Metadata remains outside the exported article. Missing, invalid, remote or unauthorized images cause an explicit export error.
+The HTML file contains **all** alternatives, including those not currently selected. Local include directives remain inert and their referenced files are never read. Share the exported file only with people allowed to see the entire document. Metadata remains outside the exported article. Missing, invalid, remote or unauthorized images cause an explicit export error.
 
 ### DOCX and PDF formatting
 

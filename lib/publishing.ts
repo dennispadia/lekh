@@ -314,7 +314,7 @@ function inspect(lines: Lines, start: number, end: number, metadata: boolean): B
       body: scanned.body, bodyLine: start + 1,
     };
   }
-  if (includePattern.test(line)) return unsupported(start + 1, 'Include not rendered. Authorize local includes to resolve this source.', 'include');
+  if (includePattern.test(line)) return unsupported(start + 1, 'Local include directives are preserved but not loaded.', 'include');
   if (tabPattern.test(line)) {
     // Explicit terminators take priority over headings without rescanning later implicit groups.
     const group = docfxTabs(line, offset => start + offset < end ? lines.text[start + offset] : undefined,
@@ -718,7 +718,7 @@ export function registerPublishing(parser: MarkdownIt): void {
   };
   parser.renderer.rules.publishing_tab_close = () => '</section>\n';
   parser.renderer.rules.publishing_metadata = (tokens, index, _options, env) => env.publishingExport ? '' :
-    `<details class="publishing-metadata"><summary>Document metadata</summary><pre>${escape(tokens[index].content)}</pre></details>\n`;
+    `<pre class="publishing-metadata">${escape(tokens[index].content)}</pre>\n`;
   parser.renderer.rules.publishing_unsupported = (tokens, index) =>
     `<aside class="publishing-unsupported" role="note"><p>${escape((tokens[index].meta as PublishingMeta).reason!)}</p><pre>${escape(tokens[index].content)}</pre></aside>\n`;
 }
@@ -772,9 +772,9 @@ ${Object.entries(publishingCalloutPalette).map(([name, colors]) =>
 .publishing-image-bordered img { border: 1px solid #dde5e5; }
 .publishing-image figcaption { color: var(--muted, #607078); font-size: .9em; margin: .4em 0; }
 .publishing-metadata,.publishing-unsupported { margin: 1em 0; border: 1px solid var(--line, #dde5e5); border-radius: 6px; padding: .75em 1em; }
-.publishing-metadata summary { cursor: pointer; font-weight: 650; }
 .publishing-unsupported { border-color: #b7791f; background: #fff8e6; color: #263238; }
-.publishing-metadata pre,.publishing-unsupported pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85em; }
+.publishing-metadata { white-space: pre-wrap; overflow-wrap: anywhere; font: .85em/1.6 Consolas, monospace; }
+.publishing-unsupported pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .85em; }
 .publishing-unsupported pre { background: #fff3d4; color: #263238; border-color: #b7791f; }
 :root[data-theme="dark"] .publishing-unsupported { background: #3a2c17; color: #fff4df; border-color: #c69742; }
 :root[data-theme="dark"] .publishing-unsupported pre { background: #241e13; color: #fff4df; border-color: #8c6c35; }

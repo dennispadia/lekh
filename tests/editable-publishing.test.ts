@@ -12,7 +12,7 @@ import type { Schema, Node as ModelNode } from '@tiptap/pm/model';
 import { EditorState } from '@tiptap/pm/state';
 import { AlertNode } from '../src/alert-node.js';
 import { PublishingNode } from '../src/publishing-node.js';
-import { EditablePublishing, updateMetadataValue } from '../src/editable-publishing.js';
+import { EditablePublishing } from '../src/editable-publishing.js';
 import { editablePublishingBlockAtStart } from '../lib/publishing.js';
 import { publishingTemplateMarkdown } from '../lib/publishing-templates.js';
 import { documentPreviewHTML } from '../lib/markdown.js';
@@ -124,6 +124,23 @@ test('each tab has editable body and label; editing one retains every alternativ
   assert.equal(parsed.firstChild!.childCount, 2);
 });
 
+test('renamed tab labels become readable source tab identifiers', () => {
+  const { parse, manager } = fixture();
+  const doc = parse('# [First example](#tab/firstexample)\nFirst.\n\n# [Second example](#tab/secondexample)\nSecond.\n\n# [Third example](#tab/thirdexample)\nThird.\n\n---');
+  const group = doc.firstChild!;
+  let position = 1;
+  let tr = EditorState.create({ schema: doc.type.schema, doc }).tr;
+  for (const [index, name] of ['MSI', 'Service Principal', 'Both'].entries()) {
+    const panel = tr.doc.firstChild!.child(index);
+    tr = tr.setNodeMarkup(position, undefined, { ...panel.attrs, label: name });
+    position += panel.nodeSize;
+  }
+  const saved = manager.serialize(tr.doc.toJSON());
+  assert.match(saved, /# \[MSI\]\(#tab\/msi\)/);
+  assert.match(saved, /# \[Service Principal\]\(#tab\/serviceprincipal\)/);
+  assert.match(saved, /# \[Both\]\(#tab\/both\)/);
+});
+
 test('nested alerts, lists, code, tables and tab groups preserve editable structure', () => {
   const { parse, manager } = fixture();
   const raw = `${selector}\n\n:::zone pivot="zones,scale-set"\n> [!NOTE]\n> Rich **alert**.\n\n:::steps\n1. One\n2. Two\n:::steps-end\n\n:::tabs\n:::tab Code\n\`\`\`js\nconst x = \":::zone-end\";\n\`\`\`\n:::tab-end\n:::tab Table\n| A | B |\n| - | - |\n| 1 | 2 |\n:::tab-end\n:::tabs-end\n:::zone-end`;
@@ -138,22 +155,18 @@ test('nested alerts, lists, code, tables and tab groups preserve editable struct
   assert.match(saved, /const x = ":::zone-end";/);
 });
 
-test('metadata edits preserve arbitrary fields/comments and avoid evaluating YAML', () => {
+test('metadata YAML is edited as one field, preserving arbitrary fields/comments without evaluating YAML', () => {
   const raw = '# Kept comment\ntitle: Old\ndescription: Old description\ncustom: [one, two]\nunsafe: !!js/function >\n  function(){}\n';
-  const changed = updateMetadataValue(raw, 'title', 'New: "quoted" title');
-  assert.ok(changed.includes('# Kept comment'));
-  assert.ok(changed.includes('custom: [one, two]'));
-  assert.ok(changed.includes('unsafe: !!js/function'));
-  assert.ok(changed.includes('title: "New: \\"quoted\\" title"'));
-  assert.throws(() => updateMetadataValue('title: |\n  Multiline\n', 'title', 'Changed'), /multiline/);
-  assert.equal(updateMetadataValue('title: "Keep # literal" # keep comment\n', 'title', 'Changed'), 'title: "Changed" # keep comment\n');
-  assert.equal(updateMetadataValue('title: "Keep # literal"\n', 'title', 'Changed'), 'title: "Changed"\n');
   const { parse, manager } = fixture();
   const doc = parse(`---\n${raw}---\n\nBody.`);
   const metadata = doc.firstChild!;
+  const changed = raw.replace('title: Old', 'title: "New: \\"quoted\\" title"');
   const edited = EditorState.create({ schema: doc.type.schema, doc }).tr.setNodeMarkup(0, undefined, { ...metadata.attrs, yaml: changed }).doc;
   const saved = manager.serialize(edited.toJSON());
-  assert.ok(saved.includes(changed.trimEnd()));
+  assert.ok(saved.includes('# Kept comment'));
+  assert.ok(saved.includes('title: "New: \\"quoted\\" title"'));
+  assert.ok(saved.includes('custom: [one, two]'));
+  assert.ok(saved.includes('unsafe: !!js/function'));
   assert.match(saved, /Body\./);
   assert.doesNotMatch(documentPreviewHTML(saved, 'test'), /<script\b|<iframe\b/);
 });

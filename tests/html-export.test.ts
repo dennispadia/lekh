@@ -1,11 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
-import os from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { imageDimensions, toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
-import { preparePublishing } from '../lib/includes.js';
 import { requiresInteractiveExport } from '../lib/markdown.js';
 import { unzipEntries } from './zip.js';
 
@@ -104,21 +101,12 @@ test('metadata alone remains exportable to every format and is excluded from art
   assert.match(word.get('word/document.xml')!.toString(), /Public article/);
 });
 
-test('authorized included tabs and variants also prohibit static export', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-html-includes-'));
-  try {
-    const document = path.join(root, 'article.md');
-    const parent = '# Article\n\n[!INCLUDE [Shared](shared.md)]\n';
-    await writeFile(document, parent);
-    for (const shared of [tabs, ':::zone pivot=first\nIncluded variant.\n:::zone-end\n']) {
-      await writeFile(path.join(root, 'shared.md'), shared);
-      assert.equal(requiresInteractiveExport(parent), false);
-      const prepared = await preparePublishing(parent, document, root);
-      assert.equal(requiresInteractiveExport(prepared.markdown), true);
-      await assert.rejects(() => toPrintHTML(prepared.markdown, document, undefined, root), /Word and PDF export.*HTML/);
-      await assert.rejects(() => toDocx(prepared.markdown, async () => { throw new Error('No image expected'); }), /Word and PDF export.*HTML/);
-      const html = await toOfflineHTML(prepared.markdown, document, undefined, root);
-      assert.ok(html.includes(shared === tabs ? 'Second body.' : 'Included variant.'));
-    }
-  } finally { await rm(root, { recursive: true, force: true }); }
+test('local include directives stay inert and never affect export restrictions', async () => {
+  const source = '# Article\n\n[!INCLUDE [Shared](shared.md)]\n';
+  assert.equal(requiresInteractiveExport(source), false);
+  const html = await toOfflineHTML(source, null);
+  assert.match(html, /\[!INCLUDE/);
+  assert.doesNotMatch(html, /Second body|Included variant/);
+  await assert.doesNotReject(() => toPrintHTML(source, null));
+  await assert.doesNotReject(() => toDocx(source, async () => { throw new Error('No image expected'); }));
 });

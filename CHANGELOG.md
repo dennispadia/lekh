@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.2
+
+- Use the provided tab names as Markdown tab headings and identifiers (for example, `# [Service Principal](#tab/serviceprincipal)`).
+- Remove Structured steps from the block toolbar and menus.
+- Simplify Document metadata to a single YAML editing box.
+- Remove local include loading and authorization entirely. Existing include directives stay in the source and display as not loaded; they are never read or exported.
+- Show only the heading text, not linked URLs, in generated tables of contents.
+- Combine Insert and Refresh table of contents into one action that inserts a table of contents or refreshes the existing one.
+- Tighten Word export typography to match the Visual editor: 12 pt body text, 1.75 line spacing, and spacing only after paragraphs.
+- Guard the genuine 0.9.1 -> 0.9.2 hosted upgrade matrix.
+
 ## 0.9.1
 
 - Remove Local include from the block insertion menus; existing include directives and their explicit access controls continue to work.
