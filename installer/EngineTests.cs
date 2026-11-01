@@ -78,6 +78,15 @@ namespace Lekh.Setup
             Reject(() => p.Message(4, 1, 0, 0), "Unknown progress rejected.");
             Check(SetupPolicy.IsSuccess(0) && SetupPolicy.IsSuccess(3010), "Success and restart codes.");
             Check(!SetupPolicy.IsSuccess(1602) && !SetupPolicy.IsSuccess(1603), "Cancellation/failure aren't success.");
+            Check(SetupPolicy.CompletionIssue(0, false, false, null) == null, "A successful installation without callback issues remains successful.");
+            Check(SetupPolicy.CompletionIssue(0, false, true, "Callback failed.").Contains("reports that Lekh was installed"),
+                "A successful MSI result cannot hide a callback failure or falsely claim rollback.");
+            Check(SetupPolicy.CompletionIssue(3010, true, false, "Files in use.").Contains("requested a restart"),
+                "A completed installation with a callback issue still reports the required restart.");
+            Check(SetupPolicy.CompletionIssue(1602, true, false, "Files in use.") == "Files in use.",
+                "A cancelled files-in-use operation reports its real cause.");
+            Check(SetupPolicy.CompletionIssue(1603, false, true, "Callback failed.") == null,
+                "Other MSI failures continue through the normal error-code path.");
             NativeEngine engine = new NativeEngine(update => { }, text => { });
             Check(!engine.Installed, "Repair cache retention starts false, independently of UI exit codes.");
             Check(SetupPolicy.InstallProperties.Contains("DisableShutdown") &&
@@ -269,9 +278,14 @@ namespace Lekh.Setup
                 Check(lifecycle.Callback(IntPtr.Zero, 0x0c000000, 0) == 1 &&
                     lifecycle.Callback(IntPtr.Zero, 0x0d000000, 0) == 1 && lifecycle.Callback(IntPtr.Zero, 0x0e000000, 0) == 1 && !lifecycle.CallbackFailed,
                     "Only documented initialize/terminate/show-dialog lifecycle messages are handled without reading a record.");
-                Check(lifecycle.Callback(IntPtr.Zero, 0x0a000000, 0) == 2 && lifecycle.CallbackFailed &&
-                    lifecycle.FailureMessage.Contains("type=0x0A000000") && lifecycle.FailureMessage.Contains("handle=0x00000000"),
-                    "Null-handle progress is still an error after subscription, with exact wire diagnostics.");
+                Check(lifecycle.Callback(IntPtr.Zero, 0x0a000000, 0) == 1 && !lifecycle.CallbackFailed,
+                    "A null-handle progress notification does not abort an active installer.");
+                lifecycle.Cancel();
+                Check(lifecycle.Callback(IntPtr.Zero, 0x0a000000, 0) == 2 && !lifecycle.CallbackFailed && !lifecycle.CanCancel,
+                    "A null-handle progress notification still delivers a requested cancellation.");
+                NativeEngine invalidAction = new NativeEngine(update => { }, text => { });
+                Check(invalidAction.Callback(IntPtr.Zero, 0x08000000, 0) == 2 && invalidAction.CallbackFailed,
+                    "A missing action-start record remains a real callback error.");
                 Console.WriteLine("PASS: actual restricted MSI wire proves open-before-register, valid borrowed records, filter/ABI routing and strict malformed-record rejection; no INSTALL executed. Opening emitted null progress on this run: " + initializationProgress + ".");
             }
             finally
@@ -301,6 +315,12 @@ namespace Lekh.Setup
             WithProgressRecord(4, new int?[] { 0, 100, 0, 0 }, record =>
                 Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1, "Native reset record accepted."));
             int beforeAdvisory = updates.Count;
+            Check(engine.Callback(IntPtr.Zero, progressMessage, 0) == 1 &&
+                engine.Callback(IntPtr.Zero, progressMessage, 0) == 1 && !engine.CallbackFailed &&
+                updates.Count == beforeAdvisory && updates[updates.Count - 1].Percent == 0,
+                "Repeated null-handle progress notifications preserve the current stage and percentage.");
+            Check(logs.FindAll(text => text.Contains("null-handle progress notification")).Count == 1,
+                "Null-handle progress diagnostics are logged only once.");
             WithProgressRecord(0, new int?[] { }, record =>
             {
                 Check(engine.Callback(IntPtr.Zero, progressMessage, record) == 1 && !engine.CallbackFailed,

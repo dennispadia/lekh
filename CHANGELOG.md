@@ -13,6 +13,7 @@
 - Start fresh installations and upgrades of a closed older Lekh automatically, without an extra Install or save/close prompt. Show the previous and target versions during upgrade preparation.
 - Prompt to save and close only when the installed editor is running; one **Check again** after closing proceeds directly to removal and installation.
 - Report **already installed** for the same version, even when the editor is open, without offering reinstall. Continue to block downgrades.
+- Keep Windows Installer's no-data progress notifications from falsely showing a stopped upgrade, and surface genuine callback problems even if Windows reports installation completed.
 - Retain transactional removal-before-new-payload, cancellation rollback, profile preservation and native completion checks. Add native startup/retry regressions and a guarded genuine 0.9.0 -> 0.9.1 hosted EXE matrix for idle/running upgrades and same-version rejection.
 
 ## 0.9.0

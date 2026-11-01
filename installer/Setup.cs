@@ -472,12 +472,13 @@ namespace Lekh.Setup
                     }
                 });
                 WriteLog("Windows Installer finished with code " + result + ".");
-                if (result == 1602 && (engine.FilesInUse || engine.CallbackFailed))
+                string completionIssue = SetupPolicy.CompletionIssue(result, engine.FilesInUse, engine.CallbackFailed, engine.FailureMessage);
+                if (completionIssue != null)
                 {
                     Render("error", null);
-                    description.Text = engine.FailureMessage;
-                    detailText.Text = "Windows Installer code " + result + ".\nLogs: " + logDirectory;
-                    ExitCode = (int)result;
+                    description.Text = completionIssue;
+                    detailText.Text = "Windows Installer code " + result + ".\n" + engine.FailureMessage + "\nLogs: " + logDirectory;
+                    ExitCode = SetupPolicy.IsSuccess(result) ? 1 : (int)result;
                 }
                 else if (SetupPolicy.IsSuccess(result) || result == 1602) Finish(result);
                 else

@@ -179,6 +179,15 @@ namespace Lekh.Setup
             catch (DirectoryNotFoundException) { return false; }
         }
         public static bool IsSuccess(uint result) { return result == 0 || result == 3010; }
+        internal static string CompletionIssue(uint result, bool filesInUse, bool callbackFailed, string failureMessage)
+        {
+            if ((!filesInUse && !callbackFailed) || (result != 1602 && !IsSuccess(result))) return null;
+            if (result == 1602)
+                return String.IsNullOrEmpty(failureMessage) ? "Setup encountered a problem. Review the setup log." : failureMessage;
+            return "Windows reports that Lekh was installed, but Setup encountered a problem.\n" +
+                "Review the setup log and confirm the installation before trying again." +
+                (result == 3010 ? "\nWindows requested a restart to finish installation." : "");
+        }
         internal static string ReadyState(InstalledProduct installed, Func<bool> appIsOpen)
         {
             if (installed != null)
@@ -349,7 +358,7 @@ namespace Lekh.Setup
         private readonly MsiProgress progress = new MsiProgress();
         private volatile bool cancelRequested, canCancel = true;
         private bool cancelSent, repair, executing;
-        private bool progressObserved, advisoryObserved;
+        private bool progressObserved, advisoryObserved, nullProgressObserved;
         private readonly InstalledProduct previousProduct;
         private readonly Action verifyRemoval;
         private readonly Func<bool> payloadPresent;
@@ -447,7 +456,14 @@ namespace Lekh.Setup
                 {
                     case 0x0a000000:
                         if (record == 0)
-                            throw new InvalidDataException("Windows Installer progress callback has no record (type=0x" + type.ToString("X8") + ", handle=0x00000000).");
+                        {
+                            if (!nullProgressObserved)
+                            {
+                                log("Windows Installer null-handle progress notification: keeping current stage and progress; no update.");
+                                nullProgressObserved = true;
+                            }
+                            return CancellationReply(message);
+                        }
                         if (!progressObserved)
                         {
                             log("First " + Native.DescribeProgressRecord(record));
