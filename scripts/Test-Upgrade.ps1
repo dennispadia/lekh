@@ -571,6 +571,45 @@ function Assert-PayloadPreserved($Expected) {
         }
     }
 }
+function Save-UpgradeSetupDiagnostics([int]$ProcessId, [string[]]$Stages) {
+    Assert-HostedRunner
+    if (-not $cleanRunnerVerified) { throw 'Refusing setup log capture without clean-runner ownership.' }
+    $destination = Join-Path $work ("setup-$ProcessId")
+    New-Item -ItemType Directory -Path $destination -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $destination 'observed-states.log'), ($Stages -join [Environment]::NewLine),
+        [Text.UTF8Encoding]::new($false))
+    $source = Join-Path $env:LOCALAPPDATA 'Lekh\SetupLogs'
+    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+        Write-Warning 'No setup log directory was created for the owned upgrade process.'
+        return
+    }
+    $rootEntry = Get-Item -LiteralPath $source -Force
+    if (($rootEntry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked setup log directory.' }
+    $captured = 0
+    foreach ($session in @(Get-ChildItem -LiteralPath $source -Directory -Force)) {
+        if (($session.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $session.Name -cnotmatch '^\d{8}-\d{6}-[0-9a-f]{32}$') { continue }
+        $setupLog = Join-Path $session.FullName 'setup.log'
+        if (-not (Test-Path -LiteralPath $setupLog -PathType Leaf)) { continue }
+        $entry = Get-Item -LiteralPath $setupLog -Force
+        if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked setup log file.' }
+        $header = @(Get-Content -LiteralPath $setupLog -TotalCount 2)
+        if ($header.Count -ne 2 -or
+            $header[0] -cnotmatch ('^\S+ Starting Lekh Setup ' + [regex]::Escape($manifest.version) + '\. Current-user, offline installation\.$') -or
+            $header[1] -cnotmatch ('^\S+ Setup process ' + $ProcessId + '\.$')) { continue }
+        $owned = Join-Path $destination $session.Name
+        New-Item -ItemType Directory -Path $owned -Force | Out-Null
+        foreach ($name in @('setup.log', 'windows-installer.log')) {
+            $path = Join-Path $session.FullName $name
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+            $entry = Get-Item -LiteralPath $path -Force
+            if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Refusing linked installer diagnostic file.' }
+            Copy-Item -LiteralPath $path -Destination (Join-Path $owned $name)
+        }
+        $captured++
+    }
+    if ($captured -eq 0) { Write-Warning "No setup log matched owned upgrade process $ProcessId." }
+}
 function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
     Assert-HostedRunner
     if (-not $cleanRunnerVerified) { throw 'Refusing UI verification without clean-runner ownership.' }
@@ -669,6 +708,10 @@ function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
                 if (-not $setup.WaitForExit(15000)) { throw 'Owned setup did not close; no forced termination is permitted.' }
             }
         } catch { $closeErrors.Add("Owned setup cleanup: $_") }
+        if ($null -ne $failure -and $null -ne $setup) {
+            try { Save-UpgradeSetupDiagnostics $setup.Id $states }
+            catch { $closeErrors.Add("Owned setup diagnostic capture: $_"); Write-Warning "Owned setup diagnostic capture failed: $_" }
+        }
         if ($null -ne $editor) { $editor.Dispose() }
         if ($null -ne $setup -and $setup.HasExited) { $setup.Dispose(); $script:activeSetup = $null }
     }

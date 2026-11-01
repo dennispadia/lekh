@@ -336,6 +336,84 @@ test('queued Check again tolerates only the initial open state before upgrade pr
   assert.ok(script.includes("-AllowPendingOpen:$OpenEditor.IsPresent"));
 });
 
+test('failed hosted upgrades capture only the owned setup logs', {
+  skip: process.platform !== 'win32',
+}, async () => {
+  const directory = join(fileURLToPath(new URL('..', import.meta.url)), 'build', 'tests', `upgrade-logs-${randomUUID()}`);
+  await mkdir(directory, { recursive: true });
+  try {
+    const command = `
+      $ErrorActionPreference = 'Stop'
+      $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+      $tokens = $null; $errors = $null
+      $ast = [Management.Automation.Language.Parser]::ParseFile($request.script, [ref]$tokens, [ref]$errors)
+      if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+      foreach ($name in @('Assert-HostedRunner', 'Save-UpgradeSetupDiagnostics')) {
+        $function = $ast.Find({ param($node)
+          $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        if ($null -eq $function) { throw ('Missing diagnostic helper ' + $name) }
+        . ([scriptblock]::Create($function.Extent.Text))
+      }
+      $InstallOnHostedRunner = $true
+      $env:GITHUB_ACTIONS = 'true'
+      $env:RUNNER_ENVIRONMENT = 'github-hosted'
+      $env:LOCALAPPDATA = Join-Path $request.directory 'local'
+      $work = Join-Path $request.directory 'capture'
+      $cleanRunnerVerified = $true
+      $manifest = [pscustomobject]@{ version = '0.9.1' }
+      $source = Join-Path $env:LOCALAPPDATA 'Lekh\\SetupLogs'
+      $ownedName = '20261101-010101-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      $otherName = '20261101-010102-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      $oldName = '20261101-010103-cccccccccccccccccccccccccccccccc'
+      foreach ($item in @(
+        @{ Name = $ownedName; Process = 1001; Version = '0.9.1' },
+        @{ Name = $otherName; Process = 2002; Version = '0.9.1' },
+        @{ Name = $oldName; Process = 1001; Version = '0.9.0' }
+      )) {
+        $session = Join-Path $source $item.Name
+        New-Item -ItemType Directory -Path $session -Force | Out-Null
+        [IO.File]::WriteAllLines((Join-Path $session 'setup.log'), @(
+          "2026-11-01T01:01:01Z Starting Lekh Setup $($item.Version). Current-user, offline installation.",
+          "2026-11-01T01:01:01Z Setup process $($item.Process).",
+          'private session log'
+        ))
+        [IO.File]::WriteAllText((Join-Path $session 'windows-installer.log'), 'owned MSI detail')
+      }
+      $stages = [Collections.Generic.List[string]]::new()
+      $stages.Add('preparing')
+      $stages.Add('stopping')
+      Save-UpgradeSetupDiagnostics 1001 $stages
+      $destination = Join-Path $work 'setup-1001'
+      $sessions = @(Get-ChildItem -LiteralPath $destination -Directory)
+      if ($sessions.Count -ne 1 -or $sessions[0].Name -cne $ownedName) { throw 'Copied unrelated setup logs.' }
+      if ((Get-Content -LiteralPath (Join-Path $destination 'observed-states.log') -Raw) -notmatch 'preparing') {
+        throw 'Missing observed setup states.'
+      }
+      if ((Get-Content -LiteralPath (Join-Path $sessions[0].FullName 'windows-installer.log') -Raw) -cne 'owned MSI detail') {
+        throw 'Missing owned MSI diagnostic.'
+      }
+      $env:GITHUB_ACTIONS = 'false'
+      $denied = $false
+      try { Save-UpgradeSetupDiagnostics 1001 @() } catch { $denied = $true }
+      if (-not $denied) { throw 'Ungated log capture was allowed.' }
+      $env:GITHUB_ACTIONS = 'true'
+      $cleanRunnerVerified = $false
+      $denied = $false
+      try { Save-UpgradeSetupDiagnostics 1001 @() } catch { $denied = $true }
+      if (-not $denied) { throw 'Unowned log capture was allowed.' }
+      Write-Output 'PASS: only owned hosted upgrade logs are captured.'
+    `;
+    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+      Buffer.from(command, 'utf16le').toString('base64')], {
+      encoding: 'utf8', timeout: 30_000, input: JSON.stringify({ script: scriptPath, directory }),
+    });
+    assert.match(output, /PASS: only owned hosted upgrade logs are captured/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test('operations are bounded and cleanup cannot conceal the original failure or report false success', () => {
   assert.ok(script.includes('$process.WaitForExit(240000)'));
   assert.ok(script.includes('Stop-Process -Id $process.Id -Force -ErrorAction Stop'));
