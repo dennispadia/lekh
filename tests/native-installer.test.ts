@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 
-test('hosted setup fails immediately with native terminal-state details and still requires the real success heading', {
+test('hosted setup distinguishes hidden controls and reports native terminal-state details', {
   skip: process.platform !== 'win32',
 }, async () => {
   const scriptPath = join(root, 'scripts', 'Test-Setup.ps1');
@@ -19,12 +19,17 @@ test('hosted setup fails immediately with native terminal-state details and stil
     $tokens = $null; $errors = $null
     $ast = [Management.Automation.Language.Parser]::ParseFile($request.path, [ref]$tokens, [ref]$errors)
     if ($errors.Count -gt 0) { throw ($errors | Out-String) }
-    foreach ($name in @('Test-HostedSetupProgress', 'Test-HostedSetupLogOwner')) {
+    foreach ($name in @('Test-HostedSetupProgress', 'Test-HostedSetupLogOwner', 'Test-ControlVisible')) {
       $function = $ast.Find({ param($node)
         $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
       }, $true)
       if ($null -eq $function) { throw ('Missing pure diagnostic helper ' + $name) }
       . ([scriptblock]::Create($function.Extent.Text))
+    }
+    $hidden = [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $true } }
+    $visible = [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $false } }
+    if ((Test-ControlVisible $null) -or (Test-ControlVisible $hidden) -or -not (Test-ControlVisible $visible)) {
+      throw 'Preview visibility must distinguish absent, offscreen and visible controls.'
     }
     foreach ($state in @('preparing', 'removing', 'installing', 'finishing', 'stopping', 'rollback')) {
       $status = [pscustomobject]@{ State = $state; Heading = 'Working'; Description = ''; Details = '' }
@@ -50,13 +55,13 @@ test('hosted setup fails immediately with native terminal-state details and stil
     if (Test-HostedSetupLogOwner $header $owner 5678 '0.9.0') { throw 'Another process log accepted.' }
     if (Test-HostedSetupLogOwner $header $owner 1234 '0.8.1') { throw 'Another version log accepted.' }
     if (Test-HostedSetupLogOwner $header ($owner + ' Unexpected suffix') 1234 '0.9.0') { throw 'Malformed ownership line accepted.' }
-    Write-Output 'PASS: native-state failure details, strict success heading, exact version/process log ownership; no product operations.'
+    Write-Output 'PASS: preview visibility, native-state failure details, strict success heading and exact version/process log ownership; no product operations.'
   `;
   const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
     Buffer.from(command, 'utf16le').toString('base64')], {
     encoding: 'utf8', timeout: 30_000, input: JSON.stringify({ path: scriptPath }),
   });
-  assert.match(output, /PASS: native-state failure details, strict success heading/);
+  assert.match(output, /PASS: preview visibility, native-state failure details, strict success heading/);
 });
 
 test('fresh setup diagnostics use the existing hosted artifact and never collect another setup session', async () => {
@@ -132,6 +137,54 @@ test('native automatic startup, running-app retry, same-version rejection, truth
       `/win32manifest:${join(root, 'installer', 'Setup.manifest')}`,
       `/out:${join(directory, 'SetupCompileOnly.exe')}`, ...references, ...resources, ...sources, info],
     { encoding: 'utf8', timeout: 30_000 });
+
+    const previewRunner = join(directory, 'PreviewRunner.cs');
+    await writeFile(previewRunner, `namespace Lekh.Setup {
+      internal static class PreviewRunner {
+        [System.STAThread] public static int Main(string[] args) {
+          if (args.Length != 1 || !args[0].StartsWith("--preview=")) return 1;
+          string state = args[0].Substring("--preview=".Length);
+          if (System.Array.IndexOf(SetupWindow.PreviewStates, state) < 0) return 1;
+          var app = new System.Windows.Application();
+          var setup = new SetupWindow(state);
+          app.Run(setup.Window);
+          return setup.ExitCode;
+        }
+      }
+    }`);
+    const previewExecutable = join(directory, 'SetupPreview.exe');
+    execFileSync(compiler, ['/nologo', '/target:winexe', '/platform:x64', '/warnaserror+',
+      '/main:Lekh.Setup.PreviewRunner', `/out:${previewExecutable}`, ...references, ...resources, ...sources, info, previewRunner],
+    { encoding: 'utf8', timeout: 30_000 });
+    const previewCommand = `
+      $ErrorActionPreference = 'Stop'
+      Add-Type -AssemblyName UIAutomationClient
+      Add-Type -AssemblyName UIAutomationTypes
+      $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+      $tokens = $null; $errors = $null
+      $ast = [Management.Automation.Language.Parser]::ParseFile($request.script, [ref]$tokens, [ref]$errors)
+      if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+      foreach ($name in @('Find-Control', 'Test-ControlVisible', 'Wait-Until', 'Wait-SetupWindow', 'Test-SetupPreview')) {
+        $function = $ast.Find({ param($node)
+          $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        if ($null -eq $function) { throw ('Missing preview helper ' + $name) }
+        . ([scriptblock]::Create($function.Extent.Text))
+      }
+      $SetupPath = $request.executable
+      $manifest = [pscustomobject]@{ version = $request.version }
+      foreach ($state in @('ready', 'upgrade', 'installed', 'open', 'removing', 'rollback')) {
+        Test-SetupPreview $state $false
+      }
+    `;
+    const previewOutput = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+      Buffer.from(previewCommand, 'utf16le').toString('base64')], {
+      encoding: 'utf8', timeout: 60_000,
+      input: JSON.stringify({ script: join(root, 'scripts', 'Test-Setup.ps1'), executable: previewExecutable, version: manifest.version }),
+    });
+    for (const state of ['ready', 'upgrade', 'installed', 'open', 'removing', 'rollback']) {
+      assert.match(previewOutput, new RegExp(`PASS: native accessible preview ${state}\\.`));
+    }
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

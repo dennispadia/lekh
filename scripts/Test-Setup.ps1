@@ -100,6 +100,9 @@ function Find-Control($Window, [string]$Id, [switch]$Raw) {
     }
     return $null
 }
+function Test-ControlVisible($Control) {
+    return $null -ne $Control -and -not $Control.Current.IsOffscreen
+}
 function Wait-Until([scriptblock]$Probe, [int]$TimeoutSeconds = 15, [string]$Message = 'Setup UI timed out.') {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     do {
@@ -260,20 +263,27 @@ function Test-SetupPreview([string]$State, [bool]$MotionEnabled) {
         if ($state -eq 'installing') { Test-Story $window -ReducedMotion:(-not $MotionEnabled) }
         $heading = (Find-Control $window 'Heading').Current.Name
         $description = (Find-Control $window 'Description').Current.Name
-        if ($state -in @('ready', 'upgrade') -and ($null -ne (Find-Control $window 'Primary') -or
+        $primary = Find-Control $window 'Primary'
+        if ($state -in @('ready', 'upgrade') -and ((Test-ControlVisible $primary) -or
             $description -like '*Save your work*')) {
-            throw 'Fresh and idle-upgrade previews must not prompt for installation or app closure.'
+            throw "Preview $state must not prompt for installation or app closure. Heading: $heading; description: $description."
         }
         if ($state -eq 'upgrade' -and ($heading -notlike '*0.8.1*' -or $heading -notlike "*$($manifest.version)*")) {
             throw 'Upgrade preview must identify both the previous and new version.'
         }
-        if ($state -eq 'installed' -and ($null -ne (Find-Control $window 'Primary') -or
+        if ($state -eq 'installed' -and ((Test-ControlVisible $primary) -or
             $heading -notlike "*$($manifest.version)*already installed*")) {
             throw 'Same-version preview must report already installed without offering reinstall.'
         }
-        if ($state -eq 'open' -and ($description -notlike '*Save your work and close Lekh*' -or
-            (Find-Control $window 'Primary').Current.Name -cne 'Check again')) {
-            throw 'Only the running-app preview asks users to save/close and check again.'
+        if ($state -eq 'open') {
+            $primary = Wait-Until {
+                $candidate = Find-Control $window 'Primary'
+                if ((Test-ControlVisible $candidate) -and $candidate.Current.Name -ceq 'Check again') { return $candidate }
+                return $null
+            } -Message 'The running-app preview did not expose a visible Check again action.'
+            if ($description -notlike '*Save your work and close Lekh*') {
+                throw 'Only the running-app preview asks users to save/close and check again.'
+            }
         }
         if ($state -eq 'removing' -and ($description -notlike '*0.8.1*' -or
             (Find-Control $window 'Stages').Current.Name -notlike '*REMOVE OLD*' -or
