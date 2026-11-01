@@ -2,7 +2,7 @@
 
 A local-first Windows desktop application for writing Markdown with a friendly visual editor and exporting to interactive HTML, Word and PDF.
 
-This guide describes **Lekh 0.9.1**, including interactive offline HTML export, fully editable Visual publishing blocks, independently placed variant content, synchronized scrolling, and offline grammar checking. See the [releases page](https://github.com/dennispadia/lekh/releases) for verified installers.
+This guide describes **Lekh 0.9.1**, including interactive offline HTML export, fully editable Visual publishing blocks, independently placed variant content, synchronized scrolling, and offline grammar checking. See the verified [Lekh 0.9.1 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.1) for the installer.
 
 ## Open the application
 
@@ -14,7 +14,7 @@ For a source checkout, double-click **Launch.cmd** in the project root. The deve
 
 Lekh uses a standalone `%APPDATA%\Lekh` profile for preferences, recent files, Chromium storage, and recovery drafts. Application files install to `%LOCALAPPDATA%\lekh`. **An existing Lekh profile is retained during upgrades; saved Markdown files can be opened normally.** It does not import another product's profile, use migration aliases, or uninstall another product. Its independent MSI upgrade code stays stable for future Lekh releases. Close Lekh before upgrading and choose it explicitly for `.md` file associations if desired.
 
-The 0.9.0 release passed a genuine published **0.8.1 -> 0.9.0** upgrade test on a clean Windows runner. Its setup identified the installed version and asked users to save and close; old registration and payload removal were verified before the new payload stage. Cancellation after removal restored the exact old registration and every old payload byte. Upgrade, repair and uninstall preserved seeded profile settings and a recovery sentinel. See [build and validation details](BUILDING.md#build-outputs).
+The 0.9.1 release passed genuine **0.9.0 -> 0.9.1** upgrade tests on a clean Windows runner, including automatic upgrades with Lekh closed and a single recheck after closing a running editor. Old registration and payload removal were verified before the new payload stage. Cancellation after removal restored the exact old registration and every old payload byte. Upgrade, repair and uninstall preserved seeded profile settings and a recovery sentinel. See [build and validation details](BUILDING.md#build-outputs).
 
 No Microsoft Word, Pandoc, account, or internet connection is required to edit or export documents after setup. Images hosted on websites are deliberately not downloaded.
 

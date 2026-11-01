@@ -16,6 +16,8 @@
 - Keep Windows Installer's no-data progress notifications from falsely showing a stopped upgrade, and surface genuine callback problems even if Windows reports installation completed.
 - Retain transactional removal-before-new-payload, cancellation rollback, profile preservation and native completion checks. Add native startup/retry regressions and a guarded genuine 0.9.0 -> 0.9.1 hosted EXE matrix for idle/running upgrades and same-version rejection.
 
+Published as **[Lekh 0.9.1](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** with independently verified Windows EXE, source ZIP and checksums matching the [official build](https://github.com/dennispadia/lekh/actions/runs/41269204614). Fresh installation and the genuine 0.9.0 -> 0.9.1 idle/running upgrades, same-version rejection, cancellation rollback, repair and profile-preserving uninstall passed. Earlier published assets remain unchanged.
+
 ## 0.9.0
 
 - Make supported tabs, selector prompts/options, distributed variant content, structured steps, image descriptions, metadata and include fields editable directly in Visual, with source-safe serialization and undo/redo.

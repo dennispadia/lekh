@@ -6,7 +6,7 @@
 
 **Version 0.9.1** adds interactive offline HTML export, direct publishing-block editing, and a simpler, rollback-safe upgrade installer. Offline English grammar checks remain included. Lekh has its own application, installer, and settings identities. No settings, recovery data, or installation identities are imported from another product.
 
-**[Releases and Windows x64 downloads](https://github.com/dennispadia/lekh/releases)** · [User guide](docs/USER_GUIDE.md)
+**[Download Lekh 0.9.1 for Windows x64](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** · [User guide](docs/USER_GUIDE.md)
 
 Each release provides an EXE, source ZIP, and checksums. Earlier published assets remain unchanged.
 
@@ -81,9 +81,9 @@ The following captures show the Lekh interface with sample documents, not person
 
 Requires **Windows 10/11 x64 and .NET Framework 4.8 or newer**, normally included in Windows. Other operating systems and architectures are not packaged or tested.
 
-Choose a verified installer from the **[releases page](https://github.com/dennispadia/lekh/releases)** and compare the download with its accompanying checksums. The offline EXE includes the application and its grammar engine; recipients do not need to build from source.
+Choose the **[Lekh 0.9.1 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** and compare the installer download with its accompanying checksums. The offline EXE includes the application and its grammar engine; recipients do not need to build from source.
 
-For the installer built from this checkout:
+For the 0.9.1 installer:
 
 1. Run the setup EXE. A fresh install starts directly. An older, closed installation upgrades automatically, showing the previous and new versions before removing the old payload and installing the new one.
 2. If Lekh is open, setup asks you to save and close it. Click **Check again** after closing; no second installation prompt is needed. The same version reports **already installed**, and a newer installed version blocks downgrade.
@@ -101,7 +101,7 @@ The offline setup embeds the runtime and internal MSI; recipients do not need No
 
 Lekh uses a standalone profile and installation directory. It does not import another product's drafts or preferences, migrate aliases, or replace/uninstall another product. Saved Markdown files can be opened normally; an existing Lekh profile is retained during a Lekh upgrade. Close Lekh before upgrading; setup asks rather than force-closing the editor.
 
-The [verified 0.9.0 Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389) tested fresh installation and genuine published **0.8.1 -> 0.9.0** removal-before-new, cancellation/rollback restoring every old payload byte, upgrade, repair and profile-preserving uninstall. That version's setup detects the old version, asks users to save/close, and visibly removes it before installing the new payload inside rollback protection. See each release for its own validation details.
+The [verified 0.9.1 Windows build](https://github.com/dennispadia/lekh/actions/runs/41269204614) tested fresh installation, genuine **0.9.0 -> 0.9.1** idle and running-app upgrades, same-version rejection, cancellation/rollback restoring every old payload byte, repair and profile-preserving uninstall. The old payload is removed before the new one is installed within rollback protection. Earlier releases remain unchanged.
 
 **Unsigned software:** application, setup EXE, and internal MSI are not code-signed. Windows, browser, or organization policies may warn about or block them. Verify checksums and follow your organization's policies; do not disable security protections. See [signing status](docs/PUBLISHING.md#code-signing-policy-pending).
 
