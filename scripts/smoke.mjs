@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import { NtExecutable, NtExecutableResource, Resource } from 'resedit';
 
@@ -2362,7 +2362,7 @@ try {
     assert.equal(await main.evaluate('smokeSaveCalls'), beforeBlockedExport, 'Unsupported export is rejected before opening a save dialog');
     await assert.rejects(() => readFile(path.join(temporary, `blocked.${format}`)), { code: 'ENOENT' });
   }
-  const publishingHTML = path.join(temporary, 'publishing.html');
+  const publishingHTML = path.join(temporary, 'publishing~review.html');
   await main.evaluate(`smokeSavePath=${JSON.stringify(publishingHTML)}`);
   await action('export-menu');
   await action('export-html');
@@ -2388,7 +2388,9 @@ try {
   await main.evaluate(`globalThis.smokeOfflineRequests=[]; globalThis.smokeReview=new smokeElectron.BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,partition:'lekh-offline-review'}});
     smokeReview.webContents.session.webRequest.onBeforeRequest((request,callback)=>{smokeOfflineRequests.push(request.url);callback({cancel:!request.url.startsWith('file:')&&!request.url.startsWith('data:')})});
     smokeReview.webContents.setWindowOpenHandler(()=>({action:'deny'})); smokeReview.loadFile(${JSON.stringify(publishingHTML)});`);
-  const reviewTarget = await waitFor(async () => (await browser.call('Target.getTargets')).targetInfos.find(item => item.type === 'page' && item.url === pathToFileURL(publishingHTML).href), 'offline HTML browser page');
+  const reviewURL = await main.evaluate('smokeReview.webContents.getURL()');
+  assert.equal(await realpath(fileURLToPath(reviewURL)), await realpath(publishingHTML), 'The browser loaded the exported HTML');
+  const reviewTarget = await waitFor(async () => (await browser.call('Target.getTargets')).targetInfos.find(item => item.type === 'page' && item.url === reviewURL), 'offline HTML browser page');
   const { sessionId: reviewSession } = await browser.call('Target.attachToTarget', { targetId: reviewTarget.targetId, flatten: true });
   const review = expression => browser.evaluate(expression, reviewSession);
   assert.equal(await review("document.documentElement.dataset.lekhInteractive"), 'true', 'The CSP-authorized script runs from the exported file');
@@ -2428,7 +2430,7 @@ try {
     ':::tabs', `:::tab ${longExportLabel}`, 'Independent one content.', ':::tab-end',
     ':::tab Independent two', 'Independent two content.', ':::tab-end', ':::tabs-end', '',
   ].join('\n');
-  const extraHTML = path.join(temporary, 'offline-interactions.html');
+  const extraHTML = path.join(temporary, 'offline-interactions~review.html');
   await writeFile(extraHTML, await toOfflineHTML(extraMarkdown, null));
   await main.evaluate(`smokeReview.loadURL(${JSON.stringify(`${pathToFileURL(extraHTML).href}#second-variant-heading`)})`);
   await waitFor(async () => review("document.documentElement.dataset.lekhInteractive === 'true'"), 'additional offline interactions');
@@ -2473,7 +2475,9 @@ try {
   }
   await browser.call('Emulation.clearDeviceMetricsOverride', {}, reviewSession);
   await main.evaluate(`globalThis.smokeNoJS=new smokeElectron.BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,javascript:false,partition:'lekh-offline-no-js'}}); smokeNoJS.loadFile(${JSON.stringify(extraHTML)});`);
-  const noJSTarget = await waitFor(async () => (await browser.call('Target.getTargets')).targetInfos.find(item => item.type === 'page' && item.url === pathToFileURL(extraHTML).href && item.targetId !== reviewTarget.targetId), 'JavaScript-disabled HTML page');
+  const noJSURL = await main.evaluate('smokeNoJS.webContents.getURL()');
+  assert.equal(await realpath(fileURLToPath(noJSURL)), await realpath(extraHTML), 'The JavaScript-disabled browser loaded the offline HTML');
+  const noJSTarget = await waitFor(async () => (await browser.call('Target.getTargets')).targetInfos.find(item => item.type === 'page' && item.url === noJSURL && item.targetId !== reviewTarget.targetId), 'JavaScript-disabled HTML page');
   const { sessionId: noJSSession } = await browser.call('Target.attachToTarget', { targetId: noJSTarget.targetId, flatten: true });
   const noJS = expression => browser.evaluate(expression, noJSSession);
   assert.equal(await noJS("document.documentElement.dataset.lekhInteractive"), undefined);
