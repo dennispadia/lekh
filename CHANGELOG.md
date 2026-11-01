@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.3
+
+- Use 1.15 line spacing consistently in Word exports instead of the larger editor-oriented spacing.
+- Show blank-document guidance for slash commands in Visual and command search in Source, without changing saved or exported content.
+- Group Image, Table, Code, Alerts, Structure and Interactive beneath one Insert toolbar caption. Structure and Interactive stay visible and replace the old Blocks insertion category.
+- Refine tabbed examples and variant controls with inline editing guidance, clearer variant-content cards and quieter continuation actions.
+- Make selector prompts visibly editable and start new prompts, tab examples and variant bodies empty, using focus-dismissed placeholders instead of sample text to delete.
+- Keep the new-document + immediately after the rightmost visible document tab.
+- Simplify right-click to eight quick tools and grouped menus, keeping all options; move/duplicate/remove are under Edit rather than a separate Block menu.
+- Guard the genuine 0.9.2 -> 0.9.3 hosted upgrade matrix.
+
 ## 0.9.2
 
 - Use the provided tab names as Markdown tab headings and identifiers (for example, `# [Service Principal](#tab/serviceprincipal)`).

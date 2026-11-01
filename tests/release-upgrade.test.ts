@@ -38,11 +38,11 @@ test('real upgrade operations require explicit consent and both exact hosted-run
   assert.doesNotMatch(script, /-Verb\s+RunAs|UACONLY\s*[,)]|AlwaysInstallElevated|DisableMSI|SuppressIces|SuppressValidation|taskkill|Stop-Process\s+-Name/i);
 });
 
-test('the only old installer is the immutable public 0.9.1 asset, verified before extraction', () => {
-  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.1/Lekh-Markdown-editor-Setup-0.9.1-x64.exe'"));
-  assert.ok(script.includes("$oldSetupHash = 'fef16e72c9e699edf567003b10b1b12b3109b9531d9b54bc08a63d991a3bdae9'"));
-  assert.ok(script.includes('$oldSetupBytes = 197578240L'));
-  assert.ok(script.includes("$manifest.version -cne '0.9.2'"));
+test('the only old installer is the immutable public 0.9.2 asset, verified before extraction', () => {
+  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.2/Lekh-Markdown-editor-Setup-0.9.2-x64.exe'"));
+  assert.ok(script.includes("$oldSetupHash = '8acc182c86a34c38557874d3403f8d801b518d358bc7dd8005b205022341ab8c'"));
+  assert.ok(script.includes('$oldSetupBytes = 197586432L'));
+  assert.ok(script.includes("$manifest.version -cne '0.9.3'"));
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
   inOrder(execution,
     'Invoke-WebRequest -UseBasicParsing -Uri $oldSetupUrl -OutFile $oldSetup -TimeoutSec 180 -UseDefaultCredentials:$false',
@@ -58,6 +58,7 @@ test('the only old installer is the immutable public 0.9.1 asset, verified befor
   inOrder(ready, 'Assert-HostedRunner', '-not $cleanRunnerVerified', 'Assert-AppNotRunning', 'Start-Process -FilePath $SetupPath');
   assert.doesNotMatch(ready, /Stop-Process|\.Kill\(|MsiConfigureProduct/);
   assert.ok(ready.includes("Wait-UpgradeSetup $setup 'open'"));
+  assert.ok(ready.includes("$status.Description -notlike '*0.9.2*'"), 'The running-app prompt identifies the installed release');
   assert.ok(ready.includes("$status.Primary.Current.Name -cne 'Check again'"));
   assert.ok(ready.includes("if (-not $states.Contains('upgrade') -and -not $states.Contains('preparing'))"),
     'a passing upgrade must actually expose the version-bearing state');
@@ -86,7 +87,7 @@ test('both embedded MSIs are validated for distinct identity, version and non-el
     "$_[0] -ine $upgradeCode",
   ]) assert.ok(validation.includes(guard), `Missing package guard: ${guard}`);
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
-  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.9.1'", 'Read-ValidatedMsi $newMsi $manifest.version',
+  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.9.2'", 'Read-ValidatedMsi $newMsi $manifest.version',
     '$old.ProductCode -ieq $new.ProductCode',
     '$newMsiHash = (Get-FileHash -LiteralPath $newMsi -Algorithm SHA256).Hash',
     '$newMsiHash -cne',

@@ -5,7 +5,6 @@ type ContextIcon = 'cut' | 'copy' | 'paste' | 'delete' | 'bold' | 'italic' | 'co
 const directActions: [string, string, ContextIcon][] = [
   ['Cut', 'Cut', 'cut'], ['Copy', 'Copy', 'copy'], ['Paste', 'Paste', 'paste'], ['Delete selection', 'Delete', 'delete'],
   ['Bold', 'Bold', 'bold'], ['Italic', 'Italic', 'italic'], ['Inline code', 'Code', 'code'], ['Link...', 'Link', 'link'],
-  ['Block quote', 'Quote', 'quote'], ['Numbered list', 'Numbered', 'ordered'], ['Bullet list', 'Bullets', 'bullet'], ['Task list', 'Tasks', 'task'],
 ];
 
 export class ContextMenu {
@@ -70,9 +69,7 @@ export class ContextMenu {
     if (grid.childElementCount) this.root.append(grid);
     for (const item of menu.items) {
       if (used.has(item.id)) continue;
-      if (item.label === 'Formatting' && item.submenu) {
-        for (const extra of item.submenu.filter(child => !used.has(child.id))) this.append(this.root, extra);
-      } else this.append(this.root, item);
+      this.append(this.root, item);
     }
     this.root.showPopover();
     this.position(this.root, menu.x, menu.y);

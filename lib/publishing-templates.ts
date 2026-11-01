@@ -4,8 +4,8 @@ export const publishingTemplates = [
   { id: 'callout-important', category: 'alerts', label: 'Important', icon: 'important', color: 'important', description: 'Emphasize information readers need before continuing.', markdown: '> [!IMPORTANT]\n> Add essential information.' },
   { id: 'callout-caution', category: 'alerts', label: 'Caution', icon: 'caution', color: 'caution', description: 'Explain a risk and the precautions needed to avoid it.', markdown: '> [!CAUTION]\n> Explain a risk and how to avoid it.' },
   { id: 'callout-warning', category: 'alerts', label: 'Warning', icon: 'warning', color: 'warning', description: 'Call attention to a serious risk or potentially harmful action.', markdown: '> [!WARNING]\n> Explain a serious risk and the precautions to take.' },
-  { id: 'publishing-tabs', category: 'content', label: 'Tabbed examples', icon: 'tabs', color: '', description: 'Show related examples in accessible tabs within this document.', markdown: '# [First example](#tab/firstexample)\n\nContent for the first example.\n\n# [Second example](#tab/secondexample)\n\nContent for the second example.\n\n---' },
-  { id: 'publishing-selector', category: 'content', label: 'Variant selector', icon: 'selector', color: '', description: 'Create choices, then use Add variant content on the selector to write their content.', markdown: ':::selector title="Choose an option"\n- [First option](#variant/first)\n- [Second option](#variant/second)\n:::selector-end' },
+  { id: 'publishing-tabs', category: 'content', label: 'Tabbed examples', icon: 'tabs', color: '', description: 'Show related examples in accessible tabs within this document.', markdown: '# [First example](#tab/firstexample)\n\n# [Second example](#tab/secondexample)\n\n---' },
+  { id: 'publishing-selector', category: 'content', label: 'Variant selector', icon: 'selector', color: '', description: 'Create choices, then use Add variant content on the selector to write their content.', markdown: ':::selector title=""\n- [First option](#variant/first)\n- [Second option](#variant/second)\n:::selector-end' },
   { id: 'publishing-zone', category: 'variant', label: 'Add variant content…', icon: 'selector', color: '', description: 'Add content here for choices in the existing variant selector.', markdown: '' },
   { id: 'publishing-image', category: 'content', label: 'Image with description…', icon: 'image', color: '', description: 'Insert an image with alternate text and an optional long description.', markdown: '' },
   { id: 'publishing-metadata', category: 'content', label: 'Document metadata', icon: 'metadata', color: '', description: 'Add YAML metadata outside the article body.', markdown: '---\ntitle: Document title\ndescription: A short description of this document.\n---' },
@@ -22,7 +22,7 @@ export function publishingTemplateMarkdown(id: string, selection = ''): string |
   if (id.startsWith('callout-')) {
     return `> [!${id.slice('callout-'.length).toUpperCase()}]\n${selection.replace(/\r\n/g, '\n').split('\n').map(line => `> ${line}`).join('\n')}`;
   }
-  if (id === 'publishing-tabs') return template.markdown.replace('Content for the first example.', () => selection);
+  if (id === 'publishing-tabs') return template.markdown.replace('\n\n', () => `\n\n${selection}\n\n`);
   if (id === 'publishing-selector') return `${template.markdown}\n\n${selection}`;
   return template.markdown;
 }

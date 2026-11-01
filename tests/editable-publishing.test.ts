@@ -141,6 +141,41 @@ test('renamed tab labels become readable source tab identifiers', () => {
   assert.match(saved, /# \[Both\]\(#tab\/both\)/);
 });
 
+test('new interactive cards have empty prompts and bodies, not sample document text', async () => {
+  const { parse, manager } = fixture();
+  const tabs = parse(publishingTemplateMarkdown('publishing-tabs')!);
+  assert.equal(tabs.firstChild?.type.name, 'lekhTabs');
+  assert.equal(tabs.firstChild?.childCount, 2);
+  assert.equal(tabs.textContent, '');
+  for (const panel of tabs.firstChild!.content.content) {
+    assert.equal(panel.childCount, 1);
+    assert.equal(panel.firstChild?.type.name, 'paragraph');
+    assert.equal(panel.firstChild?.content.size, 0);
+  }
+  const raw = `${publishingTemplateMarkdown('publishing-selector')}\n\n:::zone pivot="first"\n\n:::zone-end`;
+  const content = parse(raw);
+  assert.equal(content.firstChild!.attrs.title, '');
+  assert.equal(content.textContent, '');
+  assert.equal(parse(manager.serialize(content.toJSON())).firstChild!.attrs.title, '');
+  const saved = manager.serialize(tabs.toJSON());
+  assert.equal(parse(saved).textContent, '');
+  const html = await toOfflineHTML(`${raw}\n\n${saved}`, null);
+  assert.doesNotMatch(html, /Write this example|Write content for|Write a prompt|Content for the first example/);
+  assert.match(html, /aria-label="Variant options"/, 'An empty prompt retains accessible selector controls in exports');
+});
+
+test('clearing an existing selector prompt persists through serialization and reload', () => {
+  const { parse, manager } = fixture();
+  const doc = parse(`${selector}\n\n${zone}`);
+  const cleared = EditorState.create({ schema: doc.type.schema, doc }).tr.setNodeMarkup(0, undefined, {
+    ...doc.firstChild!.attrs, title: '',
+  }).doc;
+  const saved = manager.serialize(cleared.toJSON());
+  assert.match(saved, /:::selector title=""/);
+  assert.equal(parse(saved).firstChild!.attrs.title, '');
+  assert.ok(saved.includes(zone), 'Clearing a prompt never changes authored variant content');
+});
+
 test('nested alerts, lists, code, tables and tab groups preserve editable structure', () => {
   const { parse, manager } = fixture();
   const raw = `${selector}\n\n:::zone pivot="zones,scale-set"\n> [!NOTE]\n> Rich **alert**.\n\n:::steps\n1. One\n2. Two\n:::steps-end\n\n:::tabs\n:::tab Code\n\`\`\`js\nconst x = \":::zone-end\";\n\`\`\`\n:::tab-end\n:::tab Table\n| A | B |\n| - | - |\n| 1 | 2 |\n:::tab-end\n:::tabs-end\n:::zone-end`;

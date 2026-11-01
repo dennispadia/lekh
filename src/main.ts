@@ -34,6 +34,7 @@ import { publishingTemplateMarkdown, publishingTemplates, variantInsertionTempla
 import { publishingIcon } from '../lib/publishing-icons.js';
 import { AlertNode } from './alert-node.js';
 import { EditablePublishing, documentVariantOptions, setPublishingEditable } from './editable-publishing.js';
+import { EditorHints } from './editor-hints.js';
 import { synchronizeDocumentScroll } from './synchronized-scroll.js';
 import './style.css';
 
@@ -112,12 +113,12 @@ const templateItem = (id: string) => {
   const item = publishingTemplates.find(entry => entry.id === id)!;
   return menuItem(`data-action="insert:${item.id}" class="publishing-menu-${item.color || 'generic'}"`, publishingIcon(item.icon), item.label, item.description);
 };
-const blocksMenuHTML = `<div class="menu-section" role="presentation">Structure</div>
+const structureMenuHTML = `<div class="menu-section" role="presentation">Structure</div>
   ${menuItem('data-action="insert:toc"', icon('contents'), 'Table of contents', 'Insert a linked table of contents, or refresh the existing one.')}
   ${menuItem('data-action="insert:mermaid"', icon('diagram'), 'Mermaid diagram', 'Flowcharts, sequence and other diagrams written as text.')}
   ${menuItem('data-command="rule"', icon('rule'), 'Horizontal rule', 'Divide sections with a horizontal line.')}
-  ${templateItem('publishing-metadata')}${templateItem('publishing-image')}
-  <div class="menu-section" role="presentation">Interactive \u00b7 HTML export only</div>
+  ${templateItem('publishing-metadata')}${templateItem('publishing-image')}`;
+const interactiveMenuHTML = `<div class="menu-section" role="presentation">Interactive \u00b7 HTML export only</div>
   ${templateItem('publishing-tabs')}${templateItem('publishing-selector')}`;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const brandIcon = new URL('../assets/icon.svg', import.meta.url).href;
@@ -152,8 +153,7 @@ app.innerHTML = `
       ${group('style', 'Style', `<select id="heading" aria-label="Paragraph style" title="Paragraph style (Ctrl+0 to Ctrl+6)"><option value="0">Paragraph</option><option value="1">Heading 1</option><option value="2">Heading 2</option><option value="3">Heading 3</option><option value="4">Heading 4</option><option value="5">Heading 5</option><option value="6">Heading 6</option></select>`)}
       ${group('text', 'Text', `${formatButton('bold', 'Bold')}${formatButton('italic', 'Italic')}${formatButton('strike', 'Strikethrough')}${formatButton('code', 'Inline code')}${button('link', 'Insert / edit link', 'link', 'icon-only')}`)}
       ${group('paragraph', 'Paragraph', `${formatButton('bullet', 'Bullet list')}${formatButton('ordered', 'Numbered list')}${formatButton('task', 'Task list')}${formatButton('quote', 'Block quote')}`)}
-      ${group('insert', 'Insert', `<button type="button" data-action="image" title="Insert image (Ctrl+Shift+I)" aria-label="Insert image">${icon('image')}<span>Image</span></button><button type="button" data-action="table" title="Insert table (Ctrl+T)" aria-label="Insert table">${icon('table')}<span>Table</span></button><button type="button" data-command="codeblock" title="Code block (Ctrl+Shift+K)" aria-label="Code block">${icon('codeblock')}<span>Code</span></button>`, 'labelled')}
-      ${group('publishing', 'Publishing', `<button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span>${icon('chevron')}</button><button type="button" data-action="publishing-menu" aria-label="Insert block" title="Table of contents, diagrams, metadata, tabbed examples and variants" aria-haspopup="menu" aria-controls="publishing-menu" aria-expanded="false">${icon('blocks')}<span>Blocks</span>${icon('chevron')}</button>`, 'labelled')}
+      ${group('insert', 'Insert', `${group('insert-extra', 'Insert', `<button type="button" data-action="image" title="Insert image (Ctrl+Shift+I)" aria-label="Insert image">${icon('image')}<span>Image</span></button><button type="button" data-action="table" title="Insert table (Ctrl+T)" aria-label="Insert table">${icon('table')}<span>Table</span></button><button type="button" data-command="codeblock" title="Code block (Ctrl+Shift+K)" aria-label="Code block">${icon('codeblock')}<span>Code</span></button><button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span>${icon('chevron')}</button>`, 'labelled toolbar-insert-extra')}<button type="button" data-action="structure-menu" aria-label="Insert structure" title="Table of contents, diagrams, metadata and image descriptions" aria-haspopup="menu" aria-controls="structure-menu" aria-expanded="false">${icon('contents')}<span>Structure</span>${icon('chevron')}</button><button type="button" data-action="interactive-menu" aria-label="Insert interactive content" title="Tabbed examples and variants (HTML export only)" aria-haspopup="menu" aria-controls="interactive-menu" aria-expanded="false">${publishingIcon('tabs')}<span>Interactive</span>${icon('chevron')}</button>`, 'labelled')}
       <div class="toolbar-more"><button type="button" data-action="format-menu" aria-label="More tools and views" title="More tools and views" aria-haspopup="menu" aria-controls="format-menu" aria-expanded="false">${icon('more')}</button></div>
       <span class="toolbar-spacer"></span>
       ${group('review', 'Review', `<button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
@@ -176,7 +176,8 @@ app.innerHTML = `
   </main>
   <div id="tabs-menu" class="dropdown view-menu" role="menu" aria-label="Open documents" hidden></div>
   ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
-  <div id="publishing-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Blocks" hidden>${blocksMenuHTML}</div>
+  <div id="structure-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Structure" hidden>${structureMenuHTML}</div>
+  <div id="interactive-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Interactive" hidden>${interactiveMenuHTML}</div>
   <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('visual', 'Visual only')}${button('source', 'Source only')}${button('preview', 'Source + Preview (read-only)')}${button('writing-assistance', 'Writing assistance')}${button('allow-image-folder', 'Allow local image folder...')}${button('revoke-image-folder', 'Stop local image folder access')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-image-dialog" aria-labelledby="publishing-image-title"><form method="dialog">
@@ -256,16 +257,16 @@ app.innerHTML = `
     <p><b>Tabs:</b> Open and New keep other files open. Each tab keeps its edits and undo history. Click its x to close; a dot means unsaved changes. Save and Export use the active tab; Save all saves every modified tab.</p>
     <p><b>Split tabs:</b> choose <b>Split with...</b> or right-click a tab, then choose another open file from its thumbnail preview card. Previews include current unsaved edits. One paired tab displays exactly those two files side by side. Other tabs still open alone; clicking the pair restores both files. Each side keeps its own Visual/Source mode and undo. Click a side to target formatting, Find, Save, and Export. Drag the divider or focus it and use Left/Right to resize. <b>Unsplit</b> restores individual tabs without closing files. The pair's x closes both files with unsaved-change prompts; Ctrl+W closes only the active file.</p>
     <p><b>Themes:</b> choose Light or Dark at the bottom of the sidebar, or use View &gt; Color theme when the sidebar is hidden. Recent Files starts collapsed; expand its heading to browse history. This preference is remembered, and the outline gets the remaining space.</p>
-    <p><b>Save:</b> the Save button saves the active file. Its arrow opens Save All and Save As. Hover over tools for their keyboard shortcuts, or open ${button('shortcuts', 'Keyboard shortcuts')} (F1). The toolbar is grouped into View, Style, Text, Paragraph, Insert and Blocks; at narrower widths whole groups move into More.</p>
+    <p><b>Save:</b> the Save button saves the active file. Its arrow opens Save All and Save As. Hover over tools for their keyboard shortcuts, or open ${button('shortcuts', 'Keyboard shortcuts')} (F1). The toolbar is grouped into View, Style, Text, Paragraph, Insert and Review. Insert includes Image, Table, Code, Alerts, Structure and Interactive. Structure and Interactive stay visible; at narrower widths lower-priority tools move into More.</p>
     <p><b>Search commands</b> (Ctrl+Shift+P, or the search box in the header) finds any command, block, theme or setting by name. In Visual mode, type <code>/</code> on an empty line to insert a heading, list, table, alert or block; Escape dismisses the list. <b>Block</b> commands (right-click, Edit menu or palette) move, duplicate or remove the block at the cursor; Alt+Shift+Up/Down moves it. Clicking into a block shows a small floating toolbar with the same commands. Drag top-level outline headings, or focus one and press Alt+Up/Down, to move a section with its subsections; Left/Right collapse or expand it. Ctrl+Z undoes any move. Click the word count for document statistics.</p>
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
-    <p><b>Alerts and Blocks:</b> Alerts has Note, Tip, Important, Caution and Warning. Blocks has editable tabs, selectors, image descriptions and YAML metadata. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Blocks menu entry changes to <b>Add variant content</b> for placing more content elsewhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Local include directives are preserved but never loaded. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
+    <p><b>Structure and Interactive:</b> Structure has table of contents, diagrams, horizontal rules, image descriptions and YAML metadata. Interactive has editable tabs and variant selectors. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Interactive menu entry changes to <b>Add variant content</b> for placing more content anywhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Local include directives are preserved but never loaded. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
     <p><b>Visual + Source:</b> scrolling is synchronized in both directions by default, using document anchors and wrapped source lines. Paired documents remain independent.</p>
     <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the button to the left of Visual/Source or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
     <p><b>Find</b>: click Find or press Ctrl+F to open or close the find bar. Close and Escape also dismiss it; the search and replacement text are retained.</p>
-    <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts, Insert &gt; Publishing blocks, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Create a Variant selector first; its menu entry then changes to Add variant content. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
+    <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts / Structure / Interactive, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Create a Variant selector first; its menu entry then changes to Add variant content. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
     <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use the same <b>Table of contents</b> button to refresh the existing marked list after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Source mode</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
     <p><b>Links:</b> in Visual, click a link to edit its text and address, or right-click and choose <b>Edit link...</b>. The link toolbar button and <b>Ctrl+K</b> also edit the selected link. <b>Remove link</b> keeps its text. <b>Ctrl+click</b> opens a link after confirmation; generated contents links still navigate normally.</p>
     <p><b>Source</b> lets you edit the exact Markdown text. Use it for advanced syntax or HTML the visual editor doesn't support. Visual editing may normalize Markdown syntax; switching Visual/Source modes resets that tab's undo history.</p>
@@ -707,7 +708,7 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
       editSource: (raw, position) => { void run(async () => editPublishingSource(id, raw, position)); },
       reportError: message => notify(message, true),
     }),
-    Markdown, GrammarHighlights, PublishingHeadings,
+    Markdown, GrammarHighlights, PublishingHeadings, EditorHints,
   ],
   content,
   contentType: 'markdown',
@@ -747,6 +748,7 @@ function createPane(host: HTMLElement, text: HTMLTextAreaElement): { pane: HTMLE
   const viewport = document.createElement('div');
   viewport.className = 'pane-content';
   text.classList.add('document-source');
+  text.placeholder = 'Write Markdown here. Press Ctrl+Shift+P to search commands, or right-click for tools.';
   const surface = document.createElement('div');
   surface.className = 'source-surface';
   const highlights = document.createElement('pre');
@@ -1334,7 +1336,7 @@ async function insertPublishingBlock(kind: string, insertionPosition?: number): 
     const ids = [...options.querySelectorAll<HTMLInputElement>('input:checked')].map(control => control.value);
     if (!ids.length) throw new Error('Choose at least one existing option for this content.');
     insertedVariants = ids;
-    raw = `:::zone pivot="${ids.join(',')}"\n${selected || 'Write content for this option.'}\n:::zone-end`;
+    raw = `:::zone pivot="${ids.join(',')}"\n${selected}\n:::zone-end`;
   }
   if (kind === 'publishing-image') {
     const image = unwrap(await window.lekh.insertImage());
@@ -2778,7 +2780,7 @@ document.addEventListener('keydown', event => {
     setFocusMode(false);
   }
 });
-const dropdownIds = ['save-menu', 'export-menu', 'format-menu', 'tabs-menu', 'publishing-menu', 'alerts-menu'];
+const dropdownIds = ['save-menu', 'export-menu', 'format-menu', 'tabs-menu', 'structure-menu', 'interactive-menu', 'alerts-menu'];
 function closeDropdowns(): void {
   for (const id of dropdownIds) {
     element(id).hidden = true;
@@ -2790,7 +2792,7 @@ function dropdownAnchor(id: string): HTMLElement {
   return control.getClientRects().length ? control : document.querySelector<HTMLElement>('[aria-controls="format-menu"]')!;
 }
 function positionViewMenu(): void {
-  for (const id of ['format-menu', 'tabs-menu', 'publishing-menu', 'alerts-menu']) {
+  for (const id of ['format-menu', 'tabs-menu', 'structure-menu', 'interactive-menu', 'alerts-menu']) {
     const menu = element(id);
     if (menu.hidden) continue;
     const trigger = dropdownAnchor(id).getBoundingClientRect();
@@ -2801,8 +2803,7 @@ function positionViewMenu(): void {
 }
 const toolbar = document.querySelector<HTMLElement>('.toolbar')!;
 const overflow = element('toolbar-overflow');
-const toolbarSlots = [...toolbar.children]
-  .filter((node): node is HTMLElement => node instanceof HTMLElement && node.matches('.toolbar-group:not([data-group="view"])'))
+const toolbarSlots = [...toolbar.querySelectorAll<HTMLElement>(':scope > .toolbar-group:not([data-group="insert"]), .toolbar-insert-extra')]
   .map(control => {
     const slot = document.createComment('toolbar position');
     control.before(slot);
@@ -2819,13 +2820,17 @@ function scheduleResponsiveLayout(): void {
 function layoutResponsiveChrome(): void {
   if (!toolbar.getClientRects().length) return;
   const focused = document.activeElement;
-  const key = `${toolbar.clientWidth}:${toolbar.querySelector('.split-control')!.textContent}`;
+  const key = `${toolbar.clientWidth}:${document.querySelector('.split-control')!.textContent}`;
   if (key !== toolbarLayoutKey) {
     toolbarLayoutKey = key;
     for (const { control, slot } of toolbarSlots) {
       slot.after(control);
       control.setAttribute('role', 'group');
       for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
+        if (item.id === 'view-switch') {
+          item.setAttribute('role', 'switch');
+          continue;
+        }
         item.removeAttribute('role');
         item.removeAttribute('aria-checked');
       }
@@ -2835,7 +2840,7 @@ function layoutResponsiveChrome(): void {
       if (toolbar.scrollWidth <= toolbar.clientWidth) break;
       overflow.prepend(control);
       for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
-        item.setAttribute('role', item.dataset.command ? 'menuitemcheckbox' : 'menuitem');
+        item.setAttribute('role', item.dataset.command || item.id === 'view-switch' ? 'menuitemcheckbox' : 'menuitem');
         if (item.dataset.command) item.setAttribute('aria-checked', item.getAttribute('aria-pressed') ?? 'false');
       }
     }

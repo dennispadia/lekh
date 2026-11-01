@@ -104,7 +104,8 @@ test('Word defines rich typography instead of relying on the consumer default he
   const paragraphSpacing = defaults.match(/<w:spacing\b[^>]*>/)?.[0];
   assert.ok(paragraphSpacing);
   assert.match(paragraphSpacing, /w:after="160"/);
-  assert.match(paragraphSpacing, /w:line="420"/);
+  assert.match(paragraphSpacing, /w:line="276"/);
+  assert.match(paragraphSpacing, /w:lineRule="auto"/);
   assert.doesNotMatch(paragraphSpacing, /w:before="(?:[1-9]\d*)"/);
   for (const [index, size] of [51, 32, 26, 23, 22, 20].entries()) {
     const heading = styles.match(new RegExp(`<w:style[^>]*w:styleId="Heading${index + 1}"[\\s\\S]*?</w:style>`))?.[0];
@@ -119,6 +120,25 @@ test('Word defines rich typography instead of relying on the consumer default he
   assert.match(xml, /w:pgSz w:w="11906" w:h="16838"/);
   assert.match(xml, /w:pgMar[^>]*w:top="1134"[^>]*w:right="1134"[^>]*w:bottom="1134"[^>]*w:left="1134"/);
   assert.match(xml, /<w:widowControl\/>/);
+});
+
+test('Word uses 1.15 multiple line spacing consistently without changing paragraph gaps', async () => {
+  const markdown = '# Heading\n\nBody first line.  \nBody second line.\n\n- First item\n  - Nested item\n\n> Quoted text.\n\n> [!NOTE]\n> Alert content.\n\n| Header |\n| --- |\n| Cell |\n\n```text\nFirst code line\nSecond code line\n```\n';
+  const zip = unzipEntries(await toDocx(markdown, async () => { throw new Error('Unexpected image'); }));
+  const styles = zip.get('word/styles.xml')!.toString();
+  const xml = zip.get('word/document.xml')!.toString();
+  const defaults = styles.match(/<w:docDefaults>[\s\S]*?<\/w:docDefaults>/)![0];
+  const headings = [...styles.matchAll(/<w:style\b[^>]*w:styleId="Heading[1-6]"[\s\S]*?<\/w:style>/g)].map(([style]) => style).join('');
+  const spacing = [...`${defaults}${headings}${xml}`.matchAll(/<w:spacing\b[^>]*w:line="(\d+)"[^>]*\/>/g)];
+  assert.ok(spacing.length >= 12, 'Defaults, headings, lists, table cells and code have explicit line settings');
+  for (const [tag, line] of spacing) {
+    assert.equal(Number(line) / 240, 1.15, tag);
+    assert.match(tag, /w:lineRule="auto"/, 'Spacing is a line multiple, not a fixed height');
+  }
+  assert.match(defaults, /w:after="160"/, 'Normal paragraphs retain their 8 pt gap');
+  const paragraphSpacing = [...xml.matchAll(/<w:spacing\b[^>]*\/>/g)].map(([tag]) => tag);
+  assert.ok(paragraphSpacing.some(tag => /w:before="45"/.test(tag) && /w:after="45"/.test(tag)), 'List spacing remains compact');
+  assert.ok(paragraphSpacing.some(tag => /w:before="0"/.test(tag) && /w:after="0"/.test(tag)), 'Table cells do not gain paragraph gaps');
 });
 
 test('Word tables retain alignment, page-bounded grids, header shading and repeating unsplit rows', async () => {
@@ -206,7 +226,7 @@ test('Word preserves code tabs, whitespace, blank lines and quote/list indentati
   assert.match(xml, /xml:space="preserve">  second<\/w:t>/);
   assert.match(xml, /w:ind w:left="720"/);
   assert.match(xml, /w:fill="F3F6F6"/);
-  assert.match(xml, /w:spacing[^>]*w:line="300"/);
+  assert.match(xml, /w:spacing[^>]*w:line="276"/);
 });
 
 test('PDF uses visual-style hierarchy, bounded tables, task state and a clean printable page', async () => {

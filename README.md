@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/dennispadia/lekh/releases/tag/v0.9.2"><b>Download Lekh 0.9.2</b></a> ·
+  <a href="https://github.com/dennispadia/lekh/releases/latest"><b>Download Lekh</b></a> ·
   <a href="docs/USER_GUIDE.md">User guide</a> ·
   <a href="https://github.com/dennispadia/lekh/issues">Report an issue</a>
 </p>
@@ -51,10 +51,10 @@
 | | |
 | --- | --- |
 | **Command palette** | **Ctrl+Shift+P** or the header search finds every action, block, view and export by name. |
-| **Slash menu** | Type `/` on an empty line for headings, lists, tables, alerts and publishing blocks, each with an icon and short description. |
-| **Block toolbar** | Click into a block to move it up or down, duplicate it or remove it. Also on **Alt+Shift+Up/Down**, **Edit > Block** and the right-click menu. |
+| **Slash menu** | A blank-document hint shows how to get started. Type `/` on an empty Visual line for headings, lists, tables, alerts and publishing blocks. |
+| **Block toolbar** | Click into content to move it up or down, duplicate it or remove it. Also on **Alt+Shift+Up/Down**, **Edit** and right-click **Edit**. |
 | **Smart outline** | Collapse and expand headings, and drag a section (or press **Alt+Up/Down**) to move it with all its subsections. Moves never break tabs, zones or lists. |
-| **Grouped toolbar** | Labeled View, Style, Text, Paragraph, Insert and Publishing groups that fold neatly into **More** in narrow windows. |
+| **Grouped toolbar** | One **Insert** section with Image, Table, Code, Alerts, Structure and Interactive. Structure and Interactive stay visible as lower-priority tools fold into **More**. |
 | **Right-click everything** | Every toolbar feature is also in the context menu, fully keyboard accessible. |
 
 ### Publishing blocks
@@ -62,15 +62,15 @@
 | | |
 | --- | --- |
 | **Alerts** | Note, Tip, Important, Caution and Warning, each with its own icon and Light/Dark colors. Type and format inside them directly. |
-| **Tabbed examples** | Edit tab names on the tabs themselves. Use **+** to add a tab and **×** to remove one. Names become `# [Name](#tab/name)` headings in Source. |
-| **Variants** | Insert a selector once, then place variant content anywhere in the document. |
+| **Tabbed examples** | Start with empty example bodies and click-away writing hints, not sample text to delete. Rename tabs in place; **+** adds one and **×** removes one. Names become `# [Name](#tab/name)` headings in Source. |
+| **Variants** | Write your prompt in a clearly labeled field, then place variant content anywhere. Empty content cards guide you with placeholders that disappear on focus and never enter your document. |
 | **Metadata** | One YAML box for any front-matter keys, kept out of the article body. |
 
 ### Workspace and safety
 
 | | |
 | --- | --- |
-| **Tabs and split view** | Open many documents, or pair two side by side with a resizable divider. |
+| **Tabs and split view** | Open many documents using the **+** next to the last tab, or pair two side by side with a resizable divider. |
 | **Themes and focus** | Light and Graphite + Teal Dark themes, zoom, and distraction-free Focus mode (**F9**). |
 | **Status at a glance** | Click the word count for full document statistics, or the save state to save. |
 | **Never lose work** | Unsaved-change prompts, external-edit detection, atomic saves and recovery drafts. |
@@ -113,7 +113,7 @@ See [images and exports](docs/USER_GUIDE.md#images-and-exports) for details.
   </tr>
   <tr>
     <td><img src="docs/images/alerts-dark.png" alt="Editable alerts in Dark theme"><br><sub><b>Alerts</b> — type and format directly inside them.</sub></td>
-    <td><img src="docs/images/publishing-split-dark.png" alt="Tabs and selector in Visual beside Source"><br><sub><b>Publishing blocks</b> — controls stay with the document, beside exact Source.</sub></td>
+    <td><img src="docs/images/publishing-split-dark.png" alt="Variant selector and content in Visual beside Markdown source"><br><sub><b>Publishing blocks</b> — controls stay with the document, beside exact Source.</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/block-toolbar.png" alt="Floating block toolbar and collapsible outline"><br><sub><b>Block toolbar and outline</b> — rearrange content in a click.</sub></td>
@@ -125,7 +125,7 @@ See [images and exports](docs/USER_GUIDE.md#images-and-exports) for details.
 
 Requires **Windows 10/11 x64** and .NET Framework 4.8 or newer (normally included in Windows).
 
-1. Download the setup EXE from the **[Lekh 0.9.2 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.2)** and compare it with `SHA256SUMS.txt`.
+1. Download the setup EXE from the **[latest Lekh release](https://github.com/dennispadia/lekh/releases/latest)** and compare it with `SHA256SUMS.txt`.
 2. Run it. A fresh install starts straight away; no administrator access is needed.
 3. Upgrading? If Lekh is closed, setup upgrades it automatically and shows the old and new versions. If Lekh is open, setup asks you to save and close it, then click **Check again**.
 

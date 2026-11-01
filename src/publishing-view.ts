@@ -182,6 +182,10 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
   for (const button of pane.querySelectorAll<HTMLElement>('[data-publishing-choice]')) {
     button.setAttribute('aria-pressed', String(button.dataset.publishingChoice === selected));
   }
+  for (const selector of selectors) {
+    const status = selector.querySelector<HTMLElement>(':scope > .publishing-selection-status');
+    if (status) status.textContent = `Showing: ${choices.get(selected) ?? selected}`;
+  }
   for (const zone of zones) {
     const visible = (zone.dataset.publishingZone ?? '').split(',').some(value => value.trim() === selected);
     if (zone.dataset.lekhEditableZone === 'true') {
@@ -189,6 +193,8 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       zone.classList.toggle('publishing-zone-inactive', !visible);
       const content = zone.querySelector<HTMLElement>(':scope > .publishing-editable-body');
       if (content) content.hidden = !visible;
+      const status = zone.querySelector<HTMLElement>('.publishing-zone-status');
+      if (status) status.textContent = visible ? 'Showing' : 'Not selected';
       const show = zone.querySelector<HTMLButtonElement>(':scope > .publishing-edit-header button');
       if (show) show.hidden = visible;
     } else zone.hidden = !visible;

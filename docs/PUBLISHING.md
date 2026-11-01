@@ -15,11 +15,11 @@ GitHub's browser uploader does not apply `.gitignore` for you. Do not drag the e
 
 ## Create release downloads
 
-The repository is `dennispadia/lekh`. **[Lekh 0.9.1](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** is published with interactive offline HTML export, direct Visual publishing-block editing, and automatic rollback-safe upgrades. Its EXE, source ZIP and checksums were independently downloaded and verified against the official build; earlier releases remain unchanged.
+The repository is `dennispadia/lekh`. The [latest release](https://github.com/dennispadia/lekh/releases/latest) provides the offline setup EXE, source ZIP and checksums. Earlier releases remain unchanged.
 
-The complete **0.9.1** unit, packaged desktop, setup and genuine hosted **0.9.0 -> 0.9.1** removal/cancellation-rollback/upgrade/repair gates passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41269204614). The old payload/profile restoration assertion remains mandatory; do not replace it with a skipped or label-only scenario.
+The complete **0.9.2** unit, packaged desktop, setup and genuine hosted **0.9.1 -> 0.9.2** removal/cancellation-rollback/upgrade/repair gates passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41283131202). The old payload/profile restoration assertion remains mandatory; do not replace it with a skipped or label-only scenario.
 
-The 0.9.1 hosted gate targets the pinned public **0.9.0 -> 0.9.1** lineage: real idle/running EXE upgrades, same-version rejection, removal-before-new, cancellation restoring old bytes, repair and profile-preserving cleanup. The earlier **[0.9.0 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)** and its [official build](https://github.com/dennispadia/lekh/actions/runs/41245290389) remain unchanged.
+The current hosted gate targets the pinned public **0.9.2 -> 0.9.3** lineage and must pass before publication: real idle/running EXE upgrades, same-version rejection, removal-before-new, cancellation restoring old bytes, repair and profile-preserving cleanup.
 
 Lekh's independent identities are npm package `lekh`, application ID `com.lekh.desktop`, `%APPDATA%\Lekh` profile, and `%LOCALAPPDATA%\lekh` application directory. The executable is `Lekh - Markdown editor.exe`. The independent MSI upgrade code is `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`; keep it stable for future Lekh upgrades and consistent with installer policy and verification tests. Existing Lekh profiles are retained during upgrades. No migration aliases or automatic removal of another product are included.
 
@@ -57,7 +57,7 @@ On GitHub:
 
 ## GitHub Actions
 
-The included Windows workflow runs on pushes to `main` and on manual dispatch. It restores locked dependencies from the public npm registry, runs unit tests, builds/verifies the internal MSI and native setup EXE, and creates source/checksum artifacts. A separate Linux job requires the file-symlink include boundary test to pass without skipping, even when local Windows policy disallows file symlinks. Public artifacts contain only the setup EXE, source ZIP, and checksum list, not the internal MSI.
+The included Windows workflow runs on pushes to `main` and on manual dispatch. It restores locked dependencies from the public npm registry, runs unit tests, builds/verifies the internal MSI and native setup EXE, and creates source/checksum artifacts. A separate Linux job requires the file-symlink image boundary test to pass without skipping, even when local Windows policy disallows file symlinks. Public artifacts contain only the setup EXE, source ZIP, and checksum list, not the internal MSI.
 
 The workflow has read-only repository permissions and **does not automatically create releases or upload binaries to a public Release**. Download its build artifacts and publish reviewed release assets manually. GitHub may require you to enable Actions in a new repository or fork; Actions availability, limits and billing are controlled by GitHub.
 

@@ -213,7 +213,7 @@ function choiceLabel(context: ViewContext, title: string, value: () => string, c
 }
 
 function paragraphAfter(context: ViewContext): HTMLButtonElement {
-  return tool('Write after block', () => {
+  const button = tool('Write after block', () => {
     const position = context.getPos();
     if (!context.editor.isEditable || typeof position !== 'number') {
       context.options.reportError('Wait for the current operation to finish before editing this block.'); return;
@@ -224,6 +224,32 @@ function paragraphAfter(context: ViewContext): HTMLButtonElement {
     context.editor.view.dispatch(tr.scrollIntoView());
     context.editor.view.focus();
   });
+  button.className = 'publishing-write-after';
+  button.title = 'Insert a blank paragraph after this block and continue writing.';
+  return button;
+}
+
+function authoringHint(text: string): HTMLParagraphElement {
+  const hint = document.createElement('p');
+  hint.className = 'publishing-authoring-hint';
+  hint.contentEditable = 'false';
+  hint.textContent = text;
+  return hint;
+}
+
+function cardHeading(kind: 'tabs' | 'selector', label: string): HTMLDivElement {
+  const heading = document.createElement('div');
+  heading.className = 'publishing-card-heading';
+  heading.contentEditable = 'false';
+  heading.insertAdjacentHTML('beforeend', publishingIcon(kind));
+  const name = document.createElement('span');
+  name.textContent = label;
+  const badge = document.createElement('span');
+  badge.className = 'publishing-html-badge';
+  badge.textContent = 'HTML export';
+  badge.title = 'Interactive content exports to HTML. Word and PDF are not supported.';
+  heading.append(name, badge);
+  return heading;
 }
 
 function ignoreControls(dom: HTMLElement, contentDOM?: HTMLElement) {
@@ -279,6 +305,17 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         header.contentEditable = 'false';
         header.className = 'publishing-edit-header';
         const title = document.createElement('strong');
+        title.className = 'publishing-content-label';
+        const status = document.createElement('span');
+        status.className = 'publishing-zone-status';
+        const identity = document.createElement('div');
+        identity.className = 'publishing-zone-identity';
+        if (kind === 'zone') {
+          const caption = document.createElement('span');
+          caption.className = 'publishing-card-caption';
+          caption.textContent = 'Variant content';
+          identity.append(caption, title);
+        }
         const heading = kind === 'callout'
           ? field(context, 'Block title', () => String(context.node.attrs.title), value => set({ title: value }))
           : null;
@@ -292,10 +329,18 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         summary.textContent = 'Applies to…';
         const choices = document.createElement('div');
         assignments.append(summary, choices);
-        header.append(heading?.wrapper ?? title, ...(kind === 'zone' ? [assignments, show] : []), paragraphAfter(context));
+        header.append(heading?.wrapper ?? (kind === 'zone' ? identity : title),
+          ...(kind === 'zone' ? [status, assignments, show] : [paragraphAfter(context)]));
         const contentDOM = document.createElement('div');
         contentDOM.className = 'publishing-editable-body';
         dom.append(header, contentDOM);
+        if (kind === 'zone') {
+          const footer = document.createElement('div');
+          footer.className = 'publishing-edit-tools';
+          footer.contentEditable = 'false';
+          footer.append(paragraphAfter(context));
+          dom.append(footer);
+        }
         let signature = '';
         const refresh = () => {
           const current = context.node;
@@ -304,7 +349,7 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
             const ids: string[] = current.attrs.variants;
             dom.className = 'publishing-zone publishing-editable';
             dom.dataset.publishingZone = ids.join(',');
-            title.textContent = `Variant content · ${ids.map(id => available.find(option => option.id === id)?.label ?? id).join(' / ')}`;
+            title.textContent = `Content for ${ids.map(id => available.find(option => option.id === id)?.label ?? id).join(' / ')}`;
             const next = JSON.stringify([available, ids]);
             if (signature !== next) {
               signature = next;
@@ -399,6 +444,7 @@ const TabsNode = Node.create<Options>({
       const { context } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-tabs publishing-editable'; dom.dataset.lekhTabs = ''; dom.dataset.publishingTabs = ''; dom.dataset.publishingReady = 'true';
       const header = document.createElement('div'); header.contentEditable = 'false';
+      header.className = 'publishing-tabs-header';
       const tabs = document.createElement('div'); tabs.className = 'publishing-tablist'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Content tabs');
       const tools = document.createElement('div'); tools.className = 'publishing-edit-tools';
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-panels';
@@ -454,7 +500,11 @@ const TabsNode = Node.create<Options>({
         editor.view.dispatch(closeHistory(editor.state.tr).delete(position, position + panel.nodeSize));
         queueMicrotask(() => tabs.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
       };
-      tools.append(paragraphAfter(context)); header.append(tabs); dom.append(header, contentDOM, tools);
+      tools.append(paragraphAfter(context));
+      header.append(cardHeading('tabs', 'Tabbed examples'), tabs);
+      const hint = authoringHint('Double-click a name or press F2 to rename. + adds an example.');
+      tools.prepend(hint);
+      dom.append(header, contentDOM, tools);
       let signature = '';
       let labels: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
@@ -504,7 +554,7 @@ const TabsNode = Node.create<Options>({
 const SelectorNode = Node.create<Options>({
   name: 'lekhSelector', group: 'block', atom: true, addOptions: () => defaults,
   addAttributes: () => ({ ...provenance(),
-    title: { default: 'Choose an option', rendered: false, parseHTML: element => element.getAttribute('data-selector-title') ?? 'Choose an option' },
+    title: { default: '', rendered: false, parseHTML: element => element.getAttribute('data-selector-title') ?? '' },
     options: { default: [{ id: 'first', label: 'First option' }, { id: 'second', label: 'Second option' }], rendered: false,
       parseHTML: element => JSON.parse(element.getAttribute('data-selector-options') ?? '[]'),
       validate: value => { const choices = variantOptions(value); if (!choices.length || choices.length > 32 || new Set(choices.map(item => item.id)).size !== choices.length) throw new Error('Use 1–32 unique variant choices.'); } },
@@ -520,8 +570,16 @@ const SelectorNode = Node.create<Options>({
     return ({ editor, node, getPos }) => {
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-selector publishing-editable'; dom.dataset.lekhSelector = ''; dom.dataset.publishingSelector = 'editable'; dom.contentEditable = 'false'; dom.setAttribute('role', 'group');
-      const title = field(context, 'Selector prompt', () => String(context.node.attrs.title), value => set({ title: value }), false, true);
+      const title = field(context, 'Selector prompt', () => String(context.node.attrs.title), value => set({ title: value }));
+      title.wrapper.classList.add('publishing-prompt-field');
+      title.input.placeholder = 'Write a prompt, e.g. Choose your deployment approach';
+      title.input.title = 'Title shown above the variant options. Click to edit.';
       const controls = document.createElement('div'); controls.className = 'publishing-variant-options';
+      controls.setAttribute('role', 'group');
+      const selection = document.createElement('p');
+      selection.className = 'publishing-selection-status';
+      selection.setAttribute('aria-live', 'polite');
+      selection.setAttribute('role', 'status');
       const add = iconTool('Add option', '+', () => {
         const existing = documentVariantOptions(editor);
         if (context.node.attrs.options.length >= 32) { options.reportError('A selector can contain at most 32 options.'); return; }
@@ -536,11 +594,19 @@ const SelectorNode = Node.create<Options>({
         options.addVariantContent(position);
       });
       content.className = 'publishing-add-variant-content';
+      content.insertAdjacentHTML('afterbegin', publishingIcon('nextstepaction'));
       content.title = 'Choose which options apply, then write their content directly below this selector.';
-      dom.append(title.wrapper, controls, content, paragraphAfter(context));
+      const actions = document.createElement('div');
+      actions.className = 'publishing-selector-actions';
+      actions.append(content, paragraphAfter(context));
+      dom.append(cardHeading('selector', 'Variant selector'), title.wrapper,
+        authoringHint('Choose an option to show its content throughout the document.'),
+        controls, selection, actions,
+        authoringHint('Double-click a choice or press F2 to rename. Add content here, or use Interactive to place it anywhere.'));
       let idsSignature = ''; let fields: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
-        dom.setAttribute('aria-label', String(context.node.attrs.title));
+        dom.setAttribute('aria-label', String(context.node.attrs.title) || 'Variant selector');
+        controls.setAttribute('aria-label', String(context.node.attrs.title) || 'Variant options');
         title.refresh();
         const choices = variantOptions(context.node.attrs.options);
         const signature = choices.map(choice => choice.id).join(',');

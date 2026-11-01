@@ -1,6 +1,6 @@
 import {
   AlignmentType, Bookmark, BorderStyle, Document, ExternalHyperlink, HeadingLevel, ImageRun,
-  InternalHyperlink, LevelFormat, Packer, Paragraph, Tab, TabStopType, Table, TableCell, TableLayoutType,
+  InternalHyperlink, LevelFormat, LineRuleType, Packer, Paragraph, Tab, TabStopType, Table, TableCell, TableLayoutType,
   TableRow, TextRun, UnderlineType, VerticalAlign,
   WidthType, type ILevelsOptions, type IParagraphOptions, type IRunOptions, type IStylesOptions,
   type ParagraphChild,
@@ -36,6 +36,7 @@ async function diagramImage(source: string, loader?: DiagramImageLoader) {
 type Block = Paragraph | Table;
 const page = { width: 11906, height: 16838, margin: 1134 };
 const contentWidth = page.width - page.margin * 2;
+const wordLineSpacing = 276;
 const ink = { text: '263238', muted: '607078', accent: '227C78', line: 'DDE5E5', soft: 'F1F5F5', code: 'F3F6F6' };
 const headingSizes = [51, 32, 26, 23, 22, 20];
 const headingSpacing = [
@@ -50,12 +51,12 @@ const styles: IStylesOptions = {
   default: {
     document: {
       run: { font: 'Segoe UI', size: 24, color: ink.text },
-      paragraph: { spacing: { before: 0, after: 160, line: 420 } },
+      paragraph: { spacing: { before: 0, after: 160, line: wordLineSpacing, lineRule: LineRuleType.AUTO } },
     },
     hyperlink: { run: { color: ink.accent, underline: { type: UnderlineType.SINGLE } } },
     ...Object.fromEntries(headingSizes.map((size, index) => [`heading${index + 1}`, {
       run: { font: 'Segoe UI', size, bold: true, color: ink.text },
-      paragraph: { spacing: { ...headingSpacing[index], line: 324 }, keepNext: true, keepLines: true },
+      paragraph: { spacing: { ...headingSpacing[index], line: wordLineSpacing, lineRule: LineRuleType.AUTO }, keepNext: true, keepLines: true },
     }])),
   },
 };
@@ -109,7 +110,7 @@ export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagr
       widowControl: true,
       numbering: marker ? { reference: list.reference, level: list.level } : undefined,
       indent: left && currentCell === null ? { left, ...(marker ? { hanging: 240 } : {}) } : undefined,
-      spacing: list ? { before: 45, after: 45, line: 420 } : undefined,
+      spacing: list ? { before: 45, after: 45, line: wordLineSpacing, lineRule: LineRuleType.AUTO } : undefined,
       ...(quote && currentCell === null ? {
         shading: { fill: ink.soft },
         border: { left: { color: ink.accent, style: BorderStyle.SINGLE, size: 18, space: 12 } },
@@ -302,7 +303,7 @@ export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagr
           indent: { left: indentation(), hanging: 360 },
           tabStops: [{ type: TabStopType.LEFT, position: indentation() }],
         } : {}),
-        ...(currentCell ? { alignment: cellAlignment, spacing: { before: 0, after: 0, line: 360 }, keepNext: headerCell } : {}),
+        ...(currentCell ? { alignment: cellAlignment, spacing: { before: 0, after: 0, line: wordLineSpacing, lineRule: LineRuleType.AUTO }, keepNext: headerCell } : {}),
         ...(heading ? { spacing: undefined } : {}),
       });
     } else if (token.type === 'fence' || token.type === 'code_block') {
@@ -323,7 +324,7 @@ export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagr
           children: segment.text.split(/(\t)/).map(part => part === '\t' ? new Tab() : part),
           color: segment.color, font: 'Consolas', size: 19,
         })), {
-          shading: { fill: ink.code }, spacing: { before: index ? 0 : 160, after: index === lines.length - 1 ? 160 : 0, line: 300 },
+          shading: { fill: ink.code }, spacing: { before: index ? 0 : 160, after: index === lines.length - 1 ? 160 : 0, line: wordLineSpacing, lineRule: LineRuleType.AUTO },
           keepNext: false,
         });
       }

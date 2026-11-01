@@ -133,6 +133,13 @@ try {
   assert.equal(await ui("document.querySelector('.tiptap').textContent"), '');
   assert.equal(await ui("document.querySelector('#source-editor').value"), '');
   assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'false');
+  await waitFor(async () => ui("document.querySelector('#tabs .tab-select')?.clientWidth > 0"), 'blank tab layout');
+  const blankTab = await ui(`(() => {
+    const button = document.querySelector('#tabs .tab-select');
+    return { name: button.textContent, width: button.clientWidth, contentWidth: button.scrollWidth };
+  })()`);
+  assert.equal(blankTab.name, 'Untitled.md');
+  assert.ok(blankTab.contentWidth <= blankTab.width, `A single document name is readable when the header has room: ${JSON.stringify(blankTab)}`);
   console.log('PASS: startup opens one pristine blank Untitled document, never a welcome document');
   const baseline = path.join(temporary, 'Smoke baseline.md');
   await writeFile(baseline, '# Desktop test\n\n## Writing\n\nA generic desktop regression fixture.\n\n## Tasks\n\n- [ ] First task\n- [x] Second task\n- [ ] Third task\n\n## Table\n\n| Name | Value |\n| --- | --- |\n| Example | One |\n\n## Finish\n\nEnd of fixture.\n');
@@ -241,11 +248,8 @@ try {
     await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'control action');
   };
   const clickMermaid = async () => {
-    if (await ui("document.querySelector('#toolbar-overflow [data-action=\"publishing-menu\"]') !== null")) {
-      await clickControl('[data-action="format-menu"]');
-    }
-    await clickControl('[data-action="publishing-menu"]');
-    await clickControl('#publishing-menu [data-action="insert:mermaid"]');
+    await clickControl('[data-action="structure-menu"]');
+    await clickControl('#structure-menu [data-action="insert:mermaid"]');
   };
   const menuAction = async name => {
     await main.evaluate(`smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action', ${JSON.stringify(name)})`);
@@ -850,6 +854,13 @@ try {
   assert.equal(await activeTab(), secondTab);
   await action('new');
   await action('visual');
+  const plusPlacement = await ui(`(() => {
+    const tab=[...document.querySelectorAll('#tabs .document-tab')].filter(tab=>tab.getClientRects().length).at(-1).getBoundingClientRect();
+    const plus=document.querySelector('.tabs-bar > [data-action="new"]').getBoundingClientRect();
+    return {gap:plus.left-tab.right,right:plus.right,width:innerWidth};
+  })()`);
+  assert.ok(plusPlacement.gap >= 0 && plusPlacement.gap <= 8, 'New-tab plus follows the rightmost document without unused space');
+  assert.ok(plusPlacement.right <= plusPlacement.width, 'New-tab plus stays visible');
   await menuAction('undo');
   assert.equal(await ui("document.querySelector('.tiptap').textContent"), '', 'Undo cannot resurrect a previous document');
   console.log('PASS: undo history is isolated between documents');
@@ -1065,7 +1076,7 @@ try {
     if (!await ui("document.querySelector('#editor-context-menu').matches(':popover-open')")) await showContext();
     await ui(`(() => {
       let menu = document.querySelector('#editor-context-menu');
-      for (const label of ${JSON.stringify(labels.filter(label => label !== 'Formatting'))}) {
+      for (const label of ${JSON.stringify(labels)}) {
         const control = [...menu.querySelectorAll('button')].find(button => button.dataset.contextLabel === label && button.closest('[role=menu]') === menu);
         if (!control || control.disabled) throw new Error('Unavailable compact context action: ' + label);
         control.click();
@@ -1095,8 +1106,8 @@ try {
   await browser.call('Input.insertText', { text: 'Menu words' }, sessionId);
   await selectParagraph();
   await showContext();
-  assert.equal(await ui("document.querySelectorAll('#editor-context-menu .context-tools button').length"), 12, 'All twelve editing commands are directly accessible');
-  assert.deepEqual(await ui("[...document.querySelectorAll('#editor-context-menu .context-tools button')].map(button => button.textContent)"), ['Cut', 'Copy', 'Paste', 'Delete', 'Bold', 'Italic', 'Code', 'Link', 'Quote', 'Numbered', 'Bullets', 'Tasks']);
+  assert.equal(await ui("document.querySelectorAll('#editor-context-menu .context-tools button').length"), 8, 'Eight common editing commands stay directly accessible');
+  assert.deepEqual(await ui("[...document.querySelectorAll('#editor-context-menu .context-tools button')].map(button => button.textContent)"), ['Cut', 'Copy', 'Paste', 'Delete', 'Bold', 'Italic', 'Code', 'Link']);
   assert.equal((await ui("window.lekh.contextMenuCommand('invalid-menu', 'invalid-command')")).ok, false, 'Invalid native context commands are rejected');
   if (process.env.LEKH_SCREENSHOT) {
     const screenshot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -1105,12 +1116,13 @@ try {
   assert.equal(await main.evaluate("smokeMenuItem(['Table']).enabled"), true, 'Table menu is available before a table exists');
   assert.equal(await main.evaluate("smokeMenuItem(['Table', 'Insert table...']).enabled"), true);
   assert.equal(await main.evaluate("smokeMenuItem(['Table', 'Add row after']).enabled"), false);
-  assert.equal(await main.evaluate("smokeMenuItem(['Copy / Paste As', 'Copy selection as Markdown']).enabled"), true, 'Right-click preserves the selected text');
+  assert.equal(await main.evaluate("smokeMenuItem(['Edit', 'Copy / Paste As', 'Copy selection as Markdown']).enabled"), true, 'Right-click preserves the selected text');
   assert.ok(await main.evaluate("smokeMenuItem(['Formatting']).submenu.items.length >= 9"));
   assert.equal(await main.evaluate("smokeMenuItem(['Paragraph']).submenu.items.filter(item => item.label.startsWith('Heading')).length"), 6);
-  for (const label of ['Footnote (Source)', 'Link reference (Source)', 'Math block (Source)', 'Table of contents', 'YAML front matter (Source)', 'Paragraph before', 'Paragraph after']) {
+  for (const label of ['Footnote (Source)', 'Link reference (Source)', 'Math block (Source)', 'YAML front matter (Source)', 'Paragraph before', 'Paragraph after']) {
     assert.ok(await main.evaluate(`Boolean(smokeMenuItem(['Insert', ${JSON.stringify(label)}]))`));
   }
+  assert.ok(await main.evaluate("Boolean(smokeMenuItem(['Insert', 'Structure', 'Table of contents']))"));
   await contextAction(['Formatting', 'Bold']);
   assert.equal(await ui("document.querySelector('.tiptap strong').textContent"), 'Menu words');
   await contextAction(['Paragraph', 'Heading 2']);
@@ -1120,9 +1132,9 @@ try {
   await contextAction(['Paragraph', 'Paragraph']);
   await selectParagraph();
   await showContext();
-  await contextAction(['Copy / Paste As', 'Copy selection as Markdown']);
+  await contextAction(['Edit', 'Copy / Paste As', 'Copy selection as Markdown']);
   assert.match(await main.evaluate('smokeClipboard'), /\*\*Menu words\*\*/);
-  await contextAction(['Copy / Paste As', 'Copy document as Markdown']);
+  await contextAction(['Edit', 'Copy / Paste As', 'Copy document as Markdown']);
   assert.match(await main.evaluate('smokeClipboard'), /Menu words/);
   await contextAction(['Insert', 'Paragraph before']);
   await contextAction(['Insert', 'Paragraph after']);
@@ -1196,7 +1208,7 @@ try {
     await sourceEdit('menu words');
     await ui("document.querySelector('#source-editor').setSelectionRange(0,4)");
     await showContext('#source-editor');
-    await contextAction([label]);
+    await contextAction(['Bold', 'Italic', 'Inline code'].includes(label) ? [label] : ['Formatting', label]);
     assert.equal(await ui("document.querySelector('#source-editor').value"), expected, `Direct ${label} preserves and formats the Source selection`);
     await menuAction('undo');
     assert.equal(await ui("document.querySelector('#source-editor').value"), 'menu words', `Direct ${label} supports undo`);
@@ -1230,7 +1242,7 @@ try {
     }
     smokeClipboardImage = smokeElectron.nativeImage.createEmpty();
   `);
-  for (const labels of [['Cut'], ['Copy'], ['Paste'], ['Copy / Paste As', 'Paste as plain text']]) {
+  for (const labels of [['Cut'], ['Copy'], ['Paste'], ['Edit', 'Copy / Paste As', 'Paste as plain text']]) {
     await showContext('#source-editor');
     await contextAction(labels);
     assert.equal(await ui("document.querySelector('#source-editor').readOnly"), false, 'Native editing is not blocked by the async-operation lock');
@@ -1248,7 +1260,7 @@ try {
   assert.equal(await ui("document.activeElement === document.querySelector('#source-editor')"), true, 'Escape restores editing focus');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,600)");
   await delay(150);
-  for (const label of ['Copy / Paste As', 'Paragraph', 'Insert', 'Table']) {
+  for (const label of ['Edit', 'Formatting', 'Paragraph', 'Insert', 'Table']) {
     await showContext('#source-editor', true);
     await ui(`(() => {const button=[...document.querySelectorAll('#editor-context-menu > button')].find(button=>button.dataset.contextLabel===${JSON.stringify(label)});button.scrollIntoView({block:'nearest'});button.click()})()`);
     assert.ok(await ui("[...document.querySelectorAll('.editor-context-menu:popover-open')].every(menu=>{const box=menu.getBoundingClientRect();return box.left>=7 && box.top>=7 && box.right<=innerWidth-7 && box.bottom<=innerHeight-7})"), `Root and ${label} submenu fit near the bottom-right viewport edge`);
@@ -1268,7 +1280,7 @@ try {
   await action('visual');
   await showContext();
   await main.evaluate("smokeClipboard = '**Pasted Markdown**\\n\\n- A list item'");
-  await contextAction(['Copy / Paste As', 'Paste as Markdown']);
+  await contextAction(['Edit', 'Copy / Paste As', 'Paste as Markdown']);
   assert.equal(await ui("document.querySelector('.tiptap strong').textContent"), 'Pasted Markdown');
   await main.evaluate('smokeChoice = 1');
   await menuAction('close-tab');
@@ -1282,7 +1294,7 @@ try {
   assert.equal(await ui("document.querySelector('#source-editor').value"), 'Plain paragraph');
   await ui("document.querySelector('#source-editor').setSelectionRange(0,5)");
   await main.evaluate("smokeClipboard = 'New'");
-  await contextAction(['Copy / Paste As', 'Paste as Markdown']);
+  await contextAction(['Edit', 'Copy / Paste As', 'Paste as Markdown']);
   assert.equal(await ui("document.querySelector('#source-editor').value"), 'New paragraph', 'Source paste replaces the selection');
   await ui("document.querySelector('#source-editor').setSelectionRange(0,3)");
   await contextAction(['Insert', 'Footnote (Source)']);
@@ -1304,7 +1316,7 @@ try {
   await sourceEdit('# Intro\n\n**Bold**\n\n## Next\n');
   await ui("document.querySelector('#source-editor').setSelectionRange(0,0)");
   await showContext('#source-editor');
-  await contextAction(['Insert', 'Table of contents']);
+  await contextAction(['Insert', 'Structure', 'Table of contents']);
   assert.match(await ui("document.querySelector('#source-editor').value"), /\[Intro\]\(#intro\)/);
   await action('visual');
   assert.equal(await ui("document.querySelector('.tiptap h1').textContent"), 'Intro');
@@ -1477,7 +1489,7 @@ try {
   await action('new');
   await action('source');
   await showContext('#source-editor');
-  await contextAction(['Copy / Paste As', 'Paste image']);
+  await contextAction(['Edit', 'Copy / Paste As', 'Paste image']);
   assert.match(await ui("document.querySelector('#source-editor').value"), /!\[Image\]\(data:image\/png;base64,/);
   await main.evaluate('smokeChoice = 1');
   await menuAction('close-tab');
@@ -2339,6 +2351,7 @@ try {
     assert.ok(exportUI.contrast >= 4.5, `${theme} export warning contrast: ${exportUI.contrast}`);
     assert.deepEqual([exportUI.recommended, exportUI.previews, exportUI.heading, exportUI.labelled, exportUI.previewInside], [true, 3, 'Export document', 'export-menu-title', true], 'Export panel shows a heading, three format previews and recommends HTML');
     if (process.env.LEKH_SCREENSHOT) {
+      await ui("document.querySelector('#notification').hidden=true");
       const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
       await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `export-panel-${theme}.png`), Buffer.from(shot.data, 'base64'));
     }
@@ -2549,9 +2562,8 @@ try {
   await menuAction('undo');
   assert.equal(await ui("document.querySelector('#source-editor').value"), blockDocument);
   await main.evaluate(`smokeOpenPath=${JSON.stringify(path.join(publishingRoot, 'assets', 'pixel.png'))}`);
-  if (!await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').getClientRects().length > 0")) await action('format-menu');
-  await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').click()");
-  await ui("document.querySelector('#publishing-menu [data-action=\"insert:publishing-image\"]').click()");
+  await ui("document.querySelector('[aria-controls=\"structure-menu\"]').click()");
+  await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-image\"]').click()");
   await waitFor(async () => ui("document.querySelector('#publishing-image-dialog').open"), 'described image dialog');
   await ui("document.querySelector('#publishing-image-alt').value='A \"quoted\" diagram'; document.querySelector('#publishing-image-dialog button[value=\"insert\"]').click()");
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'image directive insertion');
@@ -2699,10 +2711,9 @@ try {
     for (const item of contrasts) assert.ok(item.ratio >= 4.5, `${theme} text contrast must meet 4.5:1: ${JSON.stringify(item)}`);
     await ui("document.querySelector('[data-publishing-tab=\"1\"]').click()");
     assert.equal(await ui("document.querySelector('[data-publishing-panel=\"1\"]').hidden"), false);
-    if (!await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').getClientRects().length > 0")) await action('format-menu');
-    await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').click()");
-    assert.ok(await ui("document.querySelector('#alerts-menu [data-action=\"insert:callout-note\"]') !== null && document.querySelector('#publishing-menu [data-action=\"insert:callout-note\"]') === null"));
-    assert.ok(await ui("[...document.querySelectorAll('#publishing-menu button')].every(button=>button.querySelector('svg') && button.title.length>20 && button.getAttribute('aria-description')===button.title)"));
+    await ui("document.querySelector('[aria-controls=\"interactive-menu\"]').click()");
+    assert.ok(await ui("document.querySelector('#alerts-menu [data-action=\"insert:callout-note\"]') !== null && document.querySelector('#interactive-menu [data-action=\"insert:callout-note\"]') === null"));
+    assert.ok(await ui("[...document.querySelectorAll('#structure-menu button, #interactive-menu button')].every(button=>button.querySelector('svg') && button.title.length>20 && button.getAttribute('aria-description')===button.title)"));
     await ui("document.body.click()");
   }
   await action('source');
@@ -2726,9 +2737,9 @@ try {
   await action('visual');
   const visualPublishingId = await activeTab();
   const publishingTool = async (kind, modal = false) => {
-    if (!await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').getClientRects().length > 0")) await action('format-menu');
-    await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').click()");
-    await ui(`document.querySelector('#publishing-menu [data-action="insert:${kind}"]').click()`);
+    const menu = ['publishing-tabs', 'publishing-selector'].includes(kind) ? 'interactive-menu' : 'structure-menu';
+    await ui(`document.querySelector('[aria-controls="${menu}"]').click()`);
+    await ui(`document.querySelector('#${menu} [data-action="insert:${kind}"]').click()`);
     if (!modal) await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Visual publishing toolbar insertion');
   };
   const inputText = async (selector, value) => {
@@ -2755,12 +2766,12 @@ try {
   };
   await waitFor(async () => ui("document.querySelector('[data-lekh-tabs]') && document.querySelector('[data-lekh-metadata]')"), 'real editable tab and metadata model');
   await showContext('.tiptap p');
-  await contextAction(['Insert', 'Publishing blocks']);
+  await contextAction(['Insert', 'Interactive']);
   const flyout = await ui(`(() => {
     const root=document.querySelector('#editor-context-menu');
     const insert=[...root.querySelectorAll('button')].find(button=>button.dataset.contextLabel==='Insert'&&button.closest('[role=menu]')===root);
     const parent=document.getElementById(insert.getAttribute('aria-controls'));
-    const trigger=[...parent.querySelectorAll('button')].find(button=>button.dataset.contextLabel==='Publishing blocks'&&button.closest('[role=menu]')===parent);
+    const trigger=[...parent.querySelectorAll('button')].find(button=>button.dataset.contextLabel==='Interactive'&&button.closest('[role=menu]')===parent);
     const child=document.getElementById(trigger.getAttribute('aria-controls'));
     const a=parent.getBoundingClientRect(),b=child.getBoundingClientRect(),row=trigger.getBoundingClientRect();
     return {root:root.matches(':popover-open'),parent:parent.matches(':popover-open'),child:child.matches(':popover-open'),left:b.left,right:b.right,top:b.top,height:b.height,parentLeft:a.left,parentRight:a.right,rowTop:row.top,width:innerWidth,viewHeight:innerHeight,icons:[...child.querySelectorAll('button')].every(button=>button.querySelector('svg')&&button.title.length>20)};
@@ -2771,15 +2782,16 @@ try {
   assert.ok(Math.abs(flyout.top-Math.max(8,Math.min(flyout.rowTop,flyout.viewHeight-flyout.height-8)))<3);
   assert.ok(flyout.icons, 'Right-click publishing tools share toolbar icons and descriptions');
   assert.equal(await ui("document.querySelector('[data-context-label=\"Local include\"]')===null"), true, 'Right-click does not offer a Local include insertion');
-  assert.equal(await ui("document.querySelector('#publishing-menu [data-action=\"insert:publishing-include\"]')===null"), true, 'Blocks does not offer a Local include insertion');
+  assert.equal(await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-include\"], #interactive-menu [data-action=\"insert:publishing-include\"]')===null"), true, 'Neither menu offers a Local include insertion');
   assert.equal(await main.evaluate("Boolean(smokeElectron.Menu.getApplicationMenu().getMenuItemById('publishing-include'))"), false, 'The native Insert menu does not offer a Local include insertion');
   if (process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
+    await ui("document.querySelector('#notification').hidden=true");
     const capture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(root, 'docs', 'images', 'context-publishing-dark.png'), Buffer.from(capture.data, 'base64'));
   }
   await ui("document.querySelector('#editor-context-menu').hidePopover()");
   for (const theme of ['dark', 'light']) {
-    for (const category of ['Alerts', 'Publishing blocks']) {
+    for (const category of ['Alerts', 'Structure', 'Interactive']) {
       await showContext('.tiptap p');
       await contextAction(['Insert', category]);
       const rows = await ui(`(() => {
@@ -2803,20 +2815,22 @@ try {
     }
     await action('theme');
   }
-  assert.equal(await ui("document.querySelector('#publishing-menu [data-action=\"insert:publishing-zone\"]')===null"), true, 'Variant content is not an independent block-creation option');
-  assert.equal(await ui("document.querySelector('#publishing-menu [data-action=\"insert:publishing-selector\"] span').textContent"), 'Variant selector');
+  assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-zone\"]')===null"), true, 'Variant content is not an independent block-creation option');
+  assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-selector\"] span').textContent"), 'Variant selector');
   await caretIn('Place the first variant here.');
   await publishingTool('publishing-selector');
-  assert.equal(await ui("document.querySelector('#publishing-menu [data-action=\"insert:publishing-selector\"] span').textContent"), 'Add variant content\u2026', 'After inserting a selector, the same tool adds its content instead of creating another selector');
+  assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-selector\"] span').textContent"), 'Add variant content\u2026', 'After inserting a selector, the same tool adds its content instead of creating another selector');
   assert.ok(await ui("Boolean(document.querySelector('[data-lekh-selector] .publishing-add-variant-content'))"), 'The selector provides its own next-step content action');
   await waitFor(async () => main.evaluate("smokeElectron.Menu.getApplicationMenu().getMenuItemById('publishing-selector').label==='Add variant content\u2026'"), 'Native Insert menu follows the selector prerequisite');
   await showContext('.tiptap p');
-  await contextAction(['Insert', 'Publishing blocks']);
+  await contextAction(['Insert', 'Interactive']);
   assert.ok(await ui("Boolean(document.querySelector('[data-context-label=\"Add variant content\u2026\"]'))"), 'Right-click offers the same follow-on action');
   assert.equal(await ui("document.querySelector('[data-context-label=\"Variant content\u2026\"]')===null"), true);
   await ui("document.querySelector('#editor-context-menu').hidePopover()");
   assert.equal(await ui("document.querySelectorAll('[data-lekh-container=\"lekhZone\"]').length"), 0, 'Selector inserts only choices, never bundled content');
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input').disabled"), false, 'Inserted selector fields unlock after the toolbar operation');
+  assert.equal(await ui("document.querySelector('[data-lekh-selector] input').value"), '', 'New selectors contain no prompt text to delete');
+  assert.match(await ui("document.querySelector('[data-lekh-selector] input').placeholder"), /Write a prompt/);
   await inputText('[data-lekh-selector] input[aria-label="Selector prompt"]', 'Choose a deployment');
   assert.equal(await ui("document.querySelectorAll('[data-lekh-selector] .publishing-choice-fields').length"), 0, 'Selector choices have no duplicate option-name form');
   await renamePublishingChoice('[data-lekh-selector] [data-publishing-choice="first"]', '[data-lekh-selector] input[aria-label="Option name (first)"]', 'Availability Zones');
@@ -3065,8 +3079,7 @@ try {
       const capture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
       await writeFile(path.join(images, `alerts-${theme}.png`), Buffer.from(capture.data, 'base64'));
     }
-    if (!await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').getClientRects().length > 0")) await action('format-menu');
-    await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').click()");
+    await ui("document.querySelector('[aria-controls=\"interactive-menu\"]').click()");
     const menuCapture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(images, 'publishing-menu-dark.png'), Buffer.from(menuCapture.data, 'base64'));
     await ui("document.body.click()");
@@ -3081,13 +3094,14 @@ try {
     const splitCapture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(images, 'publishing-split-dark.png'), Buffer.from(splitCapture.data, 'base64'));
     const fieldDemo = path.join(temporary, 'Editable publishing fields.md');
-    await writeFile(fieldDemo, '---\ntitle: A richer publishing workflow\ndescription: Edit metadata, examples and procedures in Visual.\nkeywords: [writing, publishing]\n---\n\n# Write once. Publish well.\n\n# [Quick example](#tab/quick)\n\nEdit this example directly, including **rich formatting**.\n\n# [Detailed example](#tab/detailed)\n\nEvery alternative remains editable and is retained in exports.\n\n---\n\n:::steps\n1. Give the document a clear title and description.\n2. Write examples and instructions directly in Visual.\n3. Export every alternative without rebuilding the formatting.\n:::steps-end\n');
+    await writeFile(fieldDemo, '---\ntitle: A richer publishing workflow\ndescription: Edit metadata and examples in Visual.\nkeywords: [writing, publishing]\n---\n\n# Write once. Publish well.\n\n# [Quick example](#tab/quick)\n\nEdit this example directly, including **rich formatting**.\n\n# [Detailed example](#tab/detailed)\n\nEvery alternative remains editable and is retained in exports.\n\n---\n\n> [!TIP]\n> Keep examples concise and actionable.\n');
     await main.evaluate(`smokeOpenPath=${JSON.stringify(fieldDemo)}`);
     await action('open'); await action('visual');
-    await ui("document.querySelector('[data-lekh-metadata]').open=true;document.querySelector('#notification').hidden=true;document.activeElement?.blur()");
+    await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-metadata] textarea[aria-label=\"Metadata YAML\"]')) && Boolean(document.querySelector('[data-lekh-tabs]'))"), 'current metadata and tabs for documentation');
+    await ui("document.querySelector('[data-lekh-metadata]').scrollIntoView({block:'start'});document.querySelector('#notification').hidden=true;document.activeElement?.blur()");
     const fieldsCapture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(images, 'publishing-fields-dark.png'), Buffer.from(fieldsCapture.data, 'base64'));
-    await ui("document.querySelector('[data-lekh-metadata]').open=false;document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').click()");
+    await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').click();document.querySelector('[data-lekh-tabs]').scrollIntoView({block:'start'})");
     const contentCapture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(images, 'publishing-editing-dark.png'), Buffer.from(contentCapture.data, 'base64'));
     await menuAction('close-tab');
@@ -3172,7 +3186,40 @@ try {
   const outlineLabels = () => ui("[...document.querySelectorAll('#outline .outline-entry')].map(entry => entry.textContent)");
   const outlineFixture = '# Alpha\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Alpha child\n\nChild text.\n\n# Beta\n\nBeta text.\n';
   await action('new');
+  await action('visual');
+  await ui("document.querySelector('#visual-editor .tiptap').blur()");
+  assert.match(await ui("document.querySelector('#visual-editor .editor-empty-hint').dataset.placeholder"), /press \/ for commands/);
+  assert.equal(await ui("document.querySelector('#visual-editor .tiptap').editor.getMarkdown()"), '', 'Blank-document guidance never becomes Markdown');
+  for (const menu of ['structure', 'interactive']) {
+    assert.ok(await ui(`document.querySelector('.toolbar [data-action="${menu}-menu"]').getClientRects().length > 0`));
+    await clickControl(`[data-action="${menu}-menu"]`);
+    assert.equal(await ui(`document.querySelector('#${menu}-menu').hidden`), false);
+    await pressKey('Escape', 27);
+    assert.equal(await ui(`document.querySelector('#${menu}-menu').hidden`), true);
+  }
+  assert.equal(await ui("document.querySelectorAll('#structure-menu button').length"), 5);
+  assert.equal(await ui("document.querySelectorAll('#interactive-menu button').length"), 2);
+  assert.equal(await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-tabs\"]')"), null);
+  assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-metadata\"]')"), null);
+  for (const theme of ['light', 'dark']) {
+    await menuAction(`theme:${theme}`);
+    if (process.env.LEKH_SCREENSHOT) {
+      await ui("document.querySelector('#notification').hidden=true");
+      const capture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `blank-document-${theme}.png`), Buffer.from(capture.data, 'base64'));
+    }
+  }
+  await ui("document.querySelector('#visual-editor .tiptap').editor.commands.focus('start')");
+  await waitFor(async () => ui("document.activeElement === document.querySelector('#visual-editor .tiptap') && !document.querySelector('#visual-editor .editor-empty-hint')"), 'Clicking into an empty document hides the hint before typing');
+  await browser.call('Input.insertText', { text: 'Write without the hint.' }, sessionId);
+  assert.equal(await ui("document.querySelector('#visual-editor .editor-empty-hint')"), null);
+  await menuAction('undo');
+  await ui("document.querySelector('#visual-editor .tiptap').blur()");
+  assert.ok(await ui("Boolean(document.querySelector('#visual-editor .editor-empty-hint'))"), 'Undo to blank restores guidance');
   await action('source');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), '');
+  assert.match(await ui("document.querySelector('#source-editor').placeholder"), /Ctrl\+Shift\+P/);
+  console.log('PASS: empty-document guidance, typing/undo, content-free hints, separate Structure/Interactive menus and keyboard dismissal');
   await sourceEdit(outlineFixture);
   await ui("(() => {const source=document.querySelector('#source-editor');source.focus();source.setSelectionRange(10,10);source.dispatchEvent(new Event('select'));})()");
   await waitFor(async () => ui("document.querySelector('#cursor-position').textContent === 'Ln 3, Col 2' && !document.querySelector('#cursor-position').hidden"), 'Source status shows the caret line and column');
@@ -3278,17 +3325,17 @@ try {
   await waitFor(async () => ui("document.querySelector('#notification').textContent.includes('already the first')"), 'First block explains why it cannot move');
   await caretIn('Second paragraph.');
   await showContext('.tiptap > p:nth-of-type(2)');
-  const blockMenu = await main.evaluate("smokeMenuItem(['Block']).submenu.items.map(item => [item.label, item.enabled])");
+  const blockMenu = await main.evaluate("smokeMenuItem(['Edit']).submenu.items.filter(item => /^(Move block|Duplicate block|Remove block)/.test(item.label)).map(item => [item.label, item.enabled])");
   assert.deepEqual(blockMenu, [['Move block up', true], ['Move block down', true], ['Duplicate block', true], ['Remove block', true]]);
   assert.equal(await main.evaluate("smokeMenuItem(['View and tools', 'Command palette...']).accelerator"), 'CmdOrCtrl+Shift+P');
-  await contextAction(['Block', 'Duplicate block']);
-  assert.equal((await visualBlocks()).filter(text => text === 'Second paragraph.').length, 2, 'Right-click Block > Duplicate block');
+  await contextAction(['Edit', 'Duplicate block']);
+  assert.equal((await visualBlocks()).filter(text => text === 'Second paragraph.').length, 2, 'Right-click Edit > Duplicate block');
   await ui("document.querySelector('#editor-context-menu').hidePopover?.()");
   const appMenu = await main.evaluate(`(() => {
     const items = smokeElectron.Menu.getApplicationMenu().items;
-    const edit = items.find(item => item.label.replace('&','') === 'Edit').submenu.items.find(item => item.label === 'Block');
+    const edit = items.find(item => item.label.replace('&','') === 'Edit').submenu.items.filter(item => /^(Move block|Duplicate block|Remove block)/.test(item.label));
     const view = items.find(item => item.label.replace('&','') === 'View').submenu.items.find(item => item.label === 'Command palette...');
-    return {block: edit.submenu.items.map(item => item.label), palette: view.accelerator, registered: view.registerAccelerator !== false};
+    return {block: edit.map(item => item.label), palette: view.accelerator, registered: view.registerAccelerator !== false};
   })()`);
   assert.deepEqual(appMenu, { block: ['Move block up', 'Move block down', 'Duplicate block', 'Remove block'], palette: 'CmdOrCtrl+Shift+P', registered: true });
 
@@ -3359,6 +3406,7 @@ try {
   assert.deepEqual(toolbarState.actions.map(([id, disabled]) => [id, disabled]), [['block:up', false], ['block:down', false], ['block:duplicate', false], ['block:remove', false]]);
   assert.ok(toolbarState.inside && toolbarState.actions.every(([, , label]) => label), JSON.stringify(toolbarState));
   if (process.env.LEKH_SCREENSHOT) {
+    await ui("document.querySelector('#notification').hidden=true");
     const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'block-toolbar.png'), Buffer.from(shot.data, 'base64'));
   }
@@ -3453,8 +3501,13 @@ try {
   assert.ok(grouped.fonts <= 1, 'Overflow items share one font size');
   assert.equal(grouped.scroll, true, 'No horizontal toolbar scrolling');
   assert.equal(grouped.split, false, 'Overflow never leaves an empty group');
-  assert.ok(grouped.overflowGroups > 0, 'Whole groups move into More');
+  assert.ok(grouped.overflowGroups > 0, `Whole groups move into More: ${JSON.stringify(grouped)}`);
   assert.equal(grouped.palette, true, 'Search commands remains reachable at the minimum width');
+  assert.ok(await ui("document.querySelector('.tabs-bar > [data-action=\"new\"]').getClientRects().length > 0"), 'New-tab plus remains reachable at minimum width');
+  for (const menu of ['structure', 'interactive']) {
+    assert.ok(await ui(`document.querySelector('.toolbar [data-action="${menu}-menu"]').getClientRects().length > 0`), `${menu} stays visible at minimum width`);
+    assert.equal(await ui(`document.querySelector('#toolbar-overflow [data-action="${menu}-menu"]')`), null);
+  }
   if (process.env.LEKH_SCREENSHOT) {
     await clickControl('[data-action="format-menu"]');
     const narrow = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -3469,6 +3522,7 @@ try {
     await pressKey('Enter', 13, 0, '\r');
     await browser.call('Input.insertText', { text: '/' }, sessionId);
     await waitFor(async () => ui("!document.querySelector('#slash-results').hidden"), 'slash screenshot');
+    await ui("document.querySelector('#notification').hidden=true");
     const slash = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'slash-menu.png'), Buffer.from(slash.data, 'base64'));
     await pressKey('Escape', 27);

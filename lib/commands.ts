@@ -7,16 +7,17 @@ export type CommandEntry = { id: string; label: string; group: string; shortcut?
 const shortcut = (command: string) => formattingShortcuts.find(item => item.command === command)?.accelerator.replace('CmdOrCtrl', 'Ctrl');
 
 export const blockCommands: CommandEntry[] = [
-  { id: 'block:up', label: 'Move block up', group: 'Block', shortcut: 'Alt+Shift+Up', keywords: 'reorder' },
-  { id: 'block:down', label: 'Move block down', group: 'Block', shortcut: 'Alt+Shift+Down', keywords: 'reorder' },
-  { id: 'block:duplicate', label: 'Duplicate block', group: 'Block', keywords: 'copy clone' },
-  { id: 'block:remove', label: 'Remove block', group: 'Block', keywords: 'delete' },
+  { id: 'block:up', label: 'Move block up', group: 'Edit', shortcut: 'Alt+Shift+Up', keywords: 'reorder' },
+  { id: 'block:down', label: 'Move block down', group: 'Edit', shortcut: 'Alt+Shift+Down', keywords: 'reorder' },
+  { id: 'block:duplicate', label: 'Duplicate block', group: 'Edit', keywords: 'copy clone' },
+  { id: 'block:remove', label: 'Remove block', group: 'Edit', keywords: 'delete' },
 ];
 
 export function commandEntries(hasVariantSelector = false): CommandEntry[] {
   const publishing = publishingTemplates.filter(item => item.category !== 'variant').map(item => {
     const variant = item.id === 'publishing-selector' && hasVariantSelector ? publishingTemplates.find(entry => entry.id === 'publishing-zone')! : item;
-    return { id: `insert:${item.id}`, label: variant.label, group: item.category === 'alerts' ? 'Alerts' : 'Publishing', description: variant.description, keywords: item.category === 'alerts' ? 'alert callout' : 'block' };
+    const group = item.category === 'alerts' ? 'Alerts' : ['publishing-tabs', 'publishing-selector'].includes(item.id) ? 'Interactive' : 'Structure';
+    return { id: `insert:${item.id}`, label: variant.label, group, description: variant.description, keywords: item.category === 'alerts' ? 'alert callout' : 'block publishing' };
   });
   return [
     { id: 'new', label: 'New document', group: 'File', shortcut: 'Ctrl+N' },
@@ -45,9 +46,9 @@ export function commandEntries(hasVariantSelector = false): CommandEntry[] {
     { id: 'image', label: 'Image...', group: 'Insert', shortcut: 'Ctrl+Shift+I', keywords: 'picture photo screenshot' },
     { id: 'table', label: 'Table...', group: 'Insert', shortcut: 'Ctrl+T', keywords: 'grid rows columns' },
     { id: 'format:codeblock', label: 'Code block', group: 'Insert', shortcut: 'Ctrl+Shift+K', keywords: 'fence snippet' },
-    { id: 'format:rule', label: 'Horizontal rule', group: 'Insert', keywords: 'divider line separator' },
-    { id: 'insert:toc', label: 'Table of contents', group: 'Insert', description: 'Insert, or refresh the existing one', keywords: 'toc contents' },
-    { id: 'insert:mermaid', label: 'Mermaid diagram', group: 'Insert', keywords: 'flowchart sequence chart' },
+    { id: 'format:rule', label: 'Horizontal rule', group: 'Structure', keywords: 'divider line separator' },
+    { id: 'insert:toc', label: 'Table of contents', group: 'Structure', description: 'Insert, or refresh the existing one', keywords: 'toc contents' },
+    { id: 'insert:mermaid', label: 'Mermaid diagram', group: 'Structure', keywords: 'flowchart sequence chart' },
     { id: 'insert:math', label: 'Math block (Source)', group: 'Insert', shortcut: 'Ctrl+Shift+M', keywords: 'latex equation' },
     { id: 'insert:footnote', label: 'Footnote (Source)', group: 'Insert' },
     { id: 'insert:before', label: 'Paragraph before', group: 'Insert' },

@@ -351,7 +351,7 @@ function inspect(lines: Lines, start: number, end: number, metadata: boolean): B
       }
       options.push({ label: publishingLabel(option[1]), id: option[2] });
     }
-    return options.length ? { kind: 'selector', end: stop, title: attrs.title || 'Content variants', options } :
+    return options.length ? { kind: 'selector', end: stop, title: attrs.title ?? 'Content variants', options } :
       unsupported(stop, 'Selector not rendered: no variant options. Source retained.');
   }
   if (item.name === 'steps') {
@@ -695,7 +695,8 @@ export function registerPublishing(parser: MarkdownIt): void {
   parser.renderer.rules.publishing_steps_close = () => '</section>\n';
   parser.renderer.rules.publishing_selector = (tokens, index, _options, env) => {
     const meta = tokens[index].meta as PublishingMeta;
-    return `<section class="publishing-selector" data-publishing-selector="primary" aria-label="${escape(meta.title!)}"><p class="publishing-selector-title">${escape(meta.title!)}</p><div class="publishing-variant-options" role="group" aria-label="${escape(meta.title!)}">${meta.options!.map((option, panel) =>
+    const accessibleLabel = escape(meta.title || 'Variant options');
+    return `<section class="publishing-selector" data-publishing-selector="primary" aria-label="${accessibleLabel}"><p class="publishing-selector-title">${escape(meta.title!)}</p><div class="publishing-variant-options" role="group" aria-label="${accessibleLabel}">${meta.options!.map((option, panel) =>
       env.publishingExport && !env.publishingInteractive ? `<span class="publishing-variant-option">${escape(option.label)}</span>` :
         `<button type="button" data-publishing-variant="${escape(option.id)}" aria-pressed="${panel === 0}">${escape(option.label)}</button>`).join('')}</div></section>\n`;
   };

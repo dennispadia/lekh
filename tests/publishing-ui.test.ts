@@ -67,6 +67,32 @@ test('the toolbar and insert menu provide one insert-or-refresh table-of-content
   assert.doesNotMatch(electron, /insert:toc-update|Update table of contents/);
 });
 
+test('Structure and Interactive are distinct toolbar and right-click menus with pinned controls', async () => {
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  for (const menu of ['structure', 'interactive']) {
+    assert.match(renderer, new RegExp(`data-action="${menu}-menu"`));
+    assert.match(renderer, new RegExp(`id="${menu}-menu"`));
+  }
+  assert.match(renderer, /group\('insert', 'Insert'/);
+  assert.match(renderer, /:scope > \.toolbar-group:not\(\[data-group="insert"\]\), \.toolbar-insert-extra/);
+  assert.doesNotMatch(renderer, /group\('(alerts|structure|interactive)'/);
+  assert.doesNotMatch(renderer, /data-action="publishing-menu"/);
+  assert.match(electron, /label: 'Structure', submenu/);
+  assert.match(electron, /label: 'Interactive', submenu/);
+  assert.doesNotMatch(electron, /label: 'Publishing blocks'/);
+});
+
+test('right-click keeps formatting grouped and uses only eight quick actions', async () => {
+  const source = await readFile(new URL('../src/context-menu.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const actions = source.slice(source.indexOf('const directActions:'), source.indexOf('export class ContextMenu'));
+  assert.equal(actions.match(/\['/g)?.length, 8);
+  assert.doesNotMatch(source, /item\.label === 'Formatting'/);
+  assert.match(electron, /label: 'Edit', submenu/);
+  assert.match(electron, /label: 'Copy \/ Paste As', submenu/);
+});
+
 test('alert markers inside quoted fences and comments do not truncate the surrounding alert', () => {
   for (const fence of ['```', '~~~']) {
     const raw = `> [!NOTE]\n> Before.\n>\n> ${fence}markdown\n> [!WARNING]\n> literal text\n> ${fence}\n>\n> After.\n`;

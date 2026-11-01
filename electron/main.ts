@@ -118,6 +118,11 @@ function paste(): void {
 }
 
 function showContextMenu(items: MenuItemConstructorOptions[], x: number, y: number): void {
+  const structureDetails: Record<string, { icon: string; description: string }> = {
+    'structure-toc': { icon: 'contents', description: 'Insert a linked table of contents, or refresh the existing one.' },
+    'structure-mermaid': { icon: 'diagram', description: 'Flowcharts, sequence and other diagrams written as text.' },
+    'structure-rule': { icon: 'rule', description: 'Divide sections with a horizontal line.' },
+  };
   const native = Menu.buildFromTemplate(items);
   const commands = new Map<string, () => void>();
   const serialize = (menu: Menu, parentEnabled = true): ContextMenuItem[] => menu.items.map(item => {
@@ -139,9 +144,9 @@ function showContextMenu(items: MenuItemConstructorOptions[], x: number, y: numb
       checked: item.type === 'checkbox' ? item.checked : undefined,
       shortcut: item.accelerator?.replace(/CommandOrControl|CmdOrCtrl/g, 'Ctrl'),
       submenu: item.submenu ? serialize(item.submenu, enabled) : undefined,
-      icon: publishingTemplates.find(template => template.id === item.id)?.icon,
+      icon: structureDetails[item.id]?.icon ?? publishingTemplates.find(template => template.id === item.id)?.icon,
       description: item.id === 'publishing-selector' ? variantInsertionTemplate(Boolean(editorContext.hasVariantSelector)).description :
-        publishingTemplates.find(template => template.id === item.id)?.description,
+        structureDetails[item.id]?.description ?? publishingTemplates.find(template => template.id === item.id)?.description,
     };
   });
   const model = serialize(native);
@@ -165,9 +170,19 @@ function paragraphItems(): MenuItemConstructorOptions[] {
 function insertItems(): MenuItemConstructorOptions[] {
   return [
     { label: 'Image...', accelerator: 'CmdOrCtrl+Shift+I', click: () => action('image') },
+    { label: 'Table', accelerator: 'CmdOrCtrl+T', click: () => action('table') },
+    { label: 'Code fence', accelerator: 'CmdOrCtrl+Shift+K', click: () => action('format:codeblock') },
     { label: 'Alerts', submenu: publishingTemplates.filter(item => item.category === 'alerts').map(item => ({ id: item.id, label: item.label, click: () => action(`insert:${item.id}`) })) },
-    { label: 'Publishing blocks', submenu: [
-      ...publishingTemplates.filter(item => item.category === 'content').map(item => ({
+    { label: 'Structure', submenu: [
+      { id: 'structure-toc', label: 'Table of contents', click: () => action('insert:toc') },
+      { id: 'structure-mermaid', label: 'Mermaid diagram', click: () => action('insert:mermaid') },
+      { id: 'structure-rule', label: 'Horizontal rule', click: () => action('format:rule') },
+      ...publishingTemplates.filter(item => ['publishing-metadata', 'publishing-image'].includes(item.id)).map(item => ({
+        id: item.id, label: item.label, click: () => action(`insert:${item.id}`),
+      })),
+    ] },
+    { label: 'Interactive', submenu: [
+      ...publishingTemplates.filter(item => ['publishing-tabs', 'publishing-selector'].includes(item.id)).map(item => ({
         id: item.id, label: item.id === 'publishing-selector' ? variantInsertionTemplate(Boolean(editorContext.hasVariantSelector)).label : item.label,
         click: () => action(`insert:${item.id}`),
       })),
@@ -176,10 +191,7 @@ function insertItems(): MenuItemConstructorOptions[] {
     { label: 'Link...', accelerator: 'CmdOrCtrl+K', click: () => action('link') },
     { label: 'Link reference (Source)', click: () => action('insert:reference') },
     { label: 'Horizontal line', click: () => action('format:rule') },
-    { label: 'Table', accelerator: 'CmdOrCtrl+T', click: () => action('table') },
-    { label: 'Code fence', accelerator: 'CmdOrCtrl+Shift+K', click: () => action('format:codeblock') },
     { label: 'Math block (Source)', accelerator: 'CmdOrCtrl+Shift+M', click: () => action('insert:math') },
-    { label: 'Table of contents', click: () => action('insert:toc') },
     { label: 'Mermaid diagram (Source)', click: () => action('insert:mermaid') },
     { label: 'YAML front matter (Source)', click: () => action('insert:frontmatter') },
     { type: 'separator' },
@@ -585,11 +597,9 @@ function createWindow(): void {
   window.webContents.on('context-menu', (_event, parameters) => {
     const items: MenuItemConstructorOptions[] = [];
     if (parameters.misspelledWord) {
-      for (const suggestion of parameters.dictionarySuggestions) {
-        items.push({ label: suggestion, click: () => window.webContents.replaceMisspelling(suggestion) });
-      }
-      if (!parameters.dictionarySuggestions.length) items.push({ label: 'No spelling suggestions', enabled: false });
-      items.push({ type: 'separator' });
+      items.push({ label: 'Spelling suggestions', submenu: parameters.dictionarySuggestions.length
+        ? parameters.dictionarySuggestions.map(suggestion => ({ label: suggestion, click: () => window.webContents.replaceMisspelling(suggestion) }))
+        : [{ label: 'No spelling suggestions', enabled: false }] });
     }
     if (parameters.isEditable && editorContext.formField) {
       items.push({ role: 'cut', enabled: parameters.editFlags.canCut }, { role: 'copy', enabled: parameters.editFlags.canCopy },
@@ -600,21 +610,26 @@ function createWindow(): void {
     if (parameters.isEditable) {
       if (parameters.linkURL) items.push({ label: 'Edit link...', click: () => action('link') }, { type: 'separator' });
       items.push(
-        { label: 'Undo', click: () => action('undo') }, { label: 'Redo', click: () => action('redo') },
-        { type: 'separator' }, { role: 'cut', enabled: parameters.editFlags.canCut },
+        { role: 'cut', enabled: parameters.editFlags.canCut },
         { role: 'copy', enabled: parameters.editFlags.canCopy || parameters.mediaType === 'image' },
-        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: paste }, { role: 'selectAll' },
+        { label: 'Paste', accelerator: 'CmdOrCtrl+V', click: paste },
       );
       items.push(
         { label: 'Delete selection', enabled: Boolean(parameters.selectionText), click: () => window.webContents.delete() },
-        { label: 'Copy / Paste As', submenu: [
+        { label: 'Edit', submenu: [
+          { label: 'Undo', accelerator: 'CmdOrCtrl+Z', registerAccelerator: false, click: () => action('undo') },
+          { label: 'Redo', accelerator: 'CmdOrCtrl+Shift+Z', registerAccelerator: false, click: () => action('redo') },
+          { role: 'selectAll' },
+          { type: 'separator' },
+          { label: 'Copy / Paste As', submenu: [
           { label: 'Copy selection as Markdown', enabled: Boolean(parameters.selectionText), click: () => action('copy-markdown') },
           { label: 'Copy document as Markdown', click: () => action('copy-document') },
           { type: 'separator' }, { role: 'pasteAndMatchStyle', label: 'Paste as plain text' },
           { label: 'Paste as Markdown', click: () => action('paste-markdown') },
           { label: 'Paste image', enabled: !clipboard.readImage().isEmpty(), click: () => action('paste-image') },
+          ] },
+          { type: 'separator' }, ...blockItems(),
         ] },
-        { type: 'separator' },
         { label: 'Formatting', submenu: [
           ...[
             ['bold', 'Bold'], ['italic', 'Italic'], ['strike', 'Strikethrough'], ['code', 'Inline code'],
@@ -628,7 +643,6 @@ function createWindow(): void {
         ] },
         { label: 'Paragraph', submenu: paragraphItems() },
         { label: 'Insert', submenu: insertItems() },
-        { label: 'Block', submenu: blockItems() },
         { label: 'View and tools', submenu: [
           { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', registerAccelerator: false, click: () => action('command-palette') },
           { type: 'separator' },
@@ -702,7 +716,7 @@ function createWindow(): void {
         click: send(`format:${item.command}`),
       })) },
       { type: 'separator' }, { label: 'Paragraph', submenu: paragraphItems() }, { label: 'Insert', submenu: insertItems() },
-      { label: 'Block', submenu: blockItems(false) },
+      { type: 'separator' }, ...blockItems(false),
     ] },
     { label: '&View', submenu: [
       { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', click: send('command-palette') },
