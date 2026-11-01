@@ -1,124 +1,166 @@
-<img src="assets/icon.svg" width="72" height="72" alt="Lekh quill icon">
+<p align="center">
+  <img src="assets/icon.svg" width="88" height="88" alt="Lekh quill icon">
+</p>
 
-# Lekh लेख
+<h1 align="center">Lekh लेख</h1>
 
-**Lekh: Markdown editor** is a calm, local-first Windows Markdown editor with editable **Visual + Source**, paired split tabs, offline Mermaid diagrams, and **HTML, Word and PDF export**.
+<p align="center">
+  <b>A calm, local-first Markdown editor for Windows.</b><br>
+  Write visually, keep exact Markdown, and export polished documents — all offline.
+</p>
 
-**Version 0.9.1** adds interactive offline HTML export, direct publishing-block editing, and a simpler, rollback-safe upgrade installer. Offline English grammar checks remain included. Lekh has its own application, installer, and settings identities. No settings, recovery data, or installation identities are imported from another product.
+<p align="center">
+  <a href="https://github.com/dennispadia/lekh/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/dennispadia/lekh?label=download&color=2f7d6d"></a>
+  <img alt="Windows 10/11 x64" src="https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-3a6ea5">
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-555"></a>
+  <img alt="Works offline" src="https://img.shields.io/badge/works-offline-4a8c5c">
+</p>
 
-**[Download Lekh 0.9.1 for Windows x64](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** · [User guide](docs/USER_GUIDE.md)
-
-Each release provides an EXE, source ZIP, and checksums. Earlier published assets remain unchanged.
-
-Free to use and modify under the [MIT license](LICENSE). **[Open a GitHub issue](https://github.com/dennispadia/lekh/issues)** for questions, bugs, enhancements, and requests. See [Help and feedback](SUPPORT.md).
-
-## Writing features
-
-| Area | Included tools |
-| --- | --- |
-| **Markdown editing** | Headings, bold, italics, strikethrough, lists, tasks, quotes, links, images, rules, and code blocks. Use Visual for formatted writing or Source for exact Markdown and unsupported syntax. |
-| **Visual + Source** | Two editable views of one document, with a shared toolbar. Source-only and read-only Source + Preview are also available. |
-| **Paired split tabs** | Keep two independent documents side by side; commands target the active document. Resize the divider or unsplit without closing files. |
-| **Responsive interface** | One formatting toolbar, More tools and views overflow, shrinking tabs, an Open documents list, and a collapsible sidebar. |
-| **Links and tables** | Edit link text/addresses in place, remove links without deleting text, choose table dimensions, and add/remove table rows and columns. |
-| **Code and diagrams** | Search the offline language catalog, highlight code, copy raw code, and insert editable Mermaid diagrams at the current selection. Code is displayed, never executed. |
-| **Editable alerts** | Add Note, Tip, Important, Caution or Warning from the separate **Alerts** toolbar menu, then type and format directly in Visual. Each type has its own icon, label and matching Light/Dark colors. |
-| **Editable publishing blocks** | **Blocks** has tabbed examples, selectors, independently placed variant content, image descriptions and YAML metadata. Edit names, options, fields and rich bodies directly in Visual. Existing include directives remain editable. |
-| **Synchronized scrolling** | Visual + Source scroll together in both directions by default. Content anchors account for wrapped Source lines and different rendered block heights. Paired documents remain independent. |
-| **Find/Replace** | Match case, Unicode whole words, regex, match counts, navigation, and replacement. |
-| **Writing assistance** | Optional offline English grammar checks powered by the bundled Harper engine. Review, apply, ignore, or ignore a suggestion throughout the current document. No text is sent online or changed automatically. |
-| **HTML, Word and PDF export** | Export the active document, including unsaved edits, with headings, links, tables, lists, syntax-colored code, supported images and Mermaid diagrams. Interactive tabs and variants require HTML; Word and PDF are available for documents without them. Export does not save the Markdown. |
-| **Workspace** | Light/Dark themes, a resizable sidebar, heading outline, five recent files, zoom controls, word count, and Focus mode (F9). |
-| **Safeguards** | Unsaved-change prompts, external-edit detection, atomic saves, recovery drafts, Save As, and Save All. Recovery is not a backup. |
-| **Keyboard and context menus** | Formatting/file shortcuts, contextual Alerts/Blocks and view tools, nested keyboard-accessible menus, spelling suggestions, and an F1 keyboard reference. |
-
-Switching between Visual and Source resets that tab's undo history; switching tabs preserves it. Source + Preview uses the Source history.
-
-### Richer exports in 0.8.0
-
-- **Explicit typography:** Segoe UI Heading 1–6 sizes, weights, spacing, and colors are defined by Lekh rather than a document consumer's default heading styles. Bold, italic, and strikethrough are preserved; hyperlinks are colored and underlined.
-- **Navigation:** Word exports include heading bookmarks and clickable internal heading links, including table-of-contents links. PDFs include document bookmarks and tagged accessibility.
-- **Structure:** page-width fixed tables preserve Markdown column alignments and use shaded, repeating header rows. Nested lists retain continuation paragraphs and numbering starts; task lists render checked/unchecked boxes.
-- **Code and images:** syntax colors, blank lines, and tabs are preserved in code blocks. Supported images keep their aspect ratio and fit within page bounds.
-- **Print layout:** A4 pages with 20 mm margins and readable light print colors, regardless of the editor's Light/Dark theme.
-
-Word output remains editable and reflows in the receiving application; Word and PDF are **not pixel-identical**. Math and footnotes do not have formatted rendering or structured export support. YAML is preserved in the metadata view rather than exported as article text. See [export details and limitations](docs/USER_GUIDE.md#images-and-exports).
-
-### Publication-quality documents
-
-Lekh uses a reader-friendly document hierarchy and renders supported rich blocks consistently in Visual and read-only previews.
-Note, Tip, Important, Caution and Warning have distinct light/dark colors. Tabs and document-wide variant selectors are separate controls.
-Interactive HTML exports retain every tab and variant in one self-contained file for offline review. Select tabs and variants as in the preview; Word and PDF are unavailable for documents containing these blocks.
-
-**Alerts are directly editable in Visual.** Use normal text formatting, lists, links and code inside them; choose another alert type to change its appearance without losing its contents.
-Variant controls live within the document's Visual area or read-only preview, never above the Source column.
-Tabbed examples have explicit readable text and surface colors in both themes.
-
-**Every supported publishing block is editable in Visual.** Tab names and every tab body, selector prompts/options, described images and metadata YAML no longer require Edit source. Renamed tab names are also reflected in their `#tab/` identifiers in Source.
-Insert a selector once, then use **Blocks > Add variant content** to place content for its existing options anywhere in the document. Inactive content has **Show and edit**, and stable option IDs preserve connections when labels change.
-Metadata stays outside the article body and is edited in one YAML field for arbitrary keys and comments. Unsupported or over-depth syntax stays visible and editable in its inline block field.
-Local include directives are preserved as inert source and are never opened, expanded, or fetched. Relative local images remain available from the Markdown file's folder; use **More > Allow local image folder...** only when a document needs image assets elsewhere in its project.
-Publishing systems can supply additional metadata or build-time configuration; Lekh is not a replacement for their final validation pipeline.
-
-## Screenshots
-
-The following captures show the Lekh interface with sample documents, not personal files.
+<p align="center">
+  <a href="https://github.com/dennispadia/lekh/releases/tag/v0.9.2"><b>Download Lekh 0.9.2</b></a> ·
+  <a href="docs/USER_GUIDE.md">User guide</a> ·
+  <a href="https://github.com/dennispadia/lekh/issues">Report an issue</a>
+</p>
 
 ![Lekh in Light theme](docs/images/lekh-light.png)
 
-![Lekh in Graphite + Teal Dark theme with paired independent documents](docs/images/lekh-dark-split.png)
+> *Lekh* (लेख) means "article" or "writing" in Hindi. The editor is built for people who write long-form technical documents — and want them to look good without leaving their own computer.
 
-### Write directly in alerts
+## Why Lekh?
 
-![Editable Note, Tip, Important, Caution and Warning alerts in Dark](docs/images/alerts-dark.png)
+- ✍️ **Write the way you think.** Format visually like a word processor, or switch to Source for exact Markdown. Or keep both side by side, editing either one.
+- ⚡ **Everything is one keystroke away.** Search every command with **Ctrl+Shift+P**, type `/` on an empty line to insert any block, and move whole sections from the outline.
+- 📚 **Publishing-ready blocks.** Alerts, tabbed examples, variant selectors and YAML metadata — edited directly in place, written as standard Docs-style Markdown.
+- 📤 **Export that respects your document.** Interactive HTML for offline review, editable Word, and print-ready PDF.
+- 🔒 **Private by design.** No account, no cloud, no analytics. Your files never leave your machine.
 
-### Keep publishing controls with the document
+## Features
 
-![Readable Dark tabs and a selector contained inside Visual beside Source](docs/images/publishing-split-dark.png)
+### Writing
+
+| | |
+| --- | --- |
+| **Visual + Source** | Two editable views of one document that scroll together. Source-only and read-only Source + Preview are also available. |
+| **Rich Markdown** | Headings, emphasis, lists, task lists, quotes, links, tables, images, rules and syntax-highlighted code. |
+| **Mermaid diagrams** | Insert and edit diagrams that render offline, right where your cursor is. |
+| **Find and replace** | Match case, whole word and regex, with live match counts and one-step Replace all. |
+| **Writing assistance** | Optional offline English grammar checks. Review each suggestion; nothing is changed automatically or sent online. |
+
+### Working faster
+
+| | |
+| --- | --- |
+| **Command palette** | **Ctrl+Shift+P** or the header search finds every action, block, view and export by name. |
+| **Slash menu** | Type `/` on an empty line for headings, lists, tables, alerts and publishing blocks, each with an icon and short description. |
+| **Block toolbar** | Click into a block to move it up or down, duplicate it or remove it. Also on **Alt+Shift+Up/Down**, **Edit > Block** and the right-click menu. |
+| **Smart outline** | Collapse and expand headings, and drag a section (or press **Alt+Up/Down**) to move it with all its subsections. Moves never break tabs, zones or lists. |
+| **Grouped toolbar** | Labeled View, Style, Text, Paragraph, Insert and Publishing groups that fold neatly into **More** in narrow windows. |
+| **Right-click everything** | Every toolbar feature is also in the context menu, fully keyboard accessible. |
+
+### Publishing blocks
+
+| | |
+| --- | --- |
+| **Alerts** | Note, Tip, Important, Caution and Warning, each with its own icon and Light/Dark colors. Type and format inside them directly. |
+| **Tabbed examples** | Edit tab names on the tabs themselves. Use **+** to add a tab and **×** to remove one. Names become `# [Name](#tab/name)` headings in Source. |
+| **Variants** | Insert a selector once, then place variant content anywhere in the document. |
+| **Metadata** | One YAML box for any front-matter keys, kept out of the article body. |
+
+### Workspace and safety
+
+| | |
+| --- | --- |
+| **Tabs and split view** | Open many documents, or pair two side by side with a resizable divider. |
+| **Themes and focus** | Light and Graphite + Teal Dark themes, zoom, and distraction-free Focus mode (**F9**). |
+| **Status at a glance** | Click the word count for full document statistics, or the save state to save. |
+| **Never lose work** | Unsaved-change prompts, external-edit detection, atomic saves and recovery drafts. |
+
+## Export: what works where
+
+Export uses the active document, including unsaved edits, and never changes your Markdown file.
+
+| Content | Interactive HTML | Word (.docx) | PDF |
+| --- | :---: | :---: | :---: |
+| Headings, emphasis, links, lists, task lists | ✅ | ✅ | ✅ |
+| Tables (with column alignment) | ✅ | ✅ | ✅ |
+| Syntax-colored code blocks | ✅ | ✅ | ✅ |
+| Local images (PNG, JPEG, GIF) | ✅ embedded | ✅ | ✅ |
+| WebP images | ✅ | ❌ convert first | ✅ |
+| Mermaid diagrams | ✅ | ✅ | ✅ |
+| Alerts | ✅ | ✅ | ✅ |
+| Clickable table of contents and heading links | ✅ | ✅ | ✅ bookmarks |
+| **Tabbed examples** | ✅ clickable tabs | ❌ | ❌ |
+| **Variant selectors and content** | ✅ switchable | ❌ | ❌ |
+| Works fully offline in a single file | ✅ | ✅ | ✅ |
+| Editable by the recipient | — | ✅ | — |
+
+**Good to know**
+
+- **Tabs and variants need HTML.** Word and PDF can't show a choice, so they would print every alternative at once. When a document contains tabbed examples or variants, Lekh marks HTML as **Recommended** and disables Word and PDF with an explanation.
+- **Interactive HTML** behaves like learn.microsoft.com: click tabs, switch variants, and review offline. Everything — images and diagrams included — is packed into one file.
+- **Word** stays editable and reflows in Word, so it will not be pixel-identical to the PDF.
+- **PDF** uses A4 pages with 20 mm margins and print-friendly colors, whatever editor theme you use.
+- **Not exported:** YAML metadata (kept as document data, not article text), local include directives, and remote images (export stops with a clear error rather than dropping them). Math and footnotes are not rendered as formatted output.
+
+See [images and exports](docs/USER_GUIDE.md#images-and-exports) for details.
+
+## A closer look
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/slash-menu.png" alt="Slash menu with icons and descriptions"><br><sub><b>Slash menu</b> — insert any block without leaving the keyboard.</sub></td>
+    <td width="50%"><img src="docs/images/export-panel.png" alt="Export panel recommending HTML"><br><sub><b>Export panel</b> — previews for each format, with HTML recommended for interactive content.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/alerts-dark.png" alt="Editable alerts in Dark theme"><br><sub><b>Alerts</b> — type and format directly inside them.</sub></td>
+    <td><img src="docs/images/publishing-split-dark.png" alt="Tabs and selector in Visual beside Source"><br><sub><b>Publishing blocks</b> — controls stay with the document, beside exact Source.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/block-toolbar.png" alt="Floating block toolbar and collapsible outline"><br><sub><b>Block toolbar and outline</b> — rearrange content in a click.</sub></td>
+    <td><img src="docs/images/lekh-dark-split.png" alt="Two documents side by side in Dark theme"><br><sub><b>Split view</b> — two independent documents side by side.</sub></td>
+  </tr>
+</table>
 
 ## Install on Windows
 
-Requires **Windows 10/11 x64 and .NET Framework 4.8 or newer**, normally included in Windows. Other operating systems and architectures are not packaged or tested.
+Requires **Windows 10/11 x64** and .NET Framework 4.8 or newer (normally included in Windows).
 
-Choose the **[Lekh 0.9.1 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.1)** and compare the installer download with its accompanying checksums. The offline EXE includes the application and its grammar engine; recipients do not need to build from source.
+1. Download the setup EXE from the **[Lekh 0.9.2 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.2)** and compare it with `SHA256SUMS.txt`.
+2. Run it. A fresh install starts straight away; no administrator access is needed.
+3. Upgrading? If Lekh is closed, setup upgrades it automatically and shows the old and new versions. If Lekh is open, setup asks you to save and close it, then click **Check again**.
 
-For the 0.9.1 installer:
+The same version reports **already installed**, and downgrades are blocked. Your settings and recovery drafts are kept across upgrades.
 
-1. Run the setup EXE. A fresh install starts directly. An older, closed installation upgrades automatically, showing the previous and new versions before removing the old payload and installing the new one.
-2. If Lekh is open, setup asks you to save and close it. Click **Check again** after closing; no second installation prompt is needed. The same version reports **already installed**, and a newer installed version blocks downgrade.
-3. Setup installs only for your current Windows user, without requesting administrator access. Open **Lekh** from the desktop or Start menu afterward.
+> [!WARNING]
+> Lekh is not yet code-signed, so Windows or your organization may warn about or block the installer. Verify the checksum and follow your organization's policies; don't disable security protections. See [signing status](docs/PUBLISHING.md#code-signing-policy-pending).
 
-The offline setup embeds the runtime and internal MSI; recipients do not need Node.js, npm, Word, Pandoc, or an account. Installation does not wait for the accessible, reduced-motion-aware origin story.
+<details>
+<summary>Installation details</summary>
 
-### Standalone application identities
-
-- Application ID: `com.lekh.desktop`; npm package: `lekh`.
 - Application files: `%LOCALAPPDATA%\lekh`; executable: `Lekh - Markdown editor.exe`.
-- Preferences, recent files, Chromium storage, and recovery drafts: `%APPDATA%\Lekh`.
-- Setup cache/logs: `%LOCALAPPDATA%\Lekh\SetupCache` and `%LOCALAPPDATA%\Lekh\SetupLogs`.
-- MSI upgrade code: `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`. Keep it stable for future Lekh upgrades.
+- Preferences, recent files and recovery drafts: `%APPDATA%\Lekh`.
+- Setup cache and logs: `%LOCALAPPDATA%\Lekh\SetupCache` and `%LOCALAPPDATA%\Lekh\SetupLogs`.
+- Application ID `com.lekh.desktop`; MSI upgrade code `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`.
+- The old version is removed before the new one is installed, with full rollback if setup is cancelled.
+- Uninstall from **Settings > Apps > Installed apps**. Your Markdown files and settings profile are not deleted.
 
-Lekh uses a standalone profile and installation directory. It does not import another product's drafts or preferences, migrate aliases, or replace/uninstall another product. Saved Markdown files can be opened normally; an existing Lekh profile is retained during a Lekh upgrade. Close Lekh before upgrading; setup asks rather than force-closing the editor.
+</details>
 
-The [verified 0.9.1 Windows build](https://github.com/dennispadia/lekh/actions/runs/41269204614) tested fresh installation, genuine **0.9.0 -> 0.9.1** idle and running-app upgrades, same-version rejection, cancellation/rollback restoring every old payload byte, repair and profile-preserving uninstall. The old payload is removed before the new one is installed within rollback protection. Earlier releases remain unchanged.
+## Quick start
 
-**Unsigned software:** application, setup EXE, and internal MSI are not code-signed. Windows, browser, or organization policies may warn about or block them. Verify checksums and follow your organization's policies; do not disable security protections. See [signing status](docs/PUBLISHING.md#code-signing-policy-pending).
+1. Open Lekh and start typing in the blank document, or open a `.md` file.
+2. Type `/` for blocks, or press **Ctrl+Shift+P** to find any command.
+3. Turn on **Visual + Source** to see the exact Markdown alongside.
+4. Save with **Ctrl+S**. Choose **Export** for HTML, Word or PDF.
+5. Press **F1** any time for the keyboard shortcut reference.
 
-Uninstall through **Windows Settings > Apps > Installed apps**. Your Markdown documents are not installer-managed files. The separate settings/recovery profile is not intentionally deleted on uninstall.
+## Privacy
 
-## Start writing
+Documents stay on your computer. There are no accounts, uploads, cloud sync or analytics. Remote images are never downloaded, and external links open only after you confirm. Recovery drafts are a safety net, not a backup — keep your own backups.
 
-1. Start in blank **Untitled**, open a `.md` file, or choose **New**.
-2. Write in **Visual**, or enable **Visual + Source**. Source-only and Source + Preview are under **More (...)** and View.
-3. Use **Ctrl+F** to search, **Ctrl+T** for a table, or **F1** for shortcuts.
-4. Save Markdown with **Ctrl+S**; the Save arrow provides Save All and Save As.
-5. Use **Export** for a separate HTML, Word or PDF document. Choose HTML for documents with tabbed examples or variants.
+## Build from source
 
-See the [user guide](docs/USER_GUIDE.md) for recovery, images, shortcuts, and limitations.
-
-## Build and contribute
-
-With Windows x64 and Node.js >=22.15.0 (the workflow uses 22.22.0):
+With Windows x64 and Node.js 22.15.0 or newer:
 
 ```powershell
 npm.cmd ci --registry=https://registry.npmjs.org
@@ -126,12 +168,10 @@ npm.cmd run build
 .\node_modules\.bin\electron.cmd .
 ```
 
-Or double-click `Launch.cmd` in a source checkout. If no packaged build exists, its setup script downloads a checksum-verified private Node runtime and builds the app.
+Or double-click `Launch.cmd`, which sets up a checksum-verified private Node runtime if needed. See [BUILDING.md](docs/BUILDING.md), [PUBLISHING.md](docs/PUBLISHING.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
-See [BUILDING.md](docs/BUILDING.md) for tests and packaging, [PUBLISHING.md](docs/PUBLISHING.md) for release verification, and [CONTRIBUTING.md](CONTRIBUTING.md) for focused changes.
+## Feedback and license
 
-## Boundaries and privacy
+Questions, bugs and ideas are welcome in **[GitHub issues](https://github.com/dennispadia/lekh/issues)**. See [Help and feedback](SUPPORT.md).
 
-Documents stay on your computer. There are no accounts, document uploads, cloud sync, or analytics. Remote images are not downloaded; opening an external web/email link requires confirmation and uses another application. Developer setup downloads tools and dependencies, not your documents.
-
-Visual editing may normalize Markdown; use Source for unsupported syntax. Math rendering, automatic updates, cloud sync, and custom export templates are not included. Keep backups: recovery is not a backup.
+Lekh is free to use and modify under the [MIT license](LICENSE).
