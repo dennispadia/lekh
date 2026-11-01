@@ -13,8 +13,7 @@ import type { Schema } from '@tiptap/pm/model';
 import { Marked } from 'marked';
 import { AlertNode, MAX_ALERT_DEPTH, alertKinds, editableAlertAtStart } from '../src/alert-node.js';
 import { PublishingNode } from '../src/publishing-node.js';
-import { toDocx, toPrintHTML } from '../lib/export.js';
-import { unzipEntries } from './zip.js';
+import { toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
 
 function fixture() {
   let schema: Schema;
@@ -484,7 +483,7 @@ test('resolved reference emission safely preserves spaced URLs and escaped quote
   }
 });
 
-test('editing a definition producer preserves references used by opaque tabs/zones through Word and print exports', async () => {
+test('editing a definition producer preserves references used by opaque tabs/zones in HTML export', async () => {
   const { schema, manager, parse } = fixture();
   const containers = [
     '# [One](#tab/one)\n\nSee [docs][ref].\n\n# [Two](#tab/two)\n\nOther.\n\n---',
@@ -507,9 +506,9 @@ test('editing a definition producer preserves references used by opaque tabs/zon
     const reparsed = parse(markdown);
     reparsed.check();
     assert.equal(reparsed.child(1).attrs.markdown, doc.child(1).attrs.markdown);
-    assert.match(await toPrintHTML(markdown, null), /href="https:\/\/example.com\/docs"/);
-    const archive = unzipEntries(await toDocx(markdown, async () => { throw new Error('No image expected'); }));
-    assert.match(archive.get('word/_rels/document.xml.rels')!.toString(), /Target="https:\/\/example.com\/docs"/);
+    assert.match(await toOfflineHTML(markdown, null), /href="https:\/\/example.com\/docs"/);
+    await assert.rejects(() => toPrintHTML(markdown, null), /Word and PDF export.*HTML/);
+    await assert.rejects(() => toDocx(markdown, async () => { throw new Error('No image expected'); }), /Word and PDF export.*HTML/);
   }
 });
 
@@ -553,7 +552,7 @@ test('preserved definition priority remains first-wins across edited producers a
     doc.check();
     const edited = EditorState.create({ schema, doc }).tr.insertText('Edited ', 2).doc;
     const markdown = manager.serialize(edited.toJSON());
-    const output = await toPrintHTML(markdown, null);
+    const output = await toOfflineHTML(markdown, null);
     assert.match(output, new RegExp(`href="https://example.com/${winner}"`));
     assert.ok(markdown.includes(`[ref]: https://example.com/${winner}`));
   }

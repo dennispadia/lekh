@@ -6,15 +6,16 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { atomicWrite, readMarkdown } from '../lib/files.js';
 import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES } from '../lib/images.js';
-import { isSafeLink, parser } from '../lib/markdown.js';
-import { toDocx, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
+import { isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
+import { toDocx, toOfflineHTML, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
 import { diagramLimits, isMermaidLanguage, prepareMermaid } from '../lib/diagrams.js';
 import { themes } from '../lib/themes.js';
 import { formattingShortcuts } from '../lib/shortcuts.js';
 import { fileArguments } from '../lib/launch.js';
 import { productName, productTitle, userDataDirectory } from '../lib/branding.js';
 import { preparePublishing, readAuthorizedInclude } from '../lib/includes.js';
-import { publishingTemplates } from '../lib/publishing-templates.js';
+import { publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
+import { interactiveExportMessage } from '../lib/publishing.js';
 import type { ContextMenuItem, EditorContext, OpenedFile, Result } from '../src/bridge.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'lekh-image', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -30,7 +31,8 @@ const pendingFiles: string[] = [];
 let rendererReady = false;
 interface NativeDocument { path: string | null; diskContent: string | null }
 const documents = new Map<string, NativeDocument>();
-const publishingRoots = new Map<string, string>();
+// Grant identity changes even when the same folder is authorized again.
+const publishingRoots = new Map<string, { root: string }>();
 let dirty = false;
 let allowClose = false;
 let recentFiles: string[] = [];
@@ -138,7 +140,8 @@ function showContextMenu(items: MenuItemConstructorOptions[], x: number, y: numb
       shortcut: item.accelerator?.replace(/CommandOrControl|CmdOrCtrl/g, 'Ctrl'),
       submenu: item.submenu ? serialize(item.submenu, enabled) : undefined,
       icon: publishingTemplates.find(template => template.id === item.id)?.icon,
-      description: publishingTemplates.find(template => template.id === item.id)?.description,
+      description: item.id === 'publishing-selector' ? variantInsertionTemplate(Boolean(editorContext.hasVariantSelector)).description :
+        publishingTemplates.find(template => template.id === item.id)?.description,
     };
   });
   const model = serialize(native);
@@ -164,7 +167,10 @@ function insertItems(): MenuItemConstructorOptions[] {
     { label: 'Image...', accelerator: 'CmdOrCtrl+Shift+I', click: () => action('image') },
     { label: 'Alerts', submenu: publishingTemplates.filter(item => item.category === 'alerts').map(item => ({ id: item.id, label: item.label, click: () => action(`insert:${item.id}`) })) },
     { label: 'Publishing blocks', submenu: [
-      ...publishingTemplates.filter(item => item.category === 'content').map(item => ({ id: item.id, label: item.label, enabled: item.id !== 'publishing-zone' || Boolean(editorContext.hasVariantSelector), click: () => action(`insert:${item.id}`) })),
+      ...publishingTemplates.filter(item => item.category === 'content').map(item => ({
+        id: item.id, label: item.id === 'publishing-selector' ? variantInsertionTemplate(Boolean(editorContext.hasVariantSelector)).label : item.label,
+        click: () => action(`insert:${item.id}`),
+      })),
     ] },
     { label: 'Footnote (Source)', click: () => action('insert:footnote') },
     { label: 'Link...', accelerator: 'CmdOrCtrl+K', click: () => action('link') },
@@ -234,7 +240,7 @@ async function exportPDF(content: string, documentPath: string | null, loadDiagr
   } finally { printWindow.destroy(); }
 }
 
-async function exportWithDiagrams(content: string, currentPath: string | null, format: 'pdf' | 'docx', imageRoot?: string | null): Promise<Buffer> {
+async function exportWithDiagrams(content: string, currentPath: string | null, format: 'pdf' | 'docx' | 'html', imageRoot?: string | null): Promise<Buffer> {
   const diagrams = parser.parse(content, {}).filter(token => token.type === 'fence' && isMermaidLanguage(token.info));
   if (diagrams.length > diagramLimits.diagrams) throw new Error('Export supports at most 32 Mermaid diagrams.');
   for (const diagram of diagrams) prepareMermaid(diagram.content);
@@ -279,9 +285,9 @@ async function exportWithDiagrams(content: string, currentPath: string | null, f
     } finally { clearTimeout(timer); }
   };
   try {
-    return format === 'pdf'
-      ? await exportPDF(content, currentPath, loadDiagram, imageRoot)
-      : await toDocx(content, source => readImage(source, currentPath, imageRoot), loadDiagram);
+    if (format === 'pdf') return await exportPDF(content, currentPath, loadDiagram, imageRoot);
+    if (format === 'html') return Buffer.from(await toOfflineHTML(content, currentPath, loadDiagram, imageRoot, validateRaster), 'utf8');
+    return await toDocx(content, source => readImage(source, currentPath, imageRoot), loadDiagram);
   } finally { if (renderer && !renderer.isDestroyed()) renderer.destroy(); }
 }
 
@@ -330,7 +336,9 @@ function installIPC(): void {
   });
   handle('editor:copy-image', async (id: unknown, source: unknown) => {
     contentArgument(source);
-    const { data } = await readImage(source, documentFor(id).path, publishingRoots.get(String(id)));
+    const grant = publishingRoots.get(String(id));
+    const { data } = await readImage(source, documentFor(id).path, grant?.root);
+    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local image access changed. Try copying the image again.');
     const image = nativeImage.createFromBuffer(data);
     if (image.isEmpty()) throw new Error('This image could not be decoded for copying.');
     clipboard.writeImage(image);
@@ -341,13 +349,16 @@ function installIPC(): void {
       || !context.active.every(item => typeof item === 'string') || !Number.isInteger(context.heading)
       || context.heading < 0 || context.heading > 6 || typeof context.inTable !== 'boolean'
       || context.hasVariantSelector !== undefined && typeof context.hasVariantSelector !== 'boolean'
+      || context.hasInteractivePublishing !== undefined && typeof context.hasInteractivePublishing !== 'boolean'
       || context.formField !== undefined && typeof context.formField !== 'boolean') {
       console.error('Invalid editor context.');
       return;
     }
     editorContext = context;
-    const variantContent = Menu.getApplicationMenu()?.getMenuItemById('publishing-zone');
-    if (variantContent) variantContent.enabled = Boolean(context.hasVariantSelector);
+    const variantTool = Menu.getApplicationMenu()?.getMenuItemById('publishing-selector');
+    if (variantTool) variantTool.label = variantInsertionTemplate(Boolean(context.hasVariantSelector)).label;
+    const exportHint = Menu.getApplicationMenu()?.getMenuItemById('export-interactive-hint');
+    if (exportHint) exportHint.visible = Boolean(context.hasInteractivePublishing);
     for (let level = 0; level <= 6; level++) {
       const item = Menu.getApplicationMenu()?.getMenuItemById(`paragraph-${level}`);
       if (item) item.checked = context.heading === level;
@@ -418,15 +429,15 @@ function installIPC(): void {
     if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error('Choose a project folder that contains this saved document.');
     }
-    publishingRoots.set(String(id), root);
+    publishingRoots.set(String(id), { root });
     return true;
   });
   handle('publishing:prepare', async (id: unknown, content: unknown) => {
     const document = documentFor(id);
     contentArgument(content);
-    const root = publishingRoots.get(String(id)) ?? null;
-    const prepared = await preparePublishing(content, document.path, root);
-    if ((publishingRoots.get(String(id)) ?? null) !== root) throw new Error('Local include access changed. Refresh the preview.');
+    const grant = publishingRoots.get(String(id));
+    const prepared = await preparePublishing(content, document.path, grant?.root ?? null);
+    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Refresh the preview.');
     return prepared;
   });
   handle('publishing:open-include', async (id: unknown, source: unknown) => {
@@ -434,10 +445,10 @@ function installIPC(): void {
     if (!document.path || typeof source !== 'string' || !source.trim() || /[\r\n]/.test(source)) {
       throw new Error('Save this document and choose a valid local include path.');
     }
-    const root = publishingRoots.get(String(id));
-    if (!root) throw new Error('Allow this document’s local project folder before opening an included file.');
-    const included = await readAuthorizedInclude(source, document.path, root);
-    if (publishingRoots.get(String(id)) !== root) throw new Error('Local include access changed. Allow the folder again before opening this file.');
+    const grant = publishingRoots.get(String(id));
+    if (!grant) throw new Error('Allow this document’s local project folder before opening an included file.');
+    const included = await readAuthorizedInclude(source, document.path, grant.root);
+    if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Allow the folder again before opening this file.');
     return openDocument(included.path, included.content);
   });
   handle('publishing:revoke-includes', async (id: unknown) => {
@@ -514,18 +525,28 @@ function installIPC(): void {
   handle('document:export', async (id: unknown, content: unknown, format: unknown) => {
     const currentPath = documentFor(id).path;
     contentArgument(content);
-    if (format !== 'pdf' && format !== 'docx') throw new Error('Unsupported export format.');
+    if (format !== 'pdf' && format !== 'docx' && format !== 'html') throw new Error('Unsupported export format.');
+    if (format !== 'html' && requiresInteractiveExport(content)) throw new Error(interactiveExportMessage);
+    const grant = publishingRoots.get(String(id));
+    const imageRoot = grant?.root ?? null;
+    const assertPublishingAccess = () => {
+      if (publishingRoots.get(String(id)) !== grant) throw new Error('Local include access changed. Retry the export.');
+    };
+    const prepared = await preparePublishing(content, currentPath, imageRoot);
+    assertPublishingAccess();
+    if (format !== 'html' && requiresInteractiveExport(prepared.markdown)) throw new Error(interactiveExportMessage);
     const selection = await dialog.showSaveDialog(window, {
       title: `Export ${format.toUpperCase()}`,
       defaultPath: currentPath ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}.${format}`) : `Untitled.${format}`,
-      filters: [{ name: format === 'pdf' ? 'PDF document' : 'Word document', extensions: [format] }],
+      filters: [{ name: format === 'pdf' ? 'PDF document' : format === 'docx' ? 'Word document' : 'HTML document', extensions: [format] }],
     });
     if (selection.canceled || !selection.filePath) return null;
     if ([...documents.values()].some(document => document.path && samePath(selection.filePath!, document.path))) {
       throw new Error('Export cannot replace an open Markdown source file.');
     }
-    const prepared = await preparePublishing(content, currentPath, publishingRoots.get(String(id)) ?? null);
-    const data = await exportWithDiagrams(prepared.markdown, currentPath, format, publishingRoots.get(String(id)));
+    assertPublishingAccess();
+    const data = await exportWithDiagrams(prepared.markdown, currentPath, format, imageRoot);
+    assertPublishingAccess();
     await atomicWrite(selection.filePath, data);
     return selection.filePath;
   });
@@ -658,8 +679,10 @@ function createWindow(): void {
       { label: 'Close Tab', accelerator: 'CmdOrCtrl+W', click: send('close-tab') },
       { label: 'Clear recent files', click: send('clear-recent') },
       { type: 'separator' },
+      { label: 'Export interactive HTML (.html)...', click: send('export-html') },
       { label: 'Export Word (.docx)...', click: send('export-docx') },
       { label: 'Export PDF...', accelerator: 'CmdOrCtrl+P', click: send('export-pdf') },
+      { id: 'export-interactive-hint', label: 'Tabs and variants require HTML export', enabled: false, visible: false },
       { type: 'separator' }, { role: 'quit' },
     ] },
     { label: '&Edit', submenu: [
@@ -723,9 +746,9 @@ if (primaryInstance) void app.whenReady().then(async () => {
       const source = parameters.get('source');
       if (!source) throw new Error('Missing image source.');
       const documentId = parameters.get('document');
-      const root = publishingRoots.get(documentId ?? '');
-      const { data, mime } = await readImage(source, documentFor(documentId).path, root);
-      if (publishingRoots.get(documentId ?? '') !== root) throw new Error('Local image access changed. Refresh the preview.');
+      const grant = publishingRoots.get(documentId ?? '');
+      const { data, mime } = await readImage(source, documentFor(documentId).path, grant?.root);
+      if (publishingRoots.get(documentId ?? '') !== grant) throw new Error('Local image access changed. Refresh the preview.');
       return new Response(new Uint8Array(data), { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('Image could not be displayed:', error);

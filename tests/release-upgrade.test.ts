@@ -38,11 +38,11 @@ test('real upgrade operations require explicit consent and both exact hosted-run
   assert.doesNotMatch(script, /-Verb\s+RunAs|UACONLY\s*[,)]|AlwaysInstallElevated|DisableMSI|SuppressIces|SuppressValidation|taskkill|Stop-Process\s+-Name/i);
 });
 
-test('the only old installer is the immutable public 0.8.1 asset, verified before extraction', () => {
-  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.8.1/Lekh-Markdown-editor-Setup-0.8.1-x64.exe'"));
-  assert.ok(script.includes("$oldSetupHash = 'cdbaafa78e98aa4515fdfb7bfe2a7822b59a54ed1547828bd775c3e61fa96128'"));
-  assert.ok(script.includes('$oldSetupBytes = 197516288L'));
-  assert.ok(script.includes("$manifest.version -cne '0.9.0'"));
+test('the only old installer is the immutable public 0.9.0 asset, verified before extraction', () => {
+  assert.ok(script.includes("$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.0/Lekh-Markdown-editor-Setup-0.9.0-x64.exe'"));
+  assert.ok(script.includes("$oldSetupHash = 'af80dec1d9099e7ee228b299c56f43298044391d95ffad6ca5028912aab0448e'"));
+  assert.ok(script.includes('$oldSetupBytes = 197566464L'));
+  assert.ok(script.includes("$manifest.version -cne '0.9.1'"));
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
   inOrder(execution,
     'Invoke-WebRequest -UseBasicParsing -Uri $oldSetupUrl -OutFile $oldSetup -TimeoutSec 180 -UseDefaultCredentials:$false',
@@ -54,9 +54,17 @@ test('the only old installer is the immutable public 0.8.1 asset, verified befor
   assert.ok(script.includes('[Reflection.Assembly]::LoadFile($Setup)'));
   assert.ok(script.includes("$assembly.GetManifestResourceStream('Setup.Payload.msi')"));
   assert.doesNotMatch(script, /EntryPoint\.Invoke|Start-Process -FilePath \$oldSetup/);
-  const ready = script.slice(script.indexOf('function Assert-UpgradeReady'), script.indexOf('\nNew-Item -ItemType Directory -Path $sources'));
+  const ready = script.slice(script.indexOf('function Invoke-SetupScenario'), script.indexOf('\nNew-Item -ItemType Directory -Path $sources'));
   inOrder(ready, 'Assert-HostedRunner', '-not $cleanRunnerVerified', 'Assert-AppNotRunning', 'Start-Process -FilePath $SetupPath');
-  assert.doesNotMatch(ready, /InvokePattern|\.Invoke\(\)|Stop-Process/);
+  assert.doesNotMatch(ready, /Stop-Process|\.Kill\(|MsiConfigureProduct/);
+  assert.ok(ready.includes("Wait-UpgradeSetup $setup 'open'"));
+  assert.ok(ready.includes("$status.Primary.Current.Name -cne 'Check again'"));
+  inOrder(ready, 'Assert-PayloadPreserved $before', '$editor.CloseMainWindow()', '$editor.WaitForExit(30000)',
+    'Assert-AppNotRunning', '$status.Primary.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()');
+  assert.ok(ready.includes('owned-editor-profile'));
+  assert.ok(ready.includes("$editor.MainModule.FileName -ine $executable"));
+  assert.ok(ready.includes('Assert-Installed $new'));
+  assert.ok(script.includes("Setup is still active; refusing concurrent product maintenance."));
 });
 
 test('both embedded MSIs are validated for distinct identity, version and non-elevated per-user scope', () => {
@@ -76,7 +84,7 @@ test('both embedded MSIs are validated for distinct identity, version and non-el
     "$_[0] -ine $upgradeCode",
   ]) assert.ok(validation.includes(guard), `Missing package guard: ${guard}`);
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
-  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.8.1'", 'Read-ValidatedMsi $newMsi $manifest.version',
+  inOrder(execution, "Read-ValidatedMsi $oldMsi '0.9.0'", 'Read-ValidatedMsi $newMsi $manifest.version',
     '$old.ProductCode -ieq $new.ProductCode',
     '$newMsiHash = (Get-FileHash -LiteralPath $newMsi -Algorithm SHA256).Hash',
     '$newMsiHash -cne',
@@ -190,6 +198,7 @@ test('the actual guarded-file worker launch supports large native source without
     function Assert-AppNotRunning { } # Transport-only test double; no product/process operations.
     $InstallOnHostedRunner = [Management.Automation.SwitchParameter]::new($true)
     $cleanRunnerVerified = $true
+    $activeSetup = $null
     $work = $request.Directory
     $installDirectory = $request.Directory
     $nativeSource = $request.Stub
@@ -222,7 +231,7 @@ test('the actual guarded-file worker launch supports large native source without
   }
 });
 
-test('the test upgrades a genuinely registered old product before real repair, without uninstalling old first', () => {
+test('the real EXE auto-upgrades idle apps and upgrades running apps after one recheck, while retaining rollback and repair', () => {
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
   inOrder(execution,
     "[IO.File]::WriteAllText($sentinel",
@@ -233,7 +242,12 @@ test('the test upgrades a genuinely registered old product before real repair, w
     'Assert-Absent $new.ProductCode',
     'Assert-ProfilePreserved',
     "[void]$attemptedProducts.Add($new.ProductCode)",
-    "Invoke-UpgradeMsi 'Install' $new 'new-upgrade'",
+    "Invoke-UpgradeMsi 'RollbackUpgrade' $new 'cancel-after-old-removal'",
+    'Invoke-SetupScenario\n',
+    'Invoke-SetupScenario -AlreadyInstalled',
+    "Invoke-UpgradeMsi 'Uninstall' $new 'reset-for-running-editor'",
+    "Invoke-UpgradeMsi 'Install' $old 'old-install-for-running-editor'",
+    'Invoke-SetupScenario -OpenEditor',
     'Assert-Installed $new',
     'Assert-Absent $old.ProductCode',
     '$payloadHashes = Get-PayloadHashes',
@@ -252,6 +266,58 @@ test('the test upgrades a genuinely registered old product before real repair, w
   assert.ok(script.includes("@('/fomus', $Product.ProductCode, '/qn', '/norestart'"));
   assert.ok(script.includes('REBOOT=ReallySuppress MSIRESTARTMANAGERCONTROL=DisableShutdown'));
   assert.doesNotMatch(script, /MSIRMSHUTDOWN|MSIRESTARTMANAGERCONTROL=Disable(?:\s|['"])|Restart-Computer|\.exe['"]?\s+--/);
+});
+
+test('queued Check again tolerates only the initial open state before upgrade progress', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const command = `
+    $ErrorActionPreference = 'Stop'
+    $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+    $tokens = $null; $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile($request.path, [ref]$tokens, [ref]$errors)
+    if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+    $function = $ast.Find({ param($node)
+      $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Wait-UpgradeSetup'
+    }, $true)
+    if ($null -eq $function) { throw 'Missing real Wait-UpgradeSetup function.' }
+    . ([scriptblock]::Create($function.Extent.Text))
+    $old = [pscustomobject]@{ Version = '0.9.0' }
+    $new = [pscustomobject]@{ Version = '0.9.1' }
+    function Read-UpgradeSetup($Process) {
+      if ($script:states.Count -eq 0) { return $null }
+      $state = $script:states.Dequeue()
+      return [pscustomobject]@{
+        State = $state; Heading = 'Upgrading Lekh 0.9.0 to 0.9.1.'
+        Description = 'fixture'; Primary = $null
+      }
+    }
+    function Invoke-Sequence([string[]]$Sequence, [bool]$AllowPendingOpen) {
+      $script:states = [Collections.Generic.Queue[string]]::new()
+      foreach ($state in $Sequence) { $script:states.Enqueue($state) }
+      $stages = [Collections.Generic.List[string]]::new()
+      return Wait-UpgradeSetup $null 'success' $stages 1 -AllowPendingOpen:$AllowPendingOpen
+    }
+    $result = Invoke-Sequence @('open', 'open', 'preparing', 'success') $true
+    if ($result.State -cne 'success') { throw 'Queued retry did not complete.' }
+    foreach ($case in @(
+      @{ States = @('open'); Allow = $false; Error = "Setup entered 'open'" },
+      @{ States = @('open', 'preparing', 'open'); Allow = $true; Error = "Setup entered 'open'" },
+      @{ States = @('open', 'error'); Allow = $true; Error = "Setup entered 'error'" }
+    )) {
+      $failure = ''
+      try { [void](Invoke-Sequence $case.States $case.Allow) } catch { $failure = $_.Exception.Message }
+      if (-not $failure.Contains($case.Error)) { throw ("Expected $($case.Error), got: $failure") }
+    }
+    Write-Output 'PASS: queued, unexpected, regressed, and failed setup states.'
+  `;
+  const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
+    Buffer.from(command, 'utf16le').toString('base64')], {
+    encoding: 'utf8', timeout: 30_000, input: JSON.stringify({ path: scriptPath }),
+  });
+  assert.match(output, /PASS: queued, unexpected, regressed, and failed setup states/);
+  assert.ok(script.includes("Setup did not process Check again within 30 seconds."));
+  assert.ok(script.includes("-AllowPendingOpen:$OpenEditor.IsPresent"));
 });
 
 test('operations are bounded and cleanup cannot conceal the original failure or report false success', () => {
@@ -465,12 +531,12 @@ test('hosted upgrade proves true removal before payload and cancellation restore
   assert.ok(script.includes("$sequence.RemoveExistingProducts -ne $sequence.InstallInitialize + 1"));
   assert.ok(script.includes("$sequence.LekhPreviousVersionRemoved -ge $sequence.ProcessComponents"));
   const execution = script.slice(script.indexOf("\n    Write-Host 'Scope:"));
-  inOrder(execution, 'Assert-UpgradeReady', '$oldPayloadHashes = Get-PayloadHashes',
+  inOrder(execution, '$oldPayloadHashes = Get-PayloadHashes',
     "Invoke-UpgradeMsi 'RollbackUpgrade' $new 'cancel-after-old-removal'",
     'Assert-Installed $old', 'Assert-Absent $new.ProductCode', 'Assert-ProfilePreserved',
     '$rollbackHashes = Get-PayloadHashes', '$rollbackHashes.Count -ne $oldPayloadHashes.Count',
     '$rollbackHashes[$relative] -cne $oldPayloadHashes[$relative]',
-    "Invoke-UpgradeMsi 'Install' $new 'new-upgrade'");
+    'Invoke-SetupScenario\n');
   assert.ok(script.includes("$Operation -eq 'RollbackUpgrade' -and $process.ExitCode -ne 1602"));
   assert.ok(script.includes('MSIDISABLERMRESTART=1'));
 });

@@ -5,13 +5,16 @@ export const publishingTemplates = [
   { id: 'callout-caution', category: 'alerts', label: 'Caution', icon: 'caution', color: 'caution', description: 'Explain a risk and the precautions needed to avoid it.', markdown: '> [!CAUTION]\n> Explain a risk and how to avoid it.' },
   { id: 'callout-warning', category: 'alerts', label: 'Warning', icon: 'warning', color: 'warning', description: 'Call attention to a serious risk or potentially harmful action.', markdown: '> [!WARNING]\n> Explain a serious risk and the precautions to take.' },
   { id: 'publishing-tabs', category: 'content', label: 'Tabbed examples', icon: 'tabs', color: '', description: 'Show related examples in accessible tabs within this document.', markdown: '# [First example](#tab/first)\n\nContent for the first example.\n\n# [Second example](#tab/second)\n\nContent for the second example.\n\n---' },
-  { id: 'publishing-selector', category: 'content', label: 'Variant selector', icon: 'selector', color: '', description: 'Add editable choices. Place their matching content anywhere with Variant content.', markdown: ':::selector title="Choose an option"\n- [First option](#variant/first)\n- [Second option](#variant/second)\n:::selector-end' },
-  { id: 'publishing-zone', category: 'content', label: 'Variant content…', icon: 'block', color: '', description: 'Place editable content for an existing selector option at the current selection.', markdown: '' },
+  { id: 'publishing-selector', category: 'content', label: 'Variant selector', icon: 'selector', color: '', description: 'Create choices, then use Add variant content on the selector to write their content.', markdown: ':::selector title="Choose an option"\n- [First option](#variant/first)\n- [Second option](#variant/second)\n:::selector-end' },
+  { id: 'publishing-zone', category: 'variant', label: 'Add variant content…', icon: 'selector', color: '', description: 'Add content here for choices in the existing variant selector.', markdown: '' },
   { id: 'publishing-steps', category: 'content', label: 'Structured steps', icon: 'steps', color: '', description: 'Organize a procedure into a clear sequence of steps.', markdown: ':::steps\n1. Describe the first step.\n2. Describe the next step.\n:::steps-end' },
   { id: 'publishing-image', category: 'content', label: 'Image with description…', icon: 'image', color: '', description: 'Insert an image with alternate text and an optional long description.', markdown: '' },
   { id: 'publishing-metadata', category: 'content', label: 'Document metadata', icon: 'metadata', color: '', description: 'Add a title, description, and other metadata outside the article body.', markdown: '---\ntitle: Document title\ndescription: A short description of this document.\n---' },
-  { id: 'publishing-include', category: 'content', label: 'Local include', icon: 'include', color: '', description: 'Reuse a local Markdown file after allowing its project folder.', markdown: '[!INCLUDE [Shared content](./includes/shared.md)]' },
 ] as const;
+
+export function variantInsertionTemplate(hasSelector: boolean) {
+  return publishingTemplates.find(item => item.id === (hasSelector ? 'publishing-zone' : 'publishing-selector'))!;
+}
 
 export function publishingTemplateMarkdown(id: string, selection = ''): string | undefined {
   const template = publishingTemplates.find(item => item.id === id);

@@ -19,6 +19,8 @@ The repository is `dennispadia/lekh`. **[Lekh 0.9.0](https://github.com/dennispa
 
 The complete **0.9.0** unit, packaged desktop, setup and genuine hosted **0.8.1 -> 0.9.0** removal/cancellation-rollback/upgrade/repair gates passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389). The old payload/profile restoration assertion remains mandatory; do not replace it with a skipped or label-only scenario.
 
+This checkout builds **0.9.1**, which corrects installer prompts and automatic startup. Its hosted gate targets the pinned public **0.9.0 -> 0.9.1** lineage: real idle/running EXE upgrades, same-version rejection, removal-before-new, cancellation restoring old bytes, repair and profile-preserving cleanup. Complete those checks before publishing the new version; do not overwrite the 0.9.0 release or infer this version's validation from the older build.
+
 Lekh's independent identities are npm package `lekh`, application ID `com.lekh.desktop`, `%APPDATA%\Lekh` profile, and `%LOCALAPPDATA%\lekh` application directory. The executable is `Lekh - Markdown editor.exe`. The independent MSI upgrade code is `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`; keep it stable for future Lekh upgrades and consistent with installer policy and verification tests. Existing Lekh profiles are retained during upgrades. No migration aliases or automatic removal of another product are included.
 
 Publish an installer only after packaging and verification both succeed. Local Windows policy may block validation even when the hosted workflow succeeds; see [installer validation and policy restrictions](BUILDING.md#installer-validation-status-and-policy-restrictions).
@@ -38,12 +40,12 @@ npm.cmd run release:checksums
 
 For later releases, increment `version` using `npm version <version> --no-git-tag-version`, keep the lockfile synchronized, and update the changelog.
 
-**Validation and release status:** **0.9.0** passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389), full extracted-app desktop suite, offline grammar/publishing checks, native setup engine/previews, and fresh per-user installation/registration/uninstallation with profile preservation on a GitHub-hosted runner. The hosted upgrade test installed the genuine published **0.8.1**, proved old removal before the new payload, cancelled and restored the exact old registration and every old payload byte, then upgraded to **0.9.0**, repaired a deliberately missing `app.asar`, and preserved seeded profile settings and a recovery sentinel through upgrade, repair, and uninstall. Other upgrade paths remain unverified. The independently downloaded public EXE also passed local non-installing payload/story checks and all fifteen native previews. Never rewrite Git history or replace existing published release binaries, source archives, or checksums. Neither workflow signs artifacts or enforces Authenticode signatures. Keep the unsigned-software warning until trusted signing is implemented and verified.
+**Validation history:** **0.9.0** passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41245290389), full extracted-app desktop suite, offline grammar/publishing checks, native setup engine/previews, and fresh per-user installation/registration/uninstallation with profile preservation on a GitHub-hosted runner. Its hosted upgrade test installed the genuine published **0.8.1**, proved old removal before the new payload, cancelled and restored the exact old registration and every old payload byte, then upgraded to **0.9.0**, repaired a deliberately missing `app.asar`, and preserved seeded profile settings and a recovery sentinel through upgrade, repair, and uninstall. The independently downloaded public EXE also passed local non-installing payload/story checks and all fifteen native previews. Never rewrite Git history or replace existing published release binaries, source archives, or checksums. Neither workflow signs artifacts or enforces Authenticode signatures. Keep the unsigned-software warning until trusted signing is implemented and verified.
 
 On GitHub:
 
 1. Open the repository's **Releases > Draft a new release**.
-2. Create a tag matching the verified version, such as `v0.9.0`, targeting the reviewed commit only when ready to publish.
+2. Create a new tag matching the verified version, such as `v1.2.3`, targeting the reviewed commit only when ready to publish.
 3. Add a description of the release, tested scenarios, known limitations, the unsigned-installer warning, and a link for questions, bugs, and enhancement requests.
 4. Attach these files from `release`:
    - `Lekh-Markdown-editor-Setup-<version>-x64.exe`
@@ -55,7 +57,7 @@ On GitHub:
 
 ## GitHub Actions
 
-The included Windows workflow runs on pushes to `main` and on manual dispatch. It restores locked dependencies from the public npm registry, runs unit tests, builds/verifies the internal MSI and native setup EXE, and creates source/checksum artifacts. Public artifacts contain only the setup EXE, source ZIP, and checksum list, not the internal MSI.
+The included Windows workflow runs on pushes to `main` and on manual dispatch. It restores locked dependencies from the public npm registry, runs unit tests, builds/verifies the internal MSI and native setup EXE, and creates source/checksum artifacts. A separate Linux job requires the file-symlink include boundary test to pass without skipping, even when local Windows policy disallows file symlinks. Public artifacts contain only the setup EXE, source ZIP, and checksum list, not the internal MSI.
 
 The workflow has read-only repository permissions and **does not automatically create releases or upload binaries to a public Release**. Download its build artifacts and publish reviewed release assets manually. GitHub may require you to enable Actions in a new repository or fork; Actions availability, limits and billing are controlled by GitHub.
 

@@ -19,6 +19,16 @@ export type PublishingMeta = {
   options?: { id: string; label: string }[];
 };
 
+export const interactiveExportMessage = 'Word and PDF export are not supported for documents with tabbed examples or variants. Export to HTML to review them interactively offline.';
+
+export function hasInteractivePublishing(tokens: readonly Token[]): boolean {
+  return tokens.some(token => token.type === 'publishing_tabs_open' || token.type === 'publishing_selector' || token.type === 'publishing_zone_open');
+}
+
+export function assertStaticExportSupported(tokens: readonly Token[]): void {
+  if (hasInteractivePublishing(tokens)) throw new Error(interactiveExportMessage);
+}
+
 const maxDepth = 12;
 const maxTabs = 32;
 const contextKey = Symbol('publishing');
@@ -686,7 +696,7 @@ export function registerPublishing(parser: MarkdownIt): void {
   parser.renderer.rules.publishing_selector = (tokens, index, _options, env) => {
     const meta = tokens[index].meta as PublishingMeta;
     return `<section class="publishing-selector" data-publishing-selector="primary" aria-label="${escape(meta.title!)}"><p class="publishing-selector-title">${escape(meta.title!)}</p><div class="publishing-variant-options" role="group" aria-label="${escape(meta.title!)}">${meta.options!.map((option, panel) =>
-      env.publishingExport ? `<span class="publishing-variant-option">${escape(option.label)}</span>` :
+      env.publishingExport && !env.publishingInteractive ? `<span class="publishing-variant-option">${escape(option.label)}</span>` :
         `<button type="button" data-publishing-variant="${escape(option.id)}" aria-pressed="${panel === 0}">${escape(option.label)}</button>`).join('')}</div></section>\n`;
   };
   parser.renderer.rules.publishing_zone_open = (tokens, index) => {
@@ -694,15 +704,17 @@ export function registerPublishing(parser: MarkdownIt): void {
     return `<section class="publishing-zone" data-publishing-zone="${escape(meta.variants!.join(','))}"><p class="publishing-zone-label">${escape(meta.label!)}</p>\n`;
   };
   parser.renderer.rules.publishing_zone_close = () => '</section>\n';
-  parser.renderer.rules.publishing_tabs_open = (tokens, index) => {
+  parser.renderer.rules.publishing_tabs_open = (tokens, index, _options, env) => {
     const meta = tokens[index].meta as PublishingMeta;
+    if (env.publishingExport && !env.publishingInteractive) return `<section class="publishing-tabs" data-publishing-tabs="${meta.id}">\n`;
     return `<section class="publishing-tabs" data-publishing-tabs="${meta.id}"><div class="publishing-tablist" role="tablist" aria-label="Content tabs">${meta.labels!.map((label, panel) =>
       `<button type="button" role="tab" id="${meta.id}-tab-${panel}" aria-controls="${meta.id}-panel-${panel}" aria-selected="${panel === 0}" tabindex="${panel ? '-1' : '0'}" data-publishing-tab="${panel}">${escape(label)}</button>`).join('')}</div>\n`;
   };
   parser.renderer.rules.publishing_tabs_close = () => '</section>\n';
   parser.renderer.rules.publishing_tab_open = (tokens, index, _options, env) => {
     const meta = tokens[index].meta as PublishingMeta;
-    return `<section class="publishing-tab-panel" role="tabpanel" id="${meta.id}-panel-${meta.index}" aria-labelledby="${meta.id}-tab-${meta.index}" data-publishing-panel="${meta.index}"${meta.index && !env.publishingExport ? ' hidden' : ''}><p class="publishing-tab-label">${escape(meta.label!)}</p>\n`;
+    const staticExport = env.publishingExport && !env.publishingInteractive;
+    return `<section class="publishing-tab-panel"${staticExport ? '' : ' role="tabpanel"'} id="${meta.id}-panel-${meta.index}"${staticExport ? '' : ` aria-labelledby="${meta.id}-tab-${meta.index}"`} data-publishing-panel="${meta.index}"${meta.index && !env.publishingExport ? ' hidden' : ''}><p class="publishing-tab-label">${escape(meta.label!)}</p>\n`;
   };
   parser.renderer.rules.publishing_tab_close = () => '</section>\n';
   parser.renderer.rules.publishing_metadata = (tokens, index, _options, env) => env.publishingExport ? '' :

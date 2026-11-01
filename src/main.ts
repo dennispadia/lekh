@@ -6,7 +6,7 @@ import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Markdown } from '@tiptap/markdown';
-import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, wordCount } from '../lib/markdown.js';
+import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, requiresInteractiveExport, wordCount } from '../lib/markdown.js';
 import { replaceSearchMatches, type SearchMatch, type SearchResult } from '../lib/search.js';
 import { tableOfContents, updateTableOfContents } from '../lib/contents.js';
 import type { Result } from './bridge.js';
@@ -23,9 +23,9 @@ import { ContextMenu } from './context-menu.js';
 import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
-import { forgetPublishingDocument, initializePublishing, publishingHTML, refreshPublishingVariants, revealPublishingElement } from './publishing-view.js';
-import { editablePublishingBlockAtStart, publishingBlockRanges, publishingCSS } from '../lib/publishing.js';
-import { publishingTemplateMarkdown, publishingTemplates } from '../lib/publishing-templates.js';
+import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, publishingHTML, refreshPublishingVariants, revealPublishingElement } from './publishing-view.js';
+import { editablePublishingBlockAtStart, hasInteractivePublishing, interactiveExportMessage, publishingBlockRanges, publishingCSS } from '../lib/publishing.js';
+import { publishingTemplateMarkdown, publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
 import { AlertNode } from './alert-node.js';
 import { EditablePublishing, documentVariantOptions, setPublishingEditable } from './editable-publishing.js';
@@ -112,7 +112,7 @@ app.innerHTML = `
       <div class="workspace-actions">
         ${button('find', 'Find and replace', 'search', 'icon-only quiet')}
         <div class="save-control"><div class="save-button">${button('save', 'Save', 'save')}<button type="button" data-action="save-menu" aria-label="More save actions" title="More save actions" aria-haspopup="menu" aria-controls="save-menu" aria-expanded="false">${icon('chevron')}</button></div><div id="save-menu" class="dropdown" role="menu" hidden><button type="button" data-action="save-all" role="menuitem">Save all files<kbd>Ctrl+Alt+S</kbd></button><button type="button" data-action="save-as" role="menuitem">Save as...<kbd>Ctrl+Shift+S</kbd></button></div></div>
-        <div class="export-control"><button type="button" data-action="export-menu" class="primary" title="Export as Word or PDF" aria-haspopup="menu" aria-controls="export-menu" aria-expanded="false"><span>Export</span></button><div id="export-menu" class="dropdown" role="menu" hidden>${button('export-docx', 'Word document (.docx)')}${button('export-pdf', 'PDF document (.pdf)')}</div></div>
+        <div class="export-control"><button type="button" data-action="export-menu" class="primary" title="Export as HTML, Word, or PDF" aria-haspopup="menu" aria-controls="export-menu" aria-expanded="false"><span>Export</span></button><div id="export-menu" class="dropdown" role="menu" hidden>${button('export-html', 'Interactive HTML (.html)')}${button('export-docx', 'Word document (.docx)')}${button('export-pdf', 'PDF document (.pdf)')}<p id="export-restriction" role="status" aria-live="polite" hidden>Tabbed examples and variants require HTML. Word and PDF are not supported for this document.</p></div></div>
       </div>
     </header>
     <div class="toolbar" role="toolbar" aria-label="Text formatting">
@@ -232,15 +232,15 @@ app.innerHTML = `
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
-    <p><b>Alerts and Blocks:</b> Alerts has Note, Tip, Important, Caution and Warning. Blocks has editable tabs, selectors, variant content, steps, image descriptions, metadata and local includes. Edit labels and metadata fields directly in Visual; type and format in every rich body. A <b>Variant selector</b> inserts only choices; use <b>Variant content</b> to place content anywhere after adding a selector. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Includes have editable name/path fields; allow the project folder, then open the shared file in Visual to edit its own contents. Exports keep every tab and variant.</p>
+    <p><b>Alerts and Blocks:</b> Alerts has Note, Tip, Important, Caution and Warning. Blocks has editable tabs, selectors, steps, image descriptions and metadata. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata and block titles directly where displayed; expand <b>All metadata (YAML)</b> or image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Blocks menu entry changes to <b>Add variant content</b> for placing more content elsewhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Existing includes have editable names/paths; allow the project folder, then open the shared file in Visual to edit its own contents. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
     <p><b>Visual + Source:</b> scrolling is synchronized in both directions by default, using document anchors and wrapped source lines. Paired documents remain independent.</p>
     <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the button to the left of Visual/Source or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
     <p><b>Find</b>: click Find or press Ctrl+F to open or close the find bar. Close and Escape also dismiss it; the search and replacement text are retained.</p>
-    <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts, Insert &gt; Publishing blocks, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Variant content is enabled only after a selector exists. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
+    <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts, Insert &gt; Publishing blocks, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Create a Variant selector first; its menu entry then changes to Add variant content. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
     <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use <b>Update table of contents</b> after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Source mode</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
     <p><b>Links:</b> in Visual, click a link to edit its text and address, or right-click and choose <b>Edit link...</b>. The link toolbar button and <b>Ctrl+K</b> also edit the selected link. <b>Remove link</b> keeps its text. <b>Ctrl+click</b> opens a link after confirmation; generated contents links still navigate normally.</p>
     <p><b>Source</b> lets you edit the exact Markdown text. Use it for advanced syntax or HTML the visual editor doesn't support. Visual editing may normalize Markdown syntax; switching Visual/Source modes resets that tab's undo history.</p>
-    <p><b>Save</b> keeps a regular UTF-8 Markdown file. <b>Export</b> creates a separate Word or PDF document, including the active tab's unsaved edits.</p>
+    <p><b>Save</b> keeps a regular UTF-8 Markdown file. <b>Export</b> creates a separate HTML, Word, or PDF document, including the active tab's unsaved edits. HTML works offline and retains interactive tabs and variants.</p>
     <p>Insert, paste or drop an image, then choose embedding or a saved document's <b>assets</b> folder. Clipboard bitmaps become PNG. Right-click an image for <b>Copy image</b>. Embedded images travel with the Markdown; relative assets must be kept with its folder. Remote images are not fetched. Word supports PNG, JPEG, and GIF; PDF also supports WebP.</p>
     <p><b>Ctrl+N</b> New tab &nbsp; <b>Ctrl+O</b> Open &nbsp; <b>Ctrl+S</b> Save<br><b>Ctrl+W</b> Close tab &nbsp; <b>Ctrl+Tab</b> Next tab<br><b>Ctrl+Alt+S</b> Save all &nbsp; <b>Ctrl+P</b> PDF<br><b>Ctrl+0-6</b> Paragraph / Headings &nbsp; <b>Ctrl+T</b> Table<br><b>Ctrl+F</b> Find &nbsp; <b>Ctrl+/</b> Switch mode &nbsp; <b>F9</b> Focus</p>
     <p><b>Source + Preview</b> shows a read-only rendering beside your editable Markdown, with optional synchronized scrolling. Mermaid diagrams render locally. Use the single-row toolbar or Insert menu for a Mermaid template and to update a marked table of contents.</p>
@@ -282,6 +282,12 @@ let visual = element<HTMLElement>('visual-editor');
 const initialPane = createPane(visual, source);
 let documentId = '';
 let markdown = '';
+let exportCheckedMarkdown: string | undefined;
+let exportCheckedDocumentId = '';
+let rawInteractiveExportRequired = false;
+let interactiveExportRequired = false;
+let exportCheckPending = false;
+let exportCheckRevision = 0;
 let savedMarkdown = '';
 let documentPath: string | null = null;
 let documentName = 'Untitled.md';
@@ -637,6 +643,14 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
     EditablePublishing.configure({
       schema: () => created.schema, documentId: id,
       reportError: message => notify(message, true),
+      addVariantContent: position => { void run(async () => {
+        activateTab(id);
+        const selector = editor.state.doc.nodeAt(position);
+        if (selector?.type.name !== 'lekhSelector') throw new Error('The selector changed. Retry from its Add variant content button.');
+        await insertPublishingBlock('publishing-zone', position + selector.nodeSize);
+      }).then(() => {
+        if (documentId === id && mode === 'visual' && !busy && editor.isEditable && !document.querySelector('dialog[open]')) editor.view.focus();
+      }); },
       allowIncludes: () => { void run(async () => { activateTab(id); await dispatch('allow-includes'); }); },
       openInclude: path => { void run(async () => {
         const opened = unwrap(await window.lekh.openPublishingInclude(id, path));
@@ -1237,7 +1251,7 @@ function editPublishingSource(id: string, raw: string, position: number): void {
   source.scrollTop = Math.max(0, text.slice(0, block.from).split('\n').length * 24 - 50);
 }
 
-async function insertPublishingBlock(kind: string): Promise<boolean> {
+async function insertPublishingBlock(kind: string, insertionPosition?: number): Promise<boolean> {
   const template = publishingTemplates.find(item => item.id === kind);
   if (!template) return false;
   if (mode === 'visual' && template.category === 'alerts') {
@@ -1246,14 +1260,13 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
     editor.view.dispatch(closeHistory(editor.state.tr));
     return true;
   }
-  const selected = selectionMarkdown();
-  if (kind === 'publishing-include' && selected) throw new Error('Place the caret where you want the include. Selected text will not be replaced.');
-  if (kind === 'publishing-selector' && documentVariantOptions(editor).length && mode === 'visual') {
-    const control = visual.querySelector<HTMLInputElement>('[data-lekh-selector] input');
-    if (control) { control.scrollIntoView({ block: 'nearest' }); control.focus(); }
-    return true;
+  const selected = insertionPosition === undefined ? selectionMarkdown() : '';
+  if (kind === 'publishing-selector' && (mode === 'visual' ? documentVariantOptions(editor).length :
+    publishingBlockRanges(markdown).some(block => block.kind === 'selector'))) {
+    return insertPublishingBlock('publishing-zone', insertionPosition);
   }
   let raw = publishingTemplateMarkdown(kind, selected)!;
+  let insertedVariants: string[] | undefined;
   if (kind === 'publishing-zone') {
     const choices = mode === 'visual' ? documentVariantOptions(editor) : publishingBlockRanges(markdown)
       .flatMap(block => block.kind === 'selector' ? editablePublishingBlockAtStart(block.raw)?.options ?? [] : []);
@@ -1265,13 +1278,15 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
     for (const [index, choice] of choices.entries()) {
       const label = document.createElement('label');
       const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = choice.id; checkbox.checked = index === 0;
-      label.append(checkbox, document.createTextNode(choice.label)); options.append(label);
+      const text = document.createElement('span'); text.textContent = choice.label;
+      label.append(checkbox, text); options.append(label);
     }
     dialog.returnValue = 'cancel'; dialog.showModal();
     const choice = await new Promise<string>(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
     if (choice !== 'insert') return true;
     const ids = [...options.querySelectorAll<HTMLInputElement>('input:checked')].map(control => control.value);
     if (!ids.length) throw new Error('Choose at least one existing option for this content.');
+    insertedVariants = ids;
     raw = `:::zone pivot="${ids.join(',')}"\n${selected || 'Write content for this option.'}\n:::zone-end`;
   }
   if (kind === 'publishing-image') {
@@ -1303,8 +1318,14 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
     const chain = editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; });
     if (!editor.markdown) throw new Error('The Markdown parser is unavailable.');
     const content = [...(editor.markdown.parse(raw).content ?? []), { type: 'paragraph' }];
-    const inserted = metadata ? chain.insertContentAt(0, content).run() : chain.insertContent(content).run();
+    const inserted = metadata ? chain.insertContentAt(0, content).run() :
+      insertionPosition === undefined ? chain.insertContent(content).run() :
+        chain.insertContentAt(insertionPosition, content).setTextSelection(insertionPosition + 2).run();
     if (!inserted) throw new Error('The publishing block could not be inserted at the current selection.');
+    if (insertedVariants && activeTab && !insertedVariants.includes(activeTab.pane.dataset.variantSelection ?? '')) {
+      choosePublishingVariant(activeTab.pane, insertedVariants[0]);
+      editor.view.focus();
+    }
   } else if (metadata) {
     source.value = `${raw}\n\n${markdown}`;
     changed(source.value);
@@ -1343,7 +1364,16 @@ function update(): void {
   element('save-status').innerHTML = `<span class="status-dot ${dirty ? 'unsaved' : ''}"></span>${dirty ? 'Unsaved changes' : documentPath ? 'All changes saved' : 'Ready to write'}`;
   const outline = element('outline');
   outline.replaceChildren();
-  for (const [index, item] of headings(markdown).entries()) {
+  const tokens = parser.parse(markdown, {});
+  if (exportCheckedMarkdown !== markdown || exportCheckedDocumentId !== documentId) {
+    exportCheckedMarkdown = markdown;
+    exportCheckedDocumentId = documentId;
+    rawInteractiveExportRequired = hasInteractivePublishing(tokens);
+    interactiveExportRequired = rawInteractiveExportRequired;
+    exportCheckPending = false;
+    exportCheckRevision++;
+  }
+  for (const [index, item] of headings(markdown, tokens).entries()) {
     const entry = document.createElement('button');
     entry.textContent = item.displayText || 'Untitled heading';
     entry.title = item.displayText;
@@ -1435,6 +1465,24 @@ function useSource(): void {
 
 function updateToolbar(): void {
   if (!editor) return;
+  if (exportCheckedMarkdown !== markdown || exportCheckedDocumentId !== documentId) {
+    exportCheckedMarkdown = markdown;
+    exportCheckedDocumentId = documentId;
+    rawInteractiveExportRequired = requiresInteractiveExport(markdown);
+    interactiveExportRequired = rawInteractiveExportRequired;
+    exportCheckPending = false;
+    exportCheckRevision++;
+  }
+  const restriction = element('export-restriction');
+  restriction.hidden = !interactiveExportRequired && !exportCheckPending;
+  restriction.textContent = exportCheckPending ? 'Checking included content for tabbed examples and variants...' :
+    'Tabbed examples and variants require HTML. Word and PDF are not supported for this document.';
+  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="export-docx"],[data-action="export-pdf"]')) {
+    control.disabled = interactiveExportRequired || exportCheckPending;
+    control.title = interactiveExportRequired ? interactiveExportMessage : exportCheckPending ? restriction.textContent : control.textContent?.trim() ?? '';
+    if (control.disabled) control.setAttribute('aria-describedby', 'export-restriction');
+    else control.removeAttribute('aria-describedby');
+  }
   const names: Record<string, string> = { bold: 'bold', italic: 'italic', strike: 'strike', code: 'code', bullet: 'bulletList', ordered: 'orderedList', task: 'taskList', quote: 'blockquote', codeblock: 'codeBlock', rule: 'horizontalRule' };
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-command]')) {
     const active = mode === 'visual' && editor.isActive(names[control.dataset.command!] ?? '');
@@ -1450,17 +1498,49 @@ function updateToolbar(): void {
   element('table-tools').hidden = mode !== 'visual' || !editor.isActive('table');
   const hasSelector = mode === 'visual' ? documentVariantOptions(editor).length > 0 :
     publishingBlockRanges(markdown).some(block => block.kind === 'selector');
-  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="insert:publishing-zone"]')) {
-    control.disabled = !hasSelector;
-    control.title = hasSelector ? 'Place editable content for an existing option here.' : 'Add a Variant selector before placing variant content.';
+  for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="insert:publishing-selector"]')) {
+    const template = variantInsertionTemplate(hasSelector);
+    control.querySelector('span')!.textContent = template.label;
+    control.title = template.description;
     control.setAttribute('aria-description', control.title);
   }
   window.lekh.setEditorContext({
     mode, heading: Number(level ?? 0), inTable: mode === 'visual' && editor.isActive('table'),
-    hasVariantSelector: hasSelector,
+    hasVariantSelector: hasSelector, hasInteractivePublishing: interactiveExportRequired,
     formField: document.activeElement instanceof Element && Boolean(document.activeElement.closest('.publishing-field, .publishing-raw-editor')),
     active: mode === 'visual' ? Object.entries(names).filter(([, name]) => editor.isActive(name)).map(([command]) => command) : [],
   });
+}
+
+function invalidateExportCheck(): void {
+  exportCheckedMarkdown = undefined;
+  exportCheckRevision++;
+  exportCheckPending = false;
+  updateToolbar();
+}
+
+async function checkIncludedExportRestrictions(): Promise<void> {
+  if (!documentId || rawInteractiveExportRequired || !(/\[!INCLUDE\b/i.test(markdown) || /^zone_pivot_groups\s*:/m.test(markdown))) return;
+  const id = documentId;
+  const content = markdown;
+  const revision = ++exportCheckRevision;
+  exportCheckPending = true;
+  updateToolbar();
+  try {
+    const prepared = unwrap(await window.lekh.preparePublishing(id, content));
+    if (revision === exportCheckRevision && id === documentId && content === markdown) {
+      interactiveExportRequired = requiresInteractiveExport(prepared.markdown);
+    }
+  } catch (error) {
+    if (revision === exportCheckRevision && id === documentId && content === markdown) {
+      notify(`Could not check included content for export: ${error instanceof Error ? error.message : String(error)}`, true);
+    }
+  } finally {
+    if (revision === exportCheckRevision && id === documentId && content === markdown) {
+      exportCheckPending = false;
+      updateToolbar();
+    }
+  }
 }
 
 function setHeading(value: number): void {
@@ -1628,6 +1708,12 @@ async function openPending(): Promise<void> {
 }
 
 async function runAction(action: string): Promise<void> {
+  const focused = document.activeElement;
+  if ((action === 'undo' || action === 'redo') && mode === 'visual' && !busy && editor.isEditable &&
+    (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) && focused.closest('.publishing-field')) {
+    if (action === 'undo') editor.commands.undo(); else editor.commands.redo();
+    return;
+  }
   const id = documentId;
   await run(async () => dispatch(action));
   if ((action.startsWith('insert:callout-') || action.startsWith('insert:publishing-')) && documentId === id && mode === 'visual' &&
@@ -1804,6 +1890,7 @@ async function dispatch(action: string): Promise<void> {
   switch (action) {
     case 'revoke-includes': {
       unwrap(await window.lekh.revokePublishingIncludes(documentId));
+      invalidateExportCheck();
       for (const tab of tabs) {
         if (tab.id !== documentId) continue;
         tab.previewMarkdown = undefined;
@@ -1815,6 +1902,7 @@ async function dispatch(action: string): Promise<void> {
     }
     case 'allow-includes': {
       if (unwrap(await window.lekh.allowPublishingIncludes(documentId))) {
+        invalidateExportCheck();
         for (const tab of tabs) {
           if (tab.id !== documentId) continue;
           tab.previewMarkdown = undefined;
@@ -1897,8 +1985,10 @@ async function dispatch(action: string): Promise<void> {
       break;
     }
     case 'export-docx':
-    case 'export-pdf': {
-      const file = unwrap(await window.lekh.exportDocument(documentId, markdown, action === 'export-pdf' ? 'pdf' : 'docx'));
+    case 'export-pdf':
+    case 'export-html': {
+      const format = action === 'export-pdf' ? 'pdf' : action === 'export-html' ? 'html' : 'docx';
+      const file = unwrap(await window.lekh.exportDocument(documentId, markdown, format));
       if (file) notify(`Exported successfully: ${file}`);
       break;
     }
@@ -2057,6 +2147,7 @@ document.addEventListener('click', event => {
       element(action).hidden = false;
       positionViewMenu();
       target.closest('button')!.setAttribute('aria-expanded', 'true');
+      if (action === 'export-menu') void checkIncludedExportRestrictions();
     }
     return;
   }
@@ -2469,6 +2560,7 @@ for (const id of dropdownIds) {
     menu.hidden = false;
     positionViewMenu();
     trigger.setAttribute('aria-expanded', 'true');
+    if (id === 'export-menu') void checkIncludedExportRestrictions();
     const items = menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)');
     items[event.key === 'ArrowUp' ? items.length - 1 : 0].focus();
   });

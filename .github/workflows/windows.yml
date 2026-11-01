@@ -34,7 +34,7 @@ jobs:
         run: npm run build:setup
       - name: Verify setup engine, previews and hosted install/uninstall
         run: npm run verify:setup -- -InstallOnHostedRunner
-      - name: Verify genuine 0.8.1 to 0.9.0 rollback, upgrade and repair on hosted runner
+      - name: Verify genuine 0.9.0 to 0.9.1 installer decisions, rollback, upgrade and repair on hosted runner
         run: .\scripts\Test-Upgrade.ps1 -InstallOnHostedRunner
       - name: Create clean source archive
         run: npm run package:source
@@ -63,3 +63,22 @@ jobs:
             release/Lekh-Markdown-editor-Setup-${{ steps.release.outputs.version }}-x64.exe
             release/Lekh-${{ steps.release.outputs.version }}-source.zip
             release/SHA256SUMS.txt
+
+  validate-file-symlinks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.0
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Restore locked dependencies
+        run: npm ci --registry=https://registry.npmjs.org
+      - name: Verify file-symlink include and image boundaries without skipping
+        shell: bash
+        run: |
+          set -o pipefail
+          ./node_modules/.bin/tsx --test --test-name-pattern='^file symlinks cannot expose non-Markdown or HTML image files$' tests/includes.test.ts | tee "$RUNNER_TEMP/lekh-symlink-results.tap"
+          grep -Eq '^ok [0-9]+ - file symlinks cannot expose non-Markdown or HTML image files$' "$RUNNER_TEMP/lekh-symlink-results.tap"

@@ -20,10 +20,6 @@ namespace Lekh.Setup
                 return comparison > 0 ? "downgrade" : comparison == 0 ? "repair" : "upgrade";
             }
         }
-        public string Guidance
-        {
-            get { return "Lekh " + Version + " is already installed.\nSave your work and close Lekh before continuing."; }
-        }
         public static bool Same(InstalledProduct a, InstalledProduct b)
         {
             return a == null ? b == null : b != null &&
@@ -180,6 +176,15 @@ namespace Lekh.Setup
             catch (DirectoryNotFoundException) { return false; }
         }
         public static bool IsSuccess(uint result) { return result == 0 || result == 3010; }
+        internal static string ReadyState(InstalledProduct installed, Func<bool> appIsOpen)
+        {
+            if (installed != null)
+            {
+                if (installed.Mode == "downgrade") return "downgrade";
+                if (installed.Mode == "repair") return "installed";
+            }
+            return appIsOpen() ? "open" : installed == null ? "ready" : "upgrade";
+        }
         public static string ErrorDescription(uint result)
         {
             switch (result)
@@ -197,27 +202,32 @@ namespace Lekh.Setup
             string full = Path.GetFullPath(path);
             return String.Equals(full, AppPath, StringComparison.OrdinalIgnoreCase);
         }
-        public static bool AppIsOpen()
+        internal static bool AppIsOpen(IEnumerable<Process> processes, Func<Process, string> executablePath)
         {
-            int session = Process.GetCurrentProcess().SessionId;
-            foreach (Process process in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(BuildInfo.ExecutableName)))
+            foreach (Process process in processes)
             {
-                using (process)
+                try
                 {
-                    if (process.SessionId == session)
-                    {
-                        try
-                        {
-                            if (IsInstalledApp(process.MainModule.FileName)) return true;
-                        }
-                        catch (InvalidOperationException)
-                        {
-                            if (!process.HasExited) throw;
-                        }
-                    }
+                    if (IsInstalledApp(executablePath(process))) return true;
+                }
+                catch (InvalidOperationException)
+                {
+                    if (!process.HasExited) throw;
                 }
             }
             return false;
+        }
+        public static bool AppIsOpen()
+        {
+            Process[] processes = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(BuildInfo.ExecutableName));
+            try
+            {
+                return AppIsOpen(processes, process => process.MainModule.FileName);
+            }
+            finally
+            {
+                foreach (Process process in processes) process.Dispose();
+            }
         }
         public static void ValidateProperties(IDictionary<string, string> properties)
         {

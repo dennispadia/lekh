@@ -90,9 +90,12 @@ export class ContextMenu {
     control.setAttribute('aria-label', item.label);
     control.title = item.shortcut ? `${item.label} (${item.shortcut})` : item.label;
     if (item.description) { control.title = item.description; control.setAttribute('aria-description', item.description); }
-    if (item.icon) control.insertAdjacentHTML('beforeend', publishingIcon(item.icon));
     const label = document.createElement('span');
-    label.textContent = item.label;
+    label.className = 'context-menu-label';
+    if (item.icon) label.insertAdjacentHTML('beforeend', publishingIcon(item.icon));
+    const text = document.createElement('span');
+    text.textContent = item.label;
+    label.append(text);
     control.append(label);
     if (item.submenu) {
       const submenu = document.createElement('div');

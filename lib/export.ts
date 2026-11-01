@@ -5,15 +5,18 @@ import {
   WidthType, type ILevelsOptions, type IParagraphOptions, type IRunOptions, type IStylesOptions,
   type ParagraphChild,
 } from 'docx';
+import { createHash } from 'node:crypto';
 import Token from 'markdown-it/lib/token.mjs';
 import { escapeHTML, headingAnchor, isSafeLink, parser } from './markdown.js';
-import { readImage } from './images.js';
+import { embeddedImage, readImage } from './images.js';
 import { highlightedHTML, highlightedSegments, syntaxCSS, type CodeSegment } from './highlight.js';
 import { diagramLimits, isMermaidLanguage, prepareMermaid } from './diagrams.js';
 import { productName } from './branding.js';
-import { publishingCalloutPalette, publishingCSS, type PublishingMeta } from './publishing.js';
+import { assertStaticExportSupported, publishingCalloutPalette, publishingCSS, type PublishingMeta } from './publishing.js';
+import { interactiveExportCSS, interactiveExportScript } from './interactive-export.js';
 
 export type ImageLoader = (source: string) => Promise<{ data: Buffer; mime: string }>;
+export type RasterValidator = (data: Buffer, mime: string) => Promise<void>;
 /** The renderer supplies locally rendered PNGs keyed by the original fence source. */
 export type DiagramImageLoader = (source: string) => Promise<{ data: Buffer; mime: 'image/png' }>;
 
@@ -62,6 +65,7 @@ type ListItem = { pending: boolean };
 
 export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagram?: DiagramImageLoader): Promise<Buffer> {
   const tokens = parser.parse(markdown, {});
+  assertStaticExportSupported(tokens);
   if (tokens.filter(token => token.type === 'fence' && isMermaidLanguage(token.info)).length > diagramLimits.diagrams) throw new Error('An export supports at most 32 Mermaid diagrams.');
   const blocks: Block[] = [];
   const lists: List[] = [];
@@ -202,18 +206,7 @@ export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagr
         text: meta.title!, bold: true, color: publishingCalloutPalette[meta.variant!]?.border.slice(1).toUpperCase() ?? ink.accent,
       })], { keepNext: true });
     } else if (token.type === 'publishing_callout_close') callouts.pop();
-    else if (token.type === 'publishing_selector') {
-      const meta = token.meta as PublishingMeta;
-      appendParagraph([new TextRun({ text: meta.title!, bold: true, color: ink.accent })], { keepNext: true });
-      appendParagraph([new TextRun({ text: meta.options!.map(option => option.label).join(' / '), color: ink.muted })], { keepNext: true });
-    } else if (token.type === 'publishing_zone_open') {
-      appendParagraph([new TextRun({ text: (token.meta as PublishingMeta).label!, bold: true, size: 26, color: ink.accent })],
-        { keepNext: true, spacing: { before: 300, after: 140 } });
-    }
-    else if (token.type === 'publishing_tab_open') {
-      appendParagraph([new TextRun({ text: (token.meta as PublishingMeta).label!, bold: true, size: 26, color: ink.accent })],
-        { keepNext: true, spacing: { before: 300, after: 140 } });
-    } else if (token.type === 'publishing_caption_open') caption = true;
+    else if (token.type === 'publishing_caption_open') caption = true;
     else if (token.type === 'publishing_caption_close') caption = false;
     else if (token.type === 'publishing_unsupported') {
       appendParagraph([new TextRun({ text: (token.meta as PublishingMeta).reason!, bold: true, color: '956019' })],
@@ -362,15 +355,21 @@ export function imageDimensions(data: Buffer, type: string): { width: number; he
   }
   if (type === 'jpg' && data[0] === 255 && data[1] === 216) {
     let offset = 2;
-    while (offset + 8 < data.length) {
+    while (offset < data.length) {
       if (data[offset] !== 255) break;
-      const marker = data[offset + 1];
+      while (offset < data.length && data[offset] === 255) offset++;
+      if (offset >= data.length) break;
+      const marker = data[offset++];
+      if (marker === 0x00 || marker === 0xd9 || marker === 0xda) break;
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd8)) continue;
+      if (offset + 2 > data.length) break;
+      const length = data.readUInt16BE(offset);
+      if (length < 2 || offset + length > data.length) break;
       if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
-        return checked(data.readUInt16BE(offset + 7), data.readUInt16BE(offset + 5));
+        if (length < 8) break;
+        return checked(data.readUInt16BE(offset + 5), data.readUInt16BE(offset + 3));
       }
-      const length = data.readUInt16BE(offset + 2);
-      if (length < 2) break;
-      offset += 2 + length;
+      offset += length;
     }
   }
   throw new Error('An image is invalid or its dimensions could not be read. Please use a standard PNG, JPEG, or GIF image.');
@@ -417,13 +416,25 @@ export const printCSS = `
   ${publishingCSS}
   .publishing-tablist { display: none; }
   .publishing-tab-panel[hidden],.publishing-tab-label { display: block; }
+  .publishing-tabs { border: 0; border-radius: 0; overflow: visible; }
+  .publishing-tab-panel { padding: 0; margin: 15pt 0; border-top: 0; }
+  .publishing-zone { border: 0; padding-left: 0; }
+  .publishing-tab-label,.publishing-zone-label { color: #${ink.accent}; background: #${ink.soft}; border-bottom: 1px solid #${ink.line}; font-size: 13pt; line-height: 1.5; padding: 6pt 8pt; margin: 15pt 0 7pt; }
+  .publishing-callout-title,.publishing-tab-label,.publishing-zone-label,.publishing-selector-title { break-after: avoid; break-inside: avoid; }
+  .publishing-variant-options { display: block; }
+  .publishing-image figcaption { break-before: avoid; }
   ${syntaxCSS('pre')}
 `;
 
-export async function toPrintHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null): Promise<string> {
+async function renderExportHTML(
+  markdown: string, documentPath: string | null, interactive: boolean,
+  loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null, validateRaster?: RasterValidator,
+): Promise<string> {
   const tokens = parser.parse(markdown, {});
+  if (!interactive) assertStaticExportSupported(tokens);
   if (tokens.filter(token => token.type === 'fence' && isMermaidLanguage(token.info)).length > diagramLimits.diagrams) throw new Error('An export supports at most 32 Mermaid diagrams.');
   const anchors = new Map<string, number>();
+  const imageURLs = new Map<string, string>();
   const listItems: { token: Token; pending: boolean }[] = [];
   for (const [index, token] of tokens.entries()) {
     if (token.type === 'list_item_open') listItems.push({ token, pending: true });
@@ -450,11 +461,57 @@ export async function toPrintHTML(markdown: string, documentPath: string | null,
     if (token.type === 'heading_open') token.attrSet('id', headingAnchor(tokens[index + 1].content, anchors));
     for (const child of token.children ?? []) {
       if (child.type === 'image') {
-        const { data, mime } = await readImage(child.attrGet('src') ?? '', documentPath, authorizedRoot);
-        child.attrSet('src', `data:${mime};base64,${data.toString('base64')}`);
+        const source = child.attrGet('src') ?? '';
+        let url = imageURLs.get(source);
+        if (!url) {
+          const { data, mime } = await readImage(source, documentPath, authorizedRoot);
+          url = `data:${mime};base64,${data.toString('base64')}`;
+          if (interactive) {
+            embeddedImage(/^data:/i.test(source) ? source.replace(/[\r\n]/g, '') : url);
+            if (mime !== 'image/webp') imageDimensions(data, mime === 'image/jpeg' ? 'jpg' : mime.slice(6));
+            if (validateRaster) await validateRaster(data, mime);
+          }
+          imageURLs.set(source, url);
+        }
+        child.attrSet('src', url);
       }
     }
   }
-  const html = parser.renderer.render(tokens, { ...parser.options, highlight: highlightedHTML }, { publishingExport: true });
+  if (interactive) {
+    const usedIds = new Set(tokens.map(token => token.attrGet('id')).filter((id): id is string => id !== null));
+    const replacements = new Map<string, string>();
+    let sequence = 0;
+    for (const token of tokens) {
+      if (token.type !== 'publishing_tabs_open') continue;
+      const meta = token.meta as PublishingMeta;
+      let candidate: string;
+      let ids: string[];
+      do {
+        candidate = `lekh-export-tabs-${sequence++}`;
+        ids = meta.labels!.flatMap((_, index) => [`${candidate}-tab-${index}`, `${candidate}-panel-${index}`]);
+      } while (ids.some(id => usedIds.has(id)));
+      ids.forEach(id => usedIds.add(id));
+      replacements.set(meta.id!, candidate);
+    }
+    for (const token of tokens) {
+      if (!token.type.startsWith('publishing_tab')) continue;
+      const meta = token.meta as PublishingMeta;
+      if (meta.id && replacements.has(meta.id)) meta.id = replacements.get(meta.id)!;
+    }
+  }
+  return parser.renderer.render(tokens, { ...parser.options, highlight: highlightedHTML }, {
+    publishingExport: true, publishingInteractive: interactive,
+  });
+}
+
+export async function toPrintHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null): Promise<string> {
+  const html = await renderExportHTML(markdown, documentPath, false, loadDiagram, authorizedRoot);
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><title>${escapeHTML(`${productName} export`)}</title><style>${printCSS}</style></head><body>${html}</body></html>`;
+}
+
+export async function toOfflineHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null, validateRaster?: RasterValidator): Promise<string> {
+  const html = await renderExportHTML(markdown, documentPath, true, loadDiagram, authorizedRoot, validateRaster);
+  const hash = createHash('sha256').update(interactiveExportScript, 'utf8').digest('base64');
+  const policy = `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><title>${escapeHTML(`${productName} export`)}</title><style>${interactiveExportCSS}</style></head><body><noscript><p class="offline-notice">JavaScript is disabled; all tabbed examples and variant content are shown.</p></noscript>${html}<script>${interactiveExportScript}</script></body></html>`;
 }

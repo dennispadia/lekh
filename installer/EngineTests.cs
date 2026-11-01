@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -31,6 +32,9 @@ namespace Lekh.Setup
                 NativeRecordWire();
                 Identity();
                 PreviousVersions();
+                Console.WriteLine("Checking real native setup startup and retry decisions.");
+                StartupFlow();
+                Console.WriteLine("Checking transactional upgrade stages and preview states.");
                 UpgradeSequence();
                 Preview();
                 Animation();
@@ -437,6 +441,16 @@ namespace Lekh.Setup
             string directory = Path.GetDirectoryName(SetupPolicy.AppPath);
             Check(!SetupPolicy.IsInstalledApp(Path.Combine(directory, "Other editor.exe")), "Independent application identity.");
             Check(!SetupPolicy.IsInstalledApp(Path.Combine(Path.GetTempPath(), BuildInfo.ExecutableName)), "Other copies not confused with installed app.");
+            using (Process process = Process.GetCurrentProcess())
+            {
+                Process[] candidates = new Process[] { process };
+                Check(SetupPolicy.AppIsOpen(candidates, candidate => SetupPolicy.AppPath), "Matching editor detected without filtering by session.");
+                Check(!SetupPolicy.AppIsOpen(candidates, candidate => Path.Combine(directory, "Other editor.exe")), "Other executable ignored.");
+                bool detectionFailure = false;
+                try { SetupPolicy.AppIsOpen(candidates, candidate => { throw new InvalidOperationException("inaccessible process"); }); }
+                catch (InvalidOperationException) { detectionFailure = true; }
+                Check(detectionFailure, "Live process detection failure is not ignored.");
+            }
             Check(BuildInfo.PayloadHash.Length == 64 && BuildInfo.InstallDirectory == "lekh", "Build identity.");
             Check(SetupPolicy.PathExistsExact(typeof(EngineTests).Assembly.Location), "Removal probe recognizes real files.");
             Check(!SetupPolicy.PathExistsExact(typeof(EngineTests).Assembly.Location + ".missing"), "Only explicit file/directory-not-found proves payload absence.");
@@ -490,7 +504,6 @@ namespace Lekh.Setup
             Check(ProductDiscovery.Read(new string[0], property) == null, "No registration means fresh installation.");
             InstalledProduct old = ProductDiscovery.Read(new[] { oldCode }, property);
             Check(old.ProductCode == oldCode && old.Version == "0.8.1" && old.Mode == "upgrade", "Registered published old version is detected exactly.");
-            Check(old.Guidance.Contains("Lekh 0.8.1") && old.Guidance.Contains("Save your work and close Lekh"), "Guidance states the detected version and asks users to save and close.");
             Check(new InstalledProduct(oldCode, BuildInfo.Version + ".0").Mode == "repair", "Same MSI version is maintenance, not downgrade.");
             Check(new InstalledProduct(oldCode, "99.0.0").Mode == "downgrade", "Newer registration blocks downgrade.");
             Reject(() => ProductDiscovery.Read(new[] { oldCode, "{22222222-2222-2222-2222-222222222222}" }, property), "Multiple installations are not silently swept.");
@@ -504,6 +517,81 @@ namespace Lekh.Setup
             try { ProductDiscovery.Read(new[] { oldCode }, (code, context, field) => { throw new IOException("query failed"); }); }
             catch (IOException) { propagated = true; }
             Check(propagated, "Native query failures are never treated as product absence.");
+        }
+        private static void StartupFlow()
+        {
+            InstalledProduct old = new InstalledProduct("{11111111-1111-1111-1111-111111111111}", "0.8.1");
+            InstalledProduct same = new InstalledProduct(old.ProductCode, BuildInfo.Version + ".0");
+            InstalledProduct newer = new InstalledProduct(old.ProductCode, "99.0.0");
+            foreach (InstalledProduct blocked in new[] { same, newer })
+            {
+                Check(SetupPolicy.ReadyState(blocked, () => { throw new IOException("Do not inspect processes for a blocked version."); }) ==
+                    (blocked == same ? "installed" : "downgrade"), "Version decisions precede running-app checks.");
+            }
+            foreach (InstalledProduct product in new[] { null, old, same, newer })
+            {
+                foreach (bool running in new[] { false, true })
+                {
+                    int starts = 0;
+                    bool isOpen = running;
+                    InstalledProduct current = product;
+                    SetupWindow window = new SetupWindow(null, () => current, () => isOpen, () => starts++);
+                    try
+                    {
+                        System.Windows.Threading.DispatcherFrame frame = new System.Windows.Threading.DispatcherFrame();
+                        bool rendered = false;
+                        window.Window.ContentRendered += (sender, args) => { rendered = true; frame.Continue = false; };
+                        System.Windows.Threading.DispatcherTimer timeout = new System.Windows.Threading.DispatcherTimer {
+                            Interval = TimeSpan.FromSeconds(10)
+                        };
+                        timeout.Tick += (sender, args) => frame.Continue = false;
+                        timeout.Start();
+                        try
+                        {
+                            window.Window.Show();
+                            if (!rendered) System.Windows.Threading.Dispatcher.PushFrame(frame);
+                        }
+                        finally { timeout.Stop(); }
+                        Check(rendered, "The startup window must render before its automatic-start decision is asserted.");
+                        bool eligible = product == null || product == old;
+                        Check(starts == (eligible && !running ? 1 : 0), "Only fresh/older idle installations start automatically.");
+                        Button button = (Button)window.Window.FindName("Primary");
+                        string expected = !eligible ? product == same ? "installed" : "downgrade" :
+                            running ? "open" : product == null ? "ready" : "upgrade";
+                        Check(System.Windows.Automation.AutomationProperties.GetItemStatus(window.Window) == expected,
+                            "The real startup window chooses the expected version/process state.");
+                        if (eligible && running)
+                        {
+                            Check(button.Content.ToString() == "Check again", "Open application offers one explicit recheck.");
+                            button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
+                            Check(starts == 0, "Recheck while still open cannot start setup.");
+                            isOpen = false;
+                            button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
+                            Check(starts == 1, "Closing the app and checking once starts installation without another prompt.");
+                        }
+                        if (!eligible)
+                        {
+                            button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
+                            Check(starts == 0 && button.Visibility == System.Windows.Visibility.Collapsed,
+                                "Same/newer versions have no reinstall or install action even when clicked programmatically.");
+                        }
+                    }
+                    finally { window.Window.Close(); }
+                }
+            }
+            int changedStarts = 0;
+            InstalledProduct changed = old;
+            SetupWindow changedWindow = new SetupWindow(null, () => changed, () => true, () => changedStarts++);
+            changed = same;
+            ((Button)changedWindow.Window.FindName("Primary")).RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
+            Check(changedStarts == 0 && System.Windows.Automation.AutomationProperties.GetItemStatus(changedWindow.Window) == "installed",
+                "A version changed while waiting is re-evaluated before starting.");
+            changedWindow.Window.Close();
+            SetupWindow failed = new SetupWindow(null, () => { throw new IOException("Detection failed."); }, () => false,
+                () => { throw new InvalidOperationException("Failed detection must not start setup."); });
+            Check(System.Windows.Automation.AutomationProperties.GetItemStatus(failed.Window) == "detection-error",
+                "Discovery failures remain visible, not fresh-install defaults.");
+            failed.Window.Close();
         }
         private static void UpgradeSequence()
         {
@@ -564,7 +652,7 @@ namespace Lekh.Setup
         }
         private static void Preview()
         {
-            foreach (string state in new[] { "upgrade", "repair", "downgrade", "removing", "rollback" })
+            foreach (string state in new[] { "ready", "upgrade", "installed", "downgrade", "open", "removing", "rollback" })
             {
                 SetupWindow preview = new SetupWindow(state);
                 Check(System.Windows.Automation.AutomationProperties.GetItemStatus(preview.Window) == state,
@@ -572,8 +660,13 @@ namespace Lekh.Setup
                 string heading = ((TextBlock)preview.Window.FindName("Heading")).Text;
                 string body = ((TextBlock)preview.Window.FindName("Description")).Text;
                 Button primary = (Button)preview.Window.FindName("Primary");
-                if (state == "upgrade") Check(heading.Contains("0.8.1") && body.Contains("Save your work") && primary.Content.ToString().IndexOf("save", StringComparison.OrdinalIgnoreCase) >= 0, "Upgrade preview displays version and explicit save/close action.");
-                if (state == "repair") Check(heading.Contains(BuildInfo.Version) && primary.Content.ToString().Contains("reinstall"), "Same-version preview offers reinstall.");
+                if (state == "ready" || state == "upgrade") Check(primary.Visibility == System.Windows.Visibility.Collapsed &&
+                    !body.Contains("Save your work"), "Fresh and idle upgrade previews do not prompt for installation or closure.");
+                if (state == "upgrade") Check(heading.Contains("0.8.1") && heading.Contains(BuildInfo.Version), "Upgrade identifies both versions.");
+                if (state == "installed") Check(heading.Contains(BuildInfo.Version) && primary.Visibility == System.Windows.Visibility.Collapsed,
+                    "Same-version preview reports already installed without reinstall.");
+                if (state == "open") Check(body.Contains("Save your work and close Lekh") && primary.Content.ToString() == "Check again",
+                    "Only the open-app preview asks users to save and close.");
                 if (state == "downgrade") Check(primary.Visibility == System.Windows.Visibility.Collapsed && body.Contains(BuildInfo.Version), "Downgrade preview has no install action.");
                 if (state == "removing") Check(body.Contains("0.8.1") && ((TextBlock)preview.Window.FindName("Stages")).Text.Contains("REMOVE OLD"), "Visible removal stage identifies old version.");
                 if (state == "rollback") Check(primary.Visibility == System.Windows.Visibility.Collapsed && heading.Contains("Rolling back"), "Rollback waits without retry/install action.");

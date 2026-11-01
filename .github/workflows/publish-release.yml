@@ -95,6 +95,7 @@ jobs:
             if (!release) {
               const body = `Windows x64, offline native setup with an embedded per-user installer. No Node.js, Word or Pandoc required.\n\n` +
                 `**Unsigned software:** Windows may warn about or block installation. Verify SHA256SUMS.txt and follow your organization's policies; do not disable security protections.\n\n` +
+                `See the [changelog](https://github.com/${repo.owner}/${repo.repo}/blob/${tag}/CHANGELOG.md) and [user guide](https://github.com/${repo.owner}/${repo.repo}/blob/${tag}/docs/USER_GUIDE.md) for features and export limitations.\n\n` +
                 `[Verified build, offline setup engine/payload, animated native previews, and complete extracted-app desktop tests on a GitHub-hosted Windows runner](${process.env.BUILD_URL}). See the release verification details for tested installation, upgrade, and repair scenarios.\n\n` +
                 `Questions, bugs, enhancements, and requests are welcome through [GitHub issues](https://github.com/dennispadia/lekh/issues). See LICENSE and THIRD_PARTY_NOTICES.md for license information.`;
               ({ data: release } = await github.rest.repos.createRelease({

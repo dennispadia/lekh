@@ -132,7 +132,9 @@ function Wait-SetupWindow($Process, [string]$Label, [int]$TimeoutSeconds = 30) {
                 $primary = Find-Control $candidate 'Primary'
                 if ($null -ne $heading) { $diagnostic.Heading = $heading.Current.Name }
                 if ($null -ne $primary) { $diagnostic.Primary = $primary.Current.Name }
-                if ($null -ne $heading -and -not [string]::IsNullOrWhiteSpace($heading.Current.Name) -and $null -ne $primary) {
+                $secondary = Find-Control $candidate 'Secondary'
+                if ($null -ne $heading -and -not [string]::IsNullOrWhiteSpace($heading.Current.Name) -and
+                    ($null -ne $primary -or $null -ne $secondary)) {
                     return $candidate
                 }
             } catch [Windows.Automation.ElementNotAvailableException] {
@@ -141,7 +143,7 @@ function Wait-SetupWindow($Process, [string]$Label, [int]$TimeoutSeconds = 30) {
                 $diagnostic.ProviderError = "$($_.Exception.Message) (HRESULT $($_.Exception.HResult))"
             }
             return $null
-        } $TimeoutSeconds "$Label did not expose Heading and Primary accessibility within $TimeoutSeconds seconds."
+        } $TimeoutSeconds "$Label did not expose its heading and available action accessibility within $TimeoutSeconds seconds."
     } catch {
         throw "$($_.Exception.Message) Window readiness diagnostic: pid=$($Process.Id); handle=$($diagnostic.Handle); owner=$($diagnostic.Owner); heading='$($diagnostic.Heading)'; primary='$($diagnostic.Primary)'; lastProviderError='$($diagnostic.ProviderError)'."
     }
@@ -258,13 +260,21 @@ function Test-SetupPreview([string]$State, [bool]$MotionEnabled) {
         if ($state -eq 'installing') { Test-Story $window -ReducedMotion:(-not $MotionEnabled) }
         $heading = (Find-Control $window 'Heading').Current.Name
         $description = (Find-Control $window 'Description').Current.Name
-        if ($state -eq 'upgrade' -and ($heading -notlike '*0.8.1*' -or
-            $description -notlike '*Save your work and close Lekh*' -or
-            (Find-Control $window 'Primary').Current.Name -cne 'Save and close, then update')) {
-            throw 'Upgrade preview must identify 0.8.1 and explicitly ask users to save and close before updating.'
+        if ($state -in @('ready', 'upgrade') -and ($null -ne (Find-Control $window 'Primary') -or
+            $description -like '*Save your work*')) {
+            throw 'Fresh and idle-upgrade previews must not prompt for installation or app closure.'
         }
-        if ($state -eq 'repair' -and ((Find-Control $window 'Primary').Current.Name -cne 'Save and close, then reinstall' -or
-            $heading -notlike "*$($manifest.version)*")) { throw 'Same-version preview must identify the installed version and offer reinstall.' }
+        if ($state -eq 'upgrade' -and ($heading -notlike '*0.8.1*' -or $heading -notlike "*$($manifest.version)*")) {
+            throw 'Upgrade preview must identify both the previous and new version.'
+        }
+        if ($state -eq 'installed' -and ($null -ne (Find-Control $window 'Primary') -or
+            $heading -notlike "*$($manifest.version)*already installed*")) {
+            throw 'Same-version preview must report already installed without offering reinstall.'
+        }
+        if ($state -eq 'open' -and ($description -notlike '*Save your work and close Lekh*' -or
+            (Find-Control $window 'Primary').Current.Name -cne 'Check again')) {
+            throw 'Only the running-app preview asks users to save/close and check again.'
+        }
         if ($state -eq 'removing' -and ($description -notlike '*0.8.1*' -or
             (Find-Control $window 'Stages').Current.Name -notlike '*REMOVE OLD*' -or
             (Find-Control $window 'Notice').Current.Name -notlike '*new application payload has not started*')) {
@@ -293,7 +303,7 @@ Write-Host "Desktop client-area animation before verification: $originalAnimatio
 try {
     if ($InstallOnHostedRunner) { Set-HostedClientAreaAnimation $true }
     $motionEnabled = [SetupVerificationDesktop]::GetClientAreaAnimation()
-    foreach ($state in @('installing', 'ready', 'upgrade', 'repair', 'downgrade', 'open', 'preparing', 'removing', 'finishing', 'rollback', 'success', 'restart', 'error', 'stopping', 'cancelled')) {
+    foreach ($state in @('installing', 'ready', 'upgrade', 'installed', 'downgrade', 'open', 'preparing', 'removing', 'finishing', 'rollback', 'success', 'restart', 'error', 'stopping', 'cancelled')) {
         Test-SetupPreview $state $motionEnabled
     }
     if ($InstallOnHostedRunner) {
@@ -335,7 +345,7 @@ function Read-HostedSetupStatus($Window) {
         $control = Find-Control $Window $field
         if ($null -ne $control) { $status[$field] = [string]$control.Current.Name }
     }
-    if ($status.State -cin @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade')) {
+    if ($status.State -cin @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade', 'installed')) {
         $detail = Find-Control $Window 'DetailText' -Raw
         $pattern = $null
         if ($null -ne $detail -and $detail.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
@@ -351,7 +361,7 @@ function Test-HostedSetupProgress($Status) {
         }
         return $true
     }
-    if ($Status.State -cin @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade')) {
+    if ($Status.State -cin @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade', 'installed')) {
         throw "Hosted setup entered native state '$($Status.State)': $($Status.Heading) $($Status.Description)`n$($Status.Details)"
     }
     return $false
@@ -448,17 +458,9 @@ function Test-HostedInstallation {
         $sentinelContent = 'Preserve user profile: ' + [guid]::NewGuid().ToString('N')
         [IO.File]::WriteAllText($sentinel, $sentinelContent, [Text.UTF8Encoding]::new($false))
         $setup = Start-Process -FilePath $SetupPath -PassThru
+        $attempted = $true
         $window = Wait-SetupWindow $setup 'Hosted setup'
         if ($window.Current.ProcessId -ne $setup.Id) { throw 'Hosted setup window belongs to a different process.' }
-        $primary = Wait-Until {
-            $button = Find-Control $window 'Primary'
-            if ($null -ne $button -and $button.Current.IsEnabled -and $button.Current.Name -match '^Install\b') {
-                return $button
-            }
-        } 15 'Hosted setup did not offer an enabled Install primary action.'
-        $invoke = $primary.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern)
-        $attempted = $true
-        $invoke.Invoke()
         [void](Wait-Until {
             if ($setup.HasExited) { throw 'Hosted setup exited before its success heading appeared.' }
             $setup.Refresh()
@@ -491,7 +493,7 @@ function Test-HostedInstallation {
         if (-not (Test-Path -LiteralPath $sentinel -PathType Leaf) -or [IO.File]::ReadAllText($sentinel) -cne $sentinelContent) {
             throw 'Installing modified or removed the user profile sentinel.'
         }
-        Write-Host "PASS: hosted Primary Invoke installed $productCode; Windows Installer confirms current-user USERUNMANAGED context 2, InstalledProductName, VersionString and LocalPackage; MSI is Apps-visible. Application was not launched."
+        Write-Host "PASS: hosted setup automatically installed $productCode without an Install prompt; Windows Installer confirms current-user USERUNMANAGED context 2, InstalledProductName, VersionString and LocalPackage; MSI is Apps-visible. Application was not launched."
     } catch {
         $failure = $_
     } finally {

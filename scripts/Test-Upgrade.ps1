@@ -14,15 +14,15 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or -not [Enviro
 }
 
 # Deliberately bounded to this published lineage; neither asset nor identity is caller-selectable.
-$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.8.1/Lekh-Markdown-editor-Setup-0.8.1-x64.exe'
-$oldSetupHash = 'cdbaafa78e98aa4515fdfb7bfe2a7822b59a54ed1547828bd775c3e61fa96128'
-$oldSetupBytes = 197516288L
+$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.0/Lekh-Markdown-editor-Setup-0.9.0-x64.exe'
+$oldSetupHash = 'af80dec1d9099e7ee228b299c56f43298044391d95ffad6ca5028912aab0448e'
+$oldSetupBytes = 197566464L
 $upgradeCode = '{DCBCF7FA-11DA-4F35-8D27-D066EEC6C582}'
 $root = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $manifest = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
-if ($manifest.version -cne '0.9.0' -or $manifest.build.productName -cne 'Lekh - Markdown editor' -or
+if ($manifest.version -cne '0.9.1' -or $manifest.build.productName -cne 'Lekh - Markdown editor' -or
     $manifest.build.msi.upgradeCode -cne $upgradeCode.Trim('{}')) {
-    throw 'This check supports only the genuine published 0.8.1 -> 0.9.0 Lekh upgrade.'
+    throw 'This check supports only the genuine published 0.9.0 -> 0.9.1 Lekh upgrade.'
 }
 if (-not $SetupPath) { $SetupPath = Join-Path $root "release\Lekh-Markdown-editor-Setup-$($manifest.version)-x64.exe" }
 $SetupPath = (Resolve-Path -LiteralPath $SetupPath).Path
@@ -36,6 +36,7 @@ $ownedProducts = @{}
 $profileHashes = @{}
 $failure = $null
 $cleanupErrors = [Collections.Generic.List[string]]::new()
+$activeSetup = $null
 
 # Microsoft API contracts: silent UI suppresses elevation too; NULL SID means current user.
 # https://learn.microsoft.com/windows/win32/api/msi/nf-msi-msisetinternalui
@@ -267,7 +268,7 @@ function Read-ValidatedMsi([string]$Path, [string]$Version) {
         if ($upgrades.Count -eq 0 -or @($upgrades | Where-Object { $_[0] -ine $upgradeCode }).Count -gt 0) {
             throw 'MSI upgrade table has an unexpected upgrade identity.'
         }
-        if ($Version -eq '0.9.0') {
+        if ($Version -eq $manifest.version) {
             $sequence = @{}
             foreach ($row in (Read-MsiRows $database 'SELECT `Action`, `Sequence` FROM `InstallExecuteSequence`' 2)) { $sequence[$row[0]] = [int]$row[1] }
             if (-not $sequence.ContainsKey('LekhPreviousVersionRemoved') -or
@@ -434,6 +435,7 @@ function Invoke-UpgradeMsi([ValidateSet('Install', 'Repair', 'Uninstall', 'Rollb
     Assert-HostedRunner
     if (-not $cleanRunnerVerified -or -not $ownedProducts.ContainsKey($Product.ProductCode) -or
         $ownedProducts[$Product.ProductCode].Path -cne $Product.Path) { throw 'Refusing unowned MSI operation.' }
+    if ($null -ne $activeSetup -and -not $activeSetup.HasExited) { throw 'Setup is still active; refusing concurrent product maintenance.' }
     Assert-AppNotRunning
     $log = Join-Path $work "$Label.log"
     $inputPath = $null
@@ -506,76 +508,184 @@ function Invoke-UpgradeMsi([ValidateSet('Install', 'Repair', 'Uninstall', 'Rollb
     }
 }
 
-function Assert-UpgradeReady {
+function Read-UpgradeSetup($Process) {
+    $Process.Refresh()
+    if ($Process.HasExited) { throw "Setup exited before the expected state (exit $($Process.ExitCode))." }
+    if ($Process.MainWindowHandle -eq [IntPtr]::Zero) { return $null }
+    try {
+        $window = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+        if ($window.Current.ProcessId -ne $Process.Id) { return $null }
+        $controls = @{}
+        foreach ($id in @('Heading', 'Description', 'Primary')) {
+            $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
+            $controls[$id] = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+        }
+        if ($null -eq $controls.Heading -or $null -eq $controls.Description) { return $null }
+        return [pscustomobject]@{
+            Window = $window; State = $window.Current.ItemStatus
+            Heading = $controls.Heading.Current.Name; Description = $controls.Description.Current.Name
+            Primary = $controls.Primary
+        }
+    } catch [Windows.Automation.ElementNotAvailableException] { return $null }
+    catch [Runtime.InteropServices.COMException] { return $null }
+}
+function Wait-UpgradeSetup($Process, [string]$Expected, $Stages, [int]$Seconds = 240, [switch]$AllowPendingOpen) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $pendingRecheck = $AllowPendingOpen.IsPresent
+    do {
+        $status = Read-UpgradeSetup $Process
+        if ($null -ne $status) {
+            if ($Stages.Count -eq 0 -or $Stages[$Stages.Count - 1] -cne $status.State) { $Stages.Add($status.State) }
+            if ($Expected -ceq 'success' -and $status.State -cin @('upgrade', 'preparing')) {
+                if ($status.Heading -cne "Upgrading Lekh $($old.Version) to $($new.Version)." -or
+                    ($null -ne $status.Primary -and -not $status.Primary.Current.IsOffscreen)) {
+                    throw 'Idle upgrade must identify both versions without an extra install action.'
+                }
+            }
+            if ($status.State -ceq $Expected) { return $status }
+            if ($status.State -cin @('error', 'cancelled', 'restart', 'detection-error', 'downgrade', 'installed', 'open')) {
+                if ($pendingRecheck -and $status.State -ceq 'open') {
+                    if ($timer.Elapsed.TotalSeconds -ge 30) { throw 'Setup did not process Check again within 30 seconds.' }
+                } else {
+                    throw "Setup entered '$($status.State)' instead of '$Expected': $($status.Heading) $($status.Description)"
+                }
+            } else {
+                $pendingRecheck = $false
+            }
+        }
+        Start-Sleep -Milliseconds 50
+    } while ($timer.Elapsed.TotalSeconds -lt $Seconds)
+    throw "Setup did not reach '$Expected'; observed states: $($Stages -join ', ')."
+}
+function Assert-PayloadPreserved($Expected) {
+    $actual = Get-PayloadHashes
+    if ($actual.Count -ne $Expected.Count) { throw 'Setup changed the installed payload file set while blocked.' }
+    foreach ($path in $Expected.Keys) {
+        if (-not $actual.ContainsKey($path) -or $actual[$path] -cne $Expected[$path]) {
+            throw "Setup changed blocked payload bytes: $path"
+        }
+    }
+}
+function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
     Assert-HostedRunner
     if (-not $cleanRunnerVerified) { throw 'Refusing UI verification without clean-runner ownership.' }
+    if ($null -ne $activeSetup -and -not $activeSetup.HasExited) { throw 'Another owned setup is still active.' }
     Assert-AppNotRunning
     Add-Type -AssemblyName UIAutomationClient
     Add-Type -AssemblyName UIAutomationTypes
-    $setup = Start-Process -FilePath $SetupPath -PassThru
+    $editor = $null
+    $setup = $null
     $window = $null
     $failure = $null
-    $closeFailure = $null
+    $closeErrors = [Collections.Generic.List[string]]::new()
+    $states = [Collections.Generic.List[string]]::new()
+    $before = Get-PayloadHashes
     try {
-        $timer = [Diagnostics.Stopwatch]::StartNew()
-        do {
-            $setup.Refresh()
-            if ($setup.HasExited) { throw 'Upgrade setup exited before offering save-and-close guidance.' }
-            if ($setup.MainWindowHandle -ne [IntPtr]::Zero) {
-                $window = [Windows.Automation.AutomationElement]::FromHandle($setup.MainWindowHandle)
-                if ($window.Current.ProcessId -ne $setup.Id) { throw 'Upgrade setup accessibility belongs to another process.' }
-                $controls = @{}
-                foreach ($id in @('Heading', 'Description', 'Primary')) {
-                    $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
-                    $controls[$id] = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
-                }
-                if ($null -ne $controls.Heading -and $null -ne $controls.Description -and $null -ne $controls.Primary -and
-                    $controls.Heading.Current.Name -like '*0.8.1*' -and
-                    $controls.Description.Current.Name -like '*Save your work and close Lekh*' -and
-                    $controls.Primary.Current.Name -ceq 'Save and close, then update') {
-                    Write-Host 'PASS: actual new setup detects registered 0.8.1 before installation and asks users to save and close. No Install action invoked.'
-                    break
-                }
+        if ($OpenEditor) {
+            if ($AlreadyInstalled) { Assert-Installed $new } else { Assert-Installed $old }
+            $executable = Join-Path $installDirectory "$($manifest.build.productName).exe"
+            $editor = Start-Process -FilePath $executable -ArgumentList ('--user-data-dir="' + (Join-Path $work 'owned-editor-profile') + '"') -PassThru
+            $timer = [Diagnostics.Stopwatch]::StartNew()
+            do {
+                $editor.Refresh()
+                if ($editor.HasExited) { throw 'Owned old editor exited before the running-app test.' }
+                if ($editor.MainWindowHandle -ne [IntPtr]::Zero) { break }
+                Start-Sleep -Milliseconds 100
+            } while ($timer.Elapsed.TotalSeconds -lt 30)
+            if ($editor.MainWindowHandle -eq [IntPtr]::Zero -or $editor.MainModule.FileName -ine $executable) {
+                throw 'Could not verify the exact owned editor window.'
             }
-            Start-Sleep -Milliseconds 100
-        } while ($timer.Elapsed.TotalSeconds -lt 30)
-        if ($timer.Elapsed.TotalSeconds -ge 30) {
-            throw 'Actual new setup did not identify the registered previous version and offer explicit save-and-close guidance.'
+        }
+        $setup = Start-Process -FilePath $SetupPath -PassThru
+        $script:activeSetup = $setup
+        if ($AlreadyInstalled) {
+            $status = Wait-UpgradeSetup $setup 'installed' $states 30
+            $window = $status.Window
+            if ($status.Heading -notlike "*$($manifest.version)*already installed*" -or
+                ($null -ne $status.Primary -and -not $status.Primary.Current.IsOffscreen)) {
+                throw 'Same-version setup must report already installed without offering reinstall.'
+            }
+            Assert-Installed $new
+            Assert-PayloadPreserved $before
+            Assert-ProfilePreserved
+            Write-Host 'PASS: same-version EXE reports already installed; no reinstall, payload or profile changes.'
+        } else {
+            if ($OpenEditor) {
+                $status = Wait-UpgradeSetup $setup 'open' $states 30
+                $window = $status.Window
+                if ($status.Description -notlike '*Save your work and close Lekh*' -or
+                    $status.Description -notlike '*0.9.0*' -or $null -eq $status.Primary -or
+                    $status.Primary.Current.Name -cne 'Check again') { throw 'Running editor did not produce the save/close and recheck prompt.' }
+                Assert-Installed $old
+                Assert-Absent $new.ProductCode
+                Assert-PayloadPreserved $before
+                Assert-ProfilePreserved
+                if (-not $editor.CloseMainWindow() -or -not $editor.WaitForExit(30000)) {
+                    throw 'Owned blank editor did not close gracefully; no forced closure is permitted.'
+                }
+                Assert-AppNotRunning
+                $status.Primary.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
+            }
+            $status = Wait-UpgradeSetup $setup 'success' $states -AllowPendingOpen:$OpenEditor.IsPresent
+            $window = $status.Window
+            if ($status.Heading.Replace([char]0x2019, [char]0x27) -cne "You're ready to write.") { throw 'Unexpected success heading.' }
+            if (-not $states.Contains('removing') -or -not $states.Contains('installing') -or
+                $states.IndexOf('removing') -ge $states.IndexOf('installing')) {
+                throw "Real upgrade did not show removal before installation: $($states -join ', ')."
+            }
+            Assert-Installed $new
+            Assert-Absent $old.ProductCode
+            Assert-ProfilePreserved
+            Write-Host "PASS: real EXE upgrade, running editor=$($OpenEditor.IsPresent); removal precedes installation, one recheck if needed, no extra Install prompt."
         }
     } catch {
         $failure = $_
     } finally {
         try {
-            if (-not $setup.HasExited) {
+            if ($null -ne $editor -and -not $editor.HasExited) {
+                $editor.Refresh()
+                if ($editor.MainModule.FileName -ine (Join-Path $installDirectory "$($manifest.build.productName).exe") -or
+                    -not $editor.CloseMainWindow() -or -not $editor.WaitForExit(30000)) {
+                    throw 'Could not gracefully close the exact owned test editor.'
+                }
+            }
+        } catch { $closeErrors.Add("Owned editor cleanup: $_") }
+        try {
+            if ($null -ne $setup -and -not $setup.HasExited) {
+                if ($null -eq $window) {
+                    $lastStatus = Read-UpgradeSetup $setup
+                    if ($null -ne $lastStatus) { $window = $lastStatus.Window }
+                }
                 if ($null -eq $window) { throw 'Cannot safely close an undiscovered setup window.' }
                 $window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()
-                if (-not $setup.WaitForExit(15000)) { throw 'Upgrade readiness window did not close; no forced termination is permitted.' }
+                if (-not $setup.WaitForExit(15000)) { throw 'Owned setup did not close; no forced termination is permitted.' }
             }
-        } catch { $closeFailure = $_ }
-        $setup.Dispose()
+        } catch { $closeErrors.Add("Owned setup cleanup: $_") }
+        if ($null -ne $editor) { $editor.Dispose() }
+        if ($null -ne $setup -and $setup.HasExited) { $setup.Dispose(); $script:activeSetup = $null }
     }
     if ($null -ne $failure) {
-        if ($null -ne $closeFailure) { $failure.Exception.Data['ReadinessCleanupError'] = $closeFailure.Exception.Message }
+        if ($closeErrors.Count -gt 0) { $failure.Exception.Data['SetupCleanupErrors'] = $closeErrors -join "`n" }
         throw $failure
     }
-    if ($null -ne $closeFailure) { throw $closeFailure }
+    if ($closeErrors.Count -gt 0) { throw ($closeErrors -join "`n") }
 }
 
 New-Item -ItemType Directory -Path $sources -Force | Out-Null
 Start-Transcript -Path (Join-Path $work 'verification.log') | Out-Null
 try {
-    Write-Host 'Scope: pinned public 0.8.1 -> manifest 0.9.0, cancellation/rollback after real removal, then genuine repair and exact-product uninstall. No other lineage is covered.'
-    $oldSetup = Join-Path $sources 'Lekh-Markdown-editor-Setup-0.8.1-x64.exe'
+    Write-Host 'Scope: pinned public 0.9.0 -> manifest 0.9.1, rollback, idle auto-upgrade, same-version rejection, running-app close/recheck upgrade, repair and exact-product uninstall. No other lineage is covered.'
+    $oldSetup = Join-Path $sources 'Lekh-Markdown-editor-Setup-0.9.0-x64.exe'
     Invoke-WebRequest -UseBasicParsing -Uri $oldSetupUrl -OutFile $oldSetup -TimeoutSec 180 -UseDefaultCredentials:$false
     if ((Get-Item -LiteralPath $oldSetup).Length -ne $oldSetupBytes -or
         (Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $oldSetupHash) {
-        throw 'Published 0.8.1 setup length or pinned SHA-256 mismatch; refusing extraction.'
+        throw 'Published 0.9.0 setup length or pinned SHA-256 mismatch; refusing extraction.'
     }
-    $oldMsi = Join-Path $sources 'old-0.8.1.msi'
-    $newMsi = Join-Path $sources 'new-0.9.0.msi'
+    $oldMsi = Join-Path $sources 'old-0.9.0.msi'
+    $newMsi = Join-Path $sources 'new-0.9.1.msi'
     Expand-EmbeddedMsi $oldSetup $oldMsi
     Expand-EmbeddedMsi $SetupPath $newMsi
-    $old = Read-ValidatedMsi $oldMsi '0.8.1'
+    $old = Read-ValidatedMsi $oldMsi '0.9.0'
     $new = Read-ValidatedMsi $newMsi $manifest.version
     if ($old.ProductCode -ieq $new.ProductCode) { throw 'Major upgrade must have different old and new ProductCodes.' }
     $builtMsi = Join-Path $root "release\Lekh-Markdown-editor-$($manifest.version)-x64.msi"
@@ -597,17 +707,14 @@ try {
     New-Item -ItemType Directory -Path $profileDirectory -Force | Out-Null
     $sentinel = Join-Path $profileDirectory ('upgrade-profile-sentinel-' + [guid]::NewGuid().ToString('N') + '.txt')
     [IO.File]::WriteAllText($sentinel, ('Preserve upgrade profile: ' + [guid]::NewGuid().ToString('N')), [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($settings, '{"theme":"light","fontSize":18,"upgradeValidation":"0.8.1-to-0.9.0"}', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($settings, '{"theme":"light","fontSize":18,"upgradeValidation":"0.9.0-to-0.9.1"}', [Text.UTF8Encoding]::new($false))
     foreach ($path in @($sentinel, $settings)) { $profileHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
     [void]$attemptedProducts.Add($old.ProductCode)
     Invoke-UpgradeMsi 'Install' $old 'old-install'
     Assert-Installed $old
     Assert-Absent $new.ProductCode
     Assert-ProfilePreserved
-    Write-Host "PASS: genuine published 0.8.1 installed and registered as $($old.ProductCode)."
-    Assert-UpgradeReady
-    Assert-Installed $old
-    Assert-Absent $new.ProductCode
+    Write-Host "PASS: genuine published 0.9.0 installed and registered as $($old.ProductCode)."
 
     $oldPayloadHashes = Get-PayloadHashes
     [void]$attemptedProducts.Add($new.ProductCode)
@@ -624,11 +731,13 @@ try {
     }
     Write-Host 'PASS: cancellation after proven old removal restored exact old registration, every old payload byte and seeded profile data.'
 
-    # The preceding fresh-setup workflow step already exercises the new EXE's real UIA Install action.
-    # Exercise the same embedded MSI INSTALL sequence through MsiInstallProduct, without uninstalling old first.
-    # The native UI opens its session before record registration and invokes that sequence with MsiDoAction.
     [void]$attemptedProducts.Add($new.ProductCode)
-    Invoke-UpgradeMsi 'Install' $new 'new-upgrade'
+    Invoke-SetupScenario
+    Invoke-SetupScenario -AlreadyInstalled
+    Invoke-SetupScenario -AlreadyInstalled -OpenEditor
+    Invoke-UpgradeMsi 'Uninstall' $new 'reset-for-running-editor'
+    Invoke-UpgradeMsi 'Install' $old 'old-install-for-running-editor'
+    Invoke-SetupScenario -OpenEditor
     Assert-Installed $new
     Assert-Absent $old.ProductCode
     Assert-ProfilePreserved
@@ -639,7 +748,7 @@ try {
             throw "Upgraded $relative differs from the current packaged application."
         }
     }
-    Write-Host "PASS: 0.9.0 exact registration and current executable/app.asar bytes; old registration removed before the new payload stage."
+    Write-Host "PASS: 0.9.1 exact registration and current executable/app.asar bytes; old registration removed before the new payload stage."
     Assert-AppNotRunning
     # Remove only a validated installed application file so repair must actually restore missing payload.
     Remove-Item -LiteralPath (Join-Path $installDirectory 'resources\app.asar') -Force
@@ -687,4 +796,4 @@ if ($null -ne $failure) {
     throw $failure
 }
 if ($cleanupErrors.Count -gt 0) { throw ($cleanupErrors -join "`n") }
-Write-Host 'PASS: bounded genuine 0.8.1 -> 0.9.0 upgrade, removal-before-new, rollback, repair and exact-product cleanup. No application was launched or forcibly closed.'
+Write-Host 'PASS: bounded genuine 0.9.0 -> 0.9.1 auto-upgrade, same-version rejection, owned running-app close/recheck, removal-before-new, rollback, repair and exact-product cleanup. No application was forcibly closed.'

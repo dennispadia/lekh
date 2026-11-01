@@ -113,6 +113,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .dropdown { position: absolute; z-index: 20; top: calc(100% + 8px); right: 0; min-width: 235px; padding: 6px; border: 1px solid var(--line); background: var(--paper); border-radius: 9px; box-shadow: 0 8px 24px #0002; }
 .dropdown button { width: 100%; justify-content: flex-start; padding: 10px; height: auto; gap: 10px; }
 .dropdown kbd { margin-left: auto; color: var(--muted); font: 11px "Segoe UI", sans-serif; }
+#export-restriction { max-width: 260px; margin: 4px; padding: 9px 10px; border-radius: 6px; background: var(--soft); color: var(--text); font-size: 12px; line-height: 1.4; }
 #format-menu { max-height: calc(100vh - 180px); overflow-y: auto; }
 #sidebar-toggle { position: absolute; top: 10px; left: 6px; width: 28px; height: 28px; padding: 5px; color: var(--muted); background: var(--soft); }
 .icon-only { padding: 7px; width: 32px; }
@@ -149,6 +150,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 #toolbar-overflow .active { color: var(--accent); background: var(--selection); }
 .editor-context-menu { position: fixed; inset: auto; margin: 0; width: 236px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); padding: 5px; overflow-y: auto; color: var(--text); background: var(--paper); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px #0004; font-size: 12px; }
 .editor-context-menu button { width: 100%; justify-content: space-between; min-height: 29px; padding: 6px 9px; font-size: 11px; text-align: left; }
+.context-menu-label { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.context-menu-label svg { flex: 0 0 16px; width: 16px; height: 16px; }
 .editor-context-menu button:disabled { opacity: .4; cursor: default; }
 .editor-context-menu button:disabled:hover { background: transparent; }
 .editor-context-menu button[aria-checked="true"] { color: var(--accent); background: var(--selection); }
@@ -290,7 +293,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-edit-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; font-size: 12px; }
 .publishing-edit-header strong { flex: 1; min-width: 100px; color: var(--text); overflow-wrap: anywhere; }
 .publishing-edit-header button, .publishing-edit-tools button { font-size: 11px; padding: 4px 8px; border: 1px solid var(--line); color: var(--text); }
-.publishing-edit-tools { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.publishing-edit-tools { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; padding: 4px 10px; border-top: 1px solid var(--line); }
 .publishing-editable-body { min-height: 1.75em; outline: none; }
 .publishing-editable-body > :first-child { margin-top: 0; }
 .publishing-editable-body > :last-child { margin-bottom: 0; }
@@ -300,9 +303,26 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-field textarea { flex-basis: 100%; font: 13px/1.7 Consolas, monospace; resize: vertical; }
 .publishing-field input:invalid { border-color: #b10e1c; }
 .publishing-field-hint { color: var(--muted); font-size: 12px; }
-.publishing-choice-fields { margin-top: 12px; }
-.publishing-choice-fields .publishing-field > span { flex-basis: 100%; }
-.publishing-choice-fields .publishing-field input { flex: 1; width: 120px; }
+.publishing-inline-field { display: block; position: relative; }
+.publishing-inline-field > span { position: absolute; width: 1px; height: 1px; min-width: 0; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.publishing-inline-field input { display: block; border-color: transparent; background: transparent; font: inherit; padding: 6px 8px; }
+.publishing-inline-field input:hover { border-color: var(--line); }
+.publishing-inline-field input:focus { border-color: var(--accent); background: var(--paper); }
+.publishing-inline-field input:invalid { border-color: #b10e1c; }
+.publishing-edit-header > .publishing-inline-field { flex: 1; margin: 0; min-width: 100px; }
+.publishing-edit-header > .publishing-inline-field input, .publishing-selector > .publishing-inline-field input, .publishing-metadata > .publishing-inline-field:first-of-type input { font-size: 1.15em; font-weight: 650; }
+.publishing-tab-item, .publishing-variant-item { display: flex; align-items: stretch; min-width: 0; max-width: 100%; }
+.publishing-tab-item > [data-publishing-tab], .publishing-variant-item > [data-publishing-variant] { flex: 1; min-width: 0; }
+.publishing-tab-item:has([aria-selected="true"]) { background: var(--paper); }
+.publishing-tab-item:has([aria-selected="true"]) > .publishing-icon-tool { border-bottom-color: var(--accent); }
+.publishing-tablist .publishing-icon-tool, .publishing-variant-options .publishing-icon-tool { flex: 0 0 30px; padding: 4px; justify-content: center; font-size: 18px; }
+.publishing-variant-item > [data-publishing-variant] { border-radius: 4px 0 0 4px; border-right: 0; }
+.publishing-variant-item > .publishing-icon-tool { border-radius: 0 4px 4px 0; }
+.publishing-add-variant-content { display: block; margin-top: 12px; border: 1px solid var(--accent); color: var(--accent); font-size: 12px; padding: 7px 10px; }
+.publishing-choice-editor { flex: 1; width: min(24ch, 100%); min-width: 0; margin: 0; }
+.publishing-choice-editor input { height: 100%; border-color: var(--accent); }
+.publishing-advanced { margin: 8px 0; color: var(--text); font-size: 12px; }
+.publishing-advanced > summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
 .publishing-zone-inactive { border-left-style: dashed; background: var(--soft); padding: 10px 12px; border-radius: 0 5px 5px 0; }
 .publishing-zone-inactive .publishing-edit-header { margin: 0; }
 .publishing-edit-header details { position: relative; }
@@ -312,8 +332,12 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-include-preview { max-height: 400px; overflow: auto; border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; }
 .publishing-include-preview [data-publishing-selector] { display: none; }
 #variant-content-dialog { width: min(460px, calc(100vw - 32px)); }
-#variant-content-options { display: grid; gap: 12px; margin: 16px 0; border: 1px solid var(--line); padding: 16px; }
-#variant-content-options label { display: flex; gap: 8px; align-items: center; overflow-wrap: anywhere; }
+#variant-content-options { display: grid; gap: 4px; margin: 16px 0; border: 1px solid var(--line); padding: 12px; max-height: 45vh; overflow: auto; min-width: 0; }
+#variant-content-options label { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1.55; }
+#variant-content-options label:hover, #variant-content-options label:has(input:checked) { background: var(--soft); }
+#variant-content-options label:focus-within { outline: 2px solid var(--accent); outline-offset: -2px; }
+#variant-content-options label > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#variant-content-options input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; flex: 0 0 16px; margin: 2px 0 0; accent-color: var(--accent); }
 .publishing-callout.is-empty .publishing-callout-body > p:first-child::before { content: "Write your alert here…"; opacity: .7; pointer-events: none; position: absolute; }
 #publishing-image-dialog label { display: block; margin: 12px 0; }
 #publishing-image-dialog input, #publishing-image-dialog textarea { display: block; width: 100%; margin-top: 5px; }
@@ -362,7 +386,8 @@ dialog::backdrop { background: #14251e80; backdrop-filter: blur(2px); }
 dialog h2 { margin-top: 0; font-size: 23px; letter-spacing: -.5px; }
 dialog p { font-size: 13px; color: var(--muted); }
 dialog label { display: block; margin: 15px 0; font-size: 12px; }
-dialog input { display: block; width: 100%; margin-top: 6px; min-width: 300px; }
+dialog input:where(:not([type="checkbox"]):not([type="radio"])) { display: block; width: 100%; margin-top: 6px; min-width: 300px; }
+dialog input:where([type="checkbox"], [type="radio"]) { display: inline-block; width: auto; min-width: 0; flex: none; margin: 0; }
 #link-error { color: var(--text); font-weight: 600; }
 .dialog-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 25px; }
 #table-dialog { width: min(440px, 90vw); }

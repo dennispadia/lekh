@@ -4,9 +4,9 @@ import MarkdownIt from 'markdown-it';
 import { randomUUID } from 'node:crypto';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { documentPreviewHTML, headings, parser } from '../lib/markdown.js';
+import { documentPreviewHTML, headings, parser, requiresInteractiveExport } from '../lib/markdown.js';
 import { firstPublishingBlock, publishingBlockAtStart, publishingBlockRanges, publishingCalloutPalette, publishingCSS, type PublishingMeta } from '../lib/publishing.js';
-import { toDocx, toPrintHTML } from '../lib/export.js';
+import { toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
 import { publishingTemplateMarkdown } from '../lib/publishing-templates.js';
 import { unzipEntries } from './zip.js';
 
@@ -212,11 +212,11 @@ test('standard Markdown remains byte-identical to the configured stock renderer'
   assert.equal(publishingBlockAtStart(source), null);
 });
 
-test('PDF prints every labeled panel and image, omits metadata, and retains unsupported source', async () => {
+test('offline HTML retains every panel and image, omits metadata, and preserves unsupported source', async () => {
   for (const tabs of tabExamples) {
     const source = `---\ntitle: Metadata secret\n---\n\n# Article\n\n${tabs}\n:::image type=content source="${image}" alt-text=Pixel caption="Pixel caption" :::\n\n:::future\nFallback raw\n:::future-end\n`;
-    const html = await toPrintHTML(source, null);
-    const body = html.slice(html.indexOf('<body>'));
+    const html = await toOfflineHTML(source, null);
+    const body = html.split('<body>')[1].split('<script>')[0];
     assert.match(body, /<h1 id="article">Article<\/h1>/);
     assert.match(body, /<h2 id="a-section">A section<\/h2>/);
     assert.match(body, /data-publishing-panel="1">/);
@@ -228,21 +228,23 @@ test('PDF prints every labeled panel and image, omits metadata, and retains unsu
     assert.match(body, /Pixel caption/);
     assert.match(body, /Fallback raw/);
     assert.doesNotMatch(body, /Metadata secret| hidden/);
+    await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*tabbed examples or variants.*HTML/);
+    await assert.rejects(() => wordXML(source), /Word and PDF export.*tabbed examples or variants.*HTML/);
   }
   assert.match(publishingCSS, /@media print/);
   assert.match(publishingCSS, /\.publishing-tab-panel\[hidden\],\.publishing-tab-label \{ display: block !important/);
 });
 
-test('DOCX uses shared tokens for styled alerts, all tab labels, steps, images, captions, and descriptions', async () => {
+test('DOCX uses shared tokens for styled alerts, steps, images, captions, and descriptions', async () => {
   const source = '# Article\n\n> [!WARNING] Careful\n> **Read this** before continuing.\n\n:::steps\n1. First step\n2. Second step\n:::steps-end\n\n' +
-    tabExamples[0] + '\n:::image type=complex source=pixel.png alt-text="Pixel alt" caption="Pixel caption" :::\nComplex **description**.\n:::image-end\n';
+    ':::image type=complex source=pixel.png alt-text="Pixel alt" caption="Pixel caption" :::\nComplex **description**.\n:::image-end\n';
   const loaded: string[] = [];
   const zip = unzipEntries(await toDocx(source, async source => {
     loaded.push(source);
     return { data: png, mime: 'image/png' };
   }));
   const xml = zip.get('word/document.xml')!.toString();
-  for (const text of ['Article', 'Careful', 'Read this', 'First step', 'Second step', 'Windows', 'Linux', 'Windows body', 'Linux body', 'Pixel caption', 'description']) {
+  for (const text of ['Article', 'Careful', 'Read this', 'First step', 'Second step', 'Pixel caption', 'description']) {
     assert.ok(xml.includes(text), text);
   }
   assert.match(xml, /w:fill="FFF9F5"/);
@@ -250,7 +252,7 @@ test('DOCX uses shared tokens for styled alerts, all tab labels, steps, images, 
   assert.match(xml, /<w:numPr>/);
   assert.match(xml, /descr="Pixel alt"/);
   assert.equal((xml.match(/w:pStyle w:val="Heading1"/g) ?? []).length, 1);
-  assert.equal((xml.match(/<w:bookmarkStart/g) ?? []).length, 2, 'Only article headings receive navigation bookmarks');
+  assert.equal((xml.match(/<w:bookmarkStart/g) ?? []).length, 1, 'Only article headings receive navigation bookmarks');
   assert.ok([...zip.keys()].some(path => path.startsWith('word/media/')));
   assert.deepEqual(loaded, ['pixel.png']);
 });
@@ -264,14 +266,13 @@ test('indented heading-level tab headers inside variant zones never become artic
   assert.match(html, /data-publishing-tab="0">Managed identity/);
   assert.match(html, /data-publishing-tab="1">Service principal/);
   assert.deepEqual(headings(source).map(heading => heading.displayText), ['Article', 'After']);
-  const xml = await wordXML(source);
-  assert.match(xml, /Managed identity/);
-  assert.match(xml, /Service principal/);
-  assert.match(xml, /Principal body/);
-  assert.equal((xml.match(/<w:bookmarkStart/g) ?? []).length, 2);
-  const print = (await toPrintHTML(source, null)).split('<body>')[1];
-  assert.match(print, /data-publishing-panel="1">/);
-  assert.doesNotMatch(print, / hidden/);
+  const exported = await toOfflineHTML(source, null);
+  assert.match(exported, /Managed identity/);
+  assert.match(exported, /Service principal/);
+  assert.match(exported, /Principal body/);
+  assert.match(exported, /data-publishing-panel="1">/);
+  await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
 });
 
 test('implicit DocFX tabs end with their list item or zone and retain following numbered content', async () => {
@@ -299,13 +300,12 @@ test('implicit DocFX tabs end with their list item or zone and retain following 
   const zoneOnly = ':::zone pivot=example\n' + tabs + ':::zone-end\n\n## After zone\n';
   assert.equal(parser.parse(zoneOnly, {}).filter(token => token.type === 'publishing_tab_open').length, 2);
   assert.doesNotMatch(documentPreviewHTML(zoneOnly, ''), /publishing-unsupported/);
-  const xml = await wordXML(source);
-  assert.match(xml, /Following numbered instruction/);
-  assert.match(xml.replace(/<[^>]+>/g, ''), /echo outside/);
-  assert.equal((xml.match(/<w:numPr>/g) ?? []).length, 2);
-  const print = (await toPrintHTML(source, null)).split('<body>')[1];
-  assert.match(print, /data-publishing-panel="1">/);
-  assert.match(print, /Following numbered instruction/);
+  const exported = await toOfflineHTML(source, null);
+  assert.match(exported, /data-publishing-panel="1">/);
+  assert.match(exported, /Following numbered instruction/);
+  assert.match(exported.split('<body>')[1].split('<script>')[0].replace(/<[^>]+>/g, ''), /echo outside/);
+  await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
 });
 
 test('implicit tabs require multiple peers and stop before same or higher non-tab headings or EOF', () => {
@@ -341,13 +341,13 @@ test('explicit toolbar tabs retain selected H1 content and take priority over im
     assert.match(html, /<h1>Selected heading<\/h1>/);
     assert.match(html, /Selected body\./);
     assert.doesNotMatch(html, /publishing-unsupported/);
-    const print = (await toPrintHTML(source, null)).split('<body>')[1];
-    assert.match(print, /<h1 id="selected-heading">Selected heading<\/h1>/);
-    assert.match(print, /data-publishing-panel="1">/);
-    const xml = await wordXML(source);
-    assert.match(xml, /Selected heading/);
-    assert.match(xml, /Selected body\./);
-    assert.match(xml, /Second example/);
+    const exported = await toOfflineHTML(source, null);
+    assert.match(exported, /<h1 id="selected-heading">Selected heading<\/h1>/);
+    assert.match(exported, /data-publishing-panel="1">/);
+    assert.match(exported, /Selected body\./);
+    assert.match(exported, /Second example/);
+    await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+    await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
   }
   const implicit = '   #### [One](#tab/one)\n   First body\n   #### [Two](#tab/two)\n   Second body\n';
   const following = '1. Next list item\n\n   ---\n';
@@ -357,7 +357,7 @@ test('explicit toolbar tabs retain selected H1 content and take priority over im
   assert.doesNotMatch(documentPreviewHTML(zone, ''), /publishing-unsupported/);
 });
 
-test('generic document selectors decode safe local labels and every variant exports as a labeled section', async () => {
+test('generic document selectors decode safe local labels and export interactive variants', async () => {
   const selector = ':::selector title="Choose &quot;path&quot; &amp; method"\n- [Shared \\[disk\\]](#variant/shared)\n- [Network](#variant/network)\n:::selector-end\n';
   const first = ':::zone pivot="shared,network"\nCommon **instructions**.\n:::zone-end\n';
   const second = ':::zone pivot="network"\nNetwork-only instructions.\n:::zone-end\n';
@@ -373,20 +373,63 @@ test('generic document selectors decode safe local labels and every variant expo
   assert.match(html, /publishing-zone-label">Shared \[disk\] \/ Network/);
   assert.match(html, /data-publishing-zone="network"/);
   assert.equal(headings(source).length, 0);
-  const xml = await wordXML(source);
-  assert.match(xml, /Choose &quot;path&quot; &amp; method/);
-  assert.match(xml, /Shared \[disk\] \/ Network/);
-  assert.match(xml, /Network-only instructions/);
-  const print = (await toPrintHTML(source, null)).split('<body>')[1];
-  assert.match(print, /Common <strong>instructions<\/strong>/);
-  assert.match(print, /Network-only instructions/);
-  assert.doesNotMatch(print, /<button| hidden/);
+  const exported = await toOfflineHTML(source, null);
+  assert.match(exported, /Choose &quot;path&quot; &amp; method/);
+  assert.match(exported, /Shared \[disk\] \/ Network/);
+  assert.match(exported, /Common <strong>instructions<\/strong>/);
+  assert.match(exported, /Network-only instructions/);
+  assert.match(exported, /data-publishing-variant="network"/);
+  await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
   for (const invalid of [
     ':::zone pivot="bad onclick=evil"\nBody\n:::zone-end\n',
     ':::selector title="T"\n- [One](#variant/same)\n- [Two](#variant/same)\n:::selector-end\n',
   ]) {
     assert.match(documentPreviewHTML(invalid, ''), /publishing-unsupported/);
     assert.equal(publishingBlockAtStart(invalid)?.raw, invalid);
+  }
+});
+
+test('interactive export retains every alternative and static exports clearly reject them', async () => {
+  const source = '---\ntitle: Private metadata\n---\n\n## Article heading\n\n' +
+    '# [First example](#tab/first)\nFirst body.\n# [Second example](#tab/second)\nSecond body.\n---\n\n' +
+    ':::selector title="Choose a deployment"\n- [Availability Zones](#variant/zones)\n- [Scale Set](#variant/scale)\n:::selector-end\n\n' +
+    ':::zone pivot="zones"\nZone instructions.\n:::zone-end\n\n' +
+    ':::zone pivot="scale"\nScale instructions.\n:::zone-end\n';
+  const html = await toOfflineHTML(source, null);
+  const body = html.split('<body>')[1].split('<script>')[0];
+  assert.doesNotMatch(body, /Private metadata/);
+  assert.match(body, /role="tab"/);
+  assert.match(body, /aria-labelledby=/);
+  assert.match(body, /aria-pressed=/);
+  for (const text of ['First example', 'First body.', 'Second example', 'Second body.', 'Availability Zones', 'Zone instructions.', 'Scale Set', 'Scale instructions.']) {
+    assert.ok(body.includes(text), `HTML retains ${text}`);
+  }
+  assert.ok(body.indexOf('First body.') < body.indexOf('Second body.'));
+  assert.ok(body.indexOf('Zone instructions.') < body.indexOf('Scale instructions.'));
+  assert.match(html, /<noscript>/);
+  await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
+});
+
+test('interactive export detection uses parsed blocks, including nested blocks but not literal lookalikes', async () => {
+  const tabs = '# [One](#tab/one)\nFirst.\n# [Two](#tab/two)\nSecond.\n---\n';
+  const zone = ':::zone pivot=first\nFirst.\n:::zone-end\n';
+  const selector = ':::selector title="Choose"\n- [One](#variant/one)\n:::selector-end\n';
+  for (const source of [tabs, zone, selector, `:::steps\n1. Step\n\n${tabs}:::steps-end\n`]) {
+    assert.equal(requiresInteractiveExport(source), true, source);
+    await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
+    await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
+  }
+  for (const source of [
+    `\`\`\`md\n${tabs}${zone}${selector}\`\`\`\n`,
+    `    :::zone pivot=first\n    Text\n    :::zone-end\n`,
+    '---\ntitle: Metadata only\n---\n\nText.\n',
+    ':::zone pivot="bad onclick=evil"\nText\n:::zone-end\n',
+  ]) {
+    assert.equal(requiresInteractiveExport(source), false, source);
+    await wordXML(source);
+    await toPrintHTML(source, null);
   }
 });
 

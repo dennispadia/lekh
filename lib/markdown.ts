@@ -1,5 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import { registerPublishing } from './publishing.js';
+import { hasInteractivePublishing, registerPublishing } from './publishing.js';
 
 export const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
 registerPublishing(parser);
@@ -10,8 +10,11 @@ parser.block.ruler.before('paragraph', 'lekh_toc_marker', (state, startLine, _en
   return true;
 }, { alt: ['paragraph', 'list', 'blockquote'] });
 
-export function headings(markdown: string): { level: number; text: string; displayText: string; line: number }[] {
-  const tokens = parser.parse(markdown, {});
+export function requiresInteractiveExport(markdown: string): boolean {
+  return hasInteractivePublishing(parser.parse(markdown, {}));
+}
+
+export function headings(markdown: string, tokens = parser.parse(markdown, {})): { level: number; text: string; displayText: string; line: number }[] {
   const inlineText = (children: typeof tokens): string => children.map(token => {
     if (token.children) return inlineText(token.children);
     if (token.type === 'text' || token.type === 'code_inline') return token.content;

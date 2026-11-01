@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.1
+
+- Remove Local include from the block insertion menus; existing include directives and their explicit access controls continue to work.
+- Add self-contained interactive HTML export for offline review, with keyboard-accessible tabs, document-wide variants, embedded images and diagrams, and an all-alternatives fallback when JavaScript is disabled. Documents containing tabs or variants, including through authorized includes, require HTML instead of Word/PDF.
+- Follow links into nested tabs and variants, keep duplicate tab IDs independently editable, and export JPEG images that contain valid marker padding.
+- Reject stale project-folder grants during include-backed exports, including when the same folder is allowed again.
+- Make variant content a follow-on action on its selector, rather than an independent block option. After creating a selector, the same Blocks/native/right-click menu entry adds its content at the current selection.
+- Correct variant-dialog checkbox sizing and adjacent labels.
+- Edit example names on their tabs, with inline **+** and per-tab **×** controls and immediate typing in added examples. Rename variant choices in place, remove duplicate name forms, and simplify metadata, block titles, include fields and image captions into direct editing surfaces with secondary settings tucked away.
+- Keep Alerts and publishing-block icons next to their names on the left of right-click submenu rows; reserve right alignment for shortcuts and submenu arrows. Add measured Light/Dark menu layout regressions.
+- Start fresh installations and upgrades of a closed older Lekh automatically, without an extra Install or save/close prompt. Show the previous and target versions during upgrade preparation.
+- Prompt to save and close only when the installed editor is running; one **Check again** after closing proceeds directly to removal and installation.
+- Report **already installed** for the same version, even when the editor is open, without offering reinstall. Continue to block downgrades.
+- Retain transactional removal-before-new-payload, cancellation rollback, profile preservation and native completion checks. Add native startup/retry regressions and a guarded genuine 0.9.0 -> 0.9.1 hosted EXE matrix for idle/running upgrades and same-version rejection.
+
 ## 0.9.0
 
 - Make supported tabs, selector prompts/options, distributed variant content, structured steps, image descriptions, metadata and include fields editable directly in Visual, with source-safe serialization and undo/redo.

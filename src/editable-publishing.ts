@@ -14,9 +14,11 @@ interface Options {
   reportError: (message: string) => void;
   allowIncludes: () => void;
   openInclude: (source: string) => void;
+  addVariantContent: (position: number) => void;
 }
 export type VariantOption = { id: string; label: string };
-const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message), allowIncludes: () => {}, openInclude: () => {} };
+const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message), allowIncludes: () => {}, openInclude: () => {},
+  addVariantContent: () => { throw new Error('Variant content insertion is unavailable.'); } };
 let nextTabGroup = 0;
 const idPattern = /^[a-z0-9][\w-]*$/i;
 const names: Partial<Record<EditablePublishingBlock['kind'], string>> = {
@@ -114,11 +116,13 @@ function viewContext(editor: Editor, getPos: () => number | undefined, initial: 
 
 function field(context: ViewContext, title: string, value: () => string, change: (value: string) => void, multiline = false, required = false) {
   const wrapper = document.createElement('label');
-  wrapper.className = 'publishing-field';
+  wrapper.className = multiline ? 'publishing-field' : 'publishing-field publishing-inline-field';
   const caption = document.createElement('span');
   caption.textContent = title;
   const input = multiline ? document.createElement('textarea') : document.createElement('input');
   input.setAttribute('aria-label', title);
+  input.placeholder = title;
+  input.title = title;
   input.value = value();
   input.spellcheck = !/source|path|YAML/i.test(title);
   if (input instanceof HTMLTextAreaElement) input.rows = 5;
@@ -141,7 +145,7 @@ function field(context: ViewContext, title: string, value: () => string, change:
       event.preventDefault(); event.stopPropagation();
       if (!context.editor.isEditable) { context.options.reportError('Wait for the current operation to finish before undoing.'); return; }
       if (event.shiftKey) context.editor.commands.redo(); else context.editor.commands.undo();
-      input.value = value();
+      if (input.isConnected) input.value = value();
     }
   });
   return { wrapper, input, refresh: () => {
@@ -163,6 +167,47 @@ function tool(text: string, action: () => void): HTMLButtonElement {
   return button;
 }
 
+function iconTool(title: string, symbol: string, action: () => void): HTMLButtonElement {
+  const button = tool(symbol, action);
+  button.className = 'publishing-icon-tool';
+  button.setAttribute('aria-label', title);
+  button.title = title;
+  return button;
+}
+
+function choiceLabel(context: ViewContext, title: string, value: () => string, change: (value: string) => void, activate: () => void) {
+  const name = field(context, title, value, change, false, true);
+  name.wrapper.classList.add('publishing-choice-editor');
+  name.wrapper.hidden = true;
+  const button = tool(value(), activate);
+  button.title = 'Click to show content. Double-click or press F2 to rename here.';
+  let originalName = value();
+  const rename = () => {
+    if (!context.editor.isEditable) { context.options.reportError('Wait for the current operation to finish before renaming.'); return; }
+    originalName = value();
+    activate();
+    button.hidden = true; name.wrapper.hidden = false;
+    name.input.focus(); name.input.select();
+  };
+  button.addEventListener('dblclick', event => { event.preventDefault(); event.stopPropagation(); rename(); });
+  button.addEventListener('keydown', event => {
+    if (event.key === 'F2') { event.preventDefault(); event.stopPropagation(); rename(); }
+  });
+  name.input.addEventListener('blur', () => { button.hidden = false; name.wrapper.hidden = true; });
+  name.input.addEventListener('keydown', event => {
+    if (!(event instanceof KeyboardEvent)) return;
+    if (event.key !== 'Enter' && event.key !== 'Escape') return;
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === 'Escape') {
+      name.input.setCustomValidity('');
+      change(originalName);
+      name.input.value = value();
+    }
+    name.input.blur(); button.focus();
+  });
+  return { button, name, refresh: () => { button.textContent = value(); button.disabled = !context.editor.isEditable; name.refresh(); } };
+}
+
 function paragraphAfter(context: ViewContext): HTMLButtonElement {
   return tool('Write after block', () => {
     const position = context.getPos();
@@ -179,7 +224,11 @@ function paragraphAfter(context: ViewContext): HTMLButtonElement {
 
 function ignoreControls(dom: HTMLElement, contentDOM?: HTMLElement) {
   return {
-    stopEvent: (event: Event) => event.target instanceof Element && Boolean(event.target.closest('input, textarea, select, button')),
+    stopEvent: (event: Event) => {
+      if (event instanceof KeyboardEvent && (event.ctrlKey || event.metaKey) && !event.altKey &&
+        event.key.toLowerCase() === 'z' && event.target instanceof Element && event.target.closest('button')) return false;
+      return event.target instanceof Element && Boolean(event.target.closest('input, textarea, select, button'));
+    },
     ignoreMutation: (mutation: { type: string; target: globalThis.Node }) => mutation.type !== 'selection' &&
       (!contentDOM || !contentDOM.contains(mutation.target) || mutation.target === dom ||
         mutation.type === 'attributes' && mutation.target === contentDOM),
@@ -226,6 +275,10 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         header.contentEditable = 'false';
         header.className = 'publishing-edit-header';
         const title = document.createElement('strong');
+        const heading = kind === 'callout'
+          ? field(context, 'Block title', () => String(context.node.attrs.title), value => set({ title: value }))
+          : null;
+        if (heading) heading.input.placeholder = node.attrs.variant === 'checklist' ? 'Checklist' : 'Next step';
         const show = tool('Show and edit', () => {
           const pane = dom.closest<HTMLElement>('.document-pane');
           if (pane) choosePublishingVariant(pane, String(context.node.attrs.variants[0]));
@@ -235,7 +288,7 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         summary.textContent = 'Applies to…';
         const choices = document.createElement('div');
         assignments.append(summary, choices);
-        header.append(title, ...(kind === 'zone' ? [assignments, show] : []), paragraphAfter(context));
+        header.append(heading?.wrapper ?? title, ...(kind === 'zone' ? [assignments, show] : []), paragraphAfter(context));
         const contentDOM = document.createElement('div');
         contentDOM.className = 'publishing-editable-body';
         dom.append(header, contentDOM);
@@ -269,6 +322,7 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
           } else {
             dom.className = `publishing-callout publishing-callout-${current.attrs.variant} publishing-editable`;
             title.textContent = current.attrs.title || (current.attrs.variant === 'checklist' ? 'Checklist' : 'Next step');
+            heading?.refresh();
           }
           header.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = !editor.isEditable; });
         };
@@ -297,18 +351,16 @@ const TabNode = Node.create<Options>({
   addNodeView() {
     const options = this.options;
     return ({ editor, node, getPos }) => {
-      const { context, set } = viewContext(editor, getPos, node, options);
+      const { context } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section');
       dom.className = 'publishing-tab-panel'; dom.dataset.lekhTab = '';
-      const heading = field(context, 'Tab name', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
-      heading.wrapper.contentEditable = 'false';
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-body';
-      dom.append(heading.wrapper, contentDOM);
+      dom.append(contentDOM);
       const refresh = () => {
         const position = getPos();
         dom.dataset.publishingPanel = String(typeof position === 'number' ? editor.state.doc.resolve(position).index() : 0);
         dom.dataset.publishingPanelId = String(context.node.attrs.id);
-        dom.dataset.tabLabel = String(context.node.attrs.label); heading.refresh();
+        dom.dataset.tabLabel = String(context.node.attrs.label);
       };
       refresh();
       return { dom, contentDOM, ...ignoreControls(dom, contentDOM),
@@ -340,65 +392,100 @@ const TabsNode = Node.create<Options>({
     const options = this.options;
     return ({ editor, node, getPos }) => {
       const { context } = viewContext(editor, getPos, node, options);
-      const dom = document.createElement('section'); dom.className = 'publishing-tabs publishing-editable'; dom.dataset.lekhTabs = ''; dom.dataset.publishingTabs = '';
+      const dom = document.createElement('section'); dom.className = 'publishing-tabs publishing-editable'; dom.dataset.lekhTabs = ''; dom.dataset.publishingTabs = ''; dom.dataset.publishingReady = 'true';
       const header = document.createElement('div'); header.contentEditable = 'false';
       const tabs = document.createElement('div'); tabs.className = 'publishing-tablist'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Content tabs');
       const tools = document.createElement('div'); tools.className = 'publishing-edit-tools';
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-panels';
       const groupId = `lekh-editable-tabs-${++nextTabGroup}`;
-      let selected = String(node.firstChild!.attrs.id);
-      const select = (id: string) => {
-        selected = id;
-        dom.dataset.activeTab = id;
+      let selected = 0;
+      const select = (index: number) => {
+        selected = index;
+        dom.dataset.activeTab = String(index);
         for (const button of tabs.querySelectorAll<HTMLButtonElement>('[data-publishing-tab]')) {
-          button.setAttribute('aria-selected', String(button.dataset.tabId === id)); button.tabIndex = button.dataset.tabId === id ? 0 : -1;
+          const active = Number(button.dataset.publishingTab) === index;
+          button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1;
         }
         for (const [index, panel] of Array.from(contentDOM.children).entries()) if (panel instanceof HTMLElement) {
-          panel.hidden = panel.dataset.publishingPanelId !== id;
+          panel.dataset.publishingPanel = String(index);
+          panel.hidden = index !== selected;
           panel.id = `${groupId}-panel-${index}`;
           panel.setAttribute('role', 'tabpanel');
           panel.setAttribute('aria-labelledby', `${groupId}-tab-${index}`);
         }
       };
-      const add = tool('Add tab', () => {
+      const panelPosition = (index: number) => {
+        const position = getPos();
+        if (!editor.isEditable || typeof position !== 'number') { options.reportError('Wait for the current operation to finish.'); return undefined; }
+        let found: number | undefined;
+        context.node.forEach((panel, offset, current) => { if (current === index) found = position + 1 + offset; });
+        const panel = context.node.maybeChild(index);
+        if (found === undefined || !panel || !editor.state.doc.nodeAt(found)?.eq(panel)) {
+          options.reportError('This tab changed. Retry in the intended document.'); return undefined;
+        }
+        return found;
+      };
+      const add = iconTool('Add tab', '+', () => {
         const position = getPos();
         if (!editor.isEditable || typeof position !== 'number') { options.reportError('Wait for the current operation to finish.'); return; }
         if (context.node.childCount >= 32) { options.reportError('A tab group can contain at most 32 examples.'); return; }
-        let next = 1;
+        let next = context.node.childCount + 1;
         const ids = new Set<string>(); context.node.forEach(child => ids.add(String(child.attrs.id)));
         while (ids.has(`example-${next}`)) next++;
-        selected = `example-${next}`;
-        const panel = editor.schema.nodes.lekhTab.create({ id: selected, label: `Example ${next}` }, editor.schema.nodes.paragraph.create());
-        editor.view.dispatch(closeHistory(editor.state.tr).insert(position + context.node.nodeSize - 1, panel));
+        selected = context.node.childCount;
+        const panel = editor.schema.nodes.lekhTab.create({ id: `example-${next}`, label: `Example ${next}` }, editor.schema.nodes.paragraph.create());
+        const insertAt = position + context.node.nodeSize - 1;
+        const tr = closeHistory(editor.state.tr).insert(insertAt, panel);
+        tr.setSelection(TextSelection.create(tr.doc, insertAt + 2));
+        editor.view.dispatch(tr.scrollIntoView()); editor.view.focus();
       });
-      const remove = tool('Remove tab', () => {
-        const position = getPos();
-        if (!editor.isEditable || typeof position !== 'number') { options.reportError('Wait for the current operation to finish.'); return; }
+      const remove = (index: number) => {
+        const position = panelPosition(index);
+        if (position === undefined) return;
         if (context.node.childCount === 1) { options.reportError('Keep at least one tab, or delete the entire group.'); return; }
-        let offset = position + 1;
-        context.node.forEach(panel => { if (panel.attrs.id === selected) editor.view.dispatch(closeHistory(editor.state.tr).delete(offset, offset + panel.nodeSize)); offset += panel.nodeSize; });
-      });
-      tools.append(add, remove, paragraphAfter(context)); header.append(tabs, tools); dom.append(header, contentDOM);
+        const panel = editor.state.doc.nodeAt(position)!;
+        if (index < selected) selected--;
+        else if (index === selected) selected = Math.max(0, index - 1);
+        editor.view.dispatch(closeHistory(editor.state.tr).delete(position, position + panel.nodeSize));
+        queueMicrotask(() => tabs.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
+      };
+      tools.append(paragraphAfter(context)); header.append(tabs); dom.append(header, contentDOM, tools);
       let signature = '';
+      let labels: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
         const panels: { id: string; label: string }[] = [];
         context.node.forEach(panel => panels.push({ id: String(panel.attrs.id), label: String(panel.attrs.label) }));
-        if (!panels.some(panel => panel.id === selected)) selected = panels[0].id;
-        const next = JSON.stringify(panels);
+        if (selected >= panels.length) selected = panels.length - 1;
+        const next = JSON.stringify(panels.map(panel => panel.id));
         if (signature !== next) {
-          signature = next; tabs.replaceChildren();
+          signature = next; labels = []; tabs.replaceChildren();
           for (const [index, panel] of panels.entries()) {
-            const button = tool(panel.label, () => select(panel.id));
+            const item = document.createElement('div'); item.className = 'publishing-tab-item';
+            const name = choiceLabel(context, `Tab name (${panel.id})`,
+              () => String(context.node.child(index).attrs.label),
+              value => {
+                const position = panelPosition(index);
+                if (position === undefined) return;
+                const current = editor.state.doc.nodeAt(position)!;
+                editor.view.dispatch(editor.state.tr.setNodeMarkup(position, undefined, { ...current.attrs, label: value }));
+              }, () => select(index));
+            const button = name.button;
             button.dataset.publishingTab = String(index); button.dataset.tabId = panel.id; button.setAttribute('role', 'tab');
             button.id = `${groupId}-tab-${index}`; button.setAttribute('aria-controls', `${groupId}-panel-${index}`);
             button.addEventListener('keydown', event => {
               const next = event.key === 'Home' ? 0 : event.key === 'End' ? panels.length - 1 :
                 event.key === 'ArrowRight' ? (index + 1) % panels.length : event.key === 'ArrowLeft' ? (index + panels.length - 1) % panels.length : null;
-              if (next !== null) { event.preventDefault(); select(panels[next].id); tabs.querySelectorAll<HTMLButtonElement>('button')[next].focus(); }
+              if (next !== null) { event.preventDefault(); select(next); tabs.querySelectorAll<HTMLButtonElement>('[data-publishing-tab]')[next].focus(); }
             });
-            tabs.append(button);
+            const close = iconTool('Remove tab', '\u00d7', () => remove(index));
+            close.dataset.removeTab = panel.id;
+            item.append(button, name.name.wrapper, close); tabs.append(item); labels.push(name);
           }
+          tabs.append(add);
         }
+        labels.forEach(label => label.refresh());
+        tabs.querySelectorAll<HTMLButtonElement>('[data-remove-tab]').forEach(button => { button.disabled = !editor.isEditable; });
+        add.disabled = !editor.isEditable;
         tools.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = !editor.isEditable; });
         queueMicrotask(() => { if (dom.isConnected) select(selected); });
       };
@@ -430,39 +517,48 @@ const SelectorNode = Node.create<Options>({
       const dom = document.createElement('section'); dom.className = 'publishing-selector publishing-editable'; dom.dataset.lekhSelector = ''; dom.dataset.publishingSelector = 'editable'; dom.contentEditable = 'false'; dom.setAttribute('role', 'group');
       const title = field(context, 'Selector prompt', () => String(context.node.attrs.title), value => set({ title: value }), false, true);
       const controls = document.createElement('div'); controls.className = 'publishing-variant-options';
-      const labels = document.createElement('div'); labels.className = 'publishing-choice-fields';
-      const add = tool('Add option', () => {
+      const add = iconTool('Add option', '+', () => {
         const existing = documentVariantOptions(editor);
         if (context.node.attrs.options.length >= 32) { options.reportError('A selector can contain at most 32 options.'); return; }
         let next = 1; while (existing.some(option => option.id === `option-${next}`)) next++;
         set({ options: [...context.node.attrs.options, { id: `option-${next}`, label: `Option ${next}` }] });
       });
-      dom.append(title.wrapper, controls, labels, add, paragraphAfter(context));
-      let idsSignature = ''; let fields: ReturnType<typeof field>[] = [];
+      const content = tool('Add variant content\u2026', () => {
+        const position = context.getPos();
+        if (!editor.isEditable || typeof position !== 'number') {
+          options.reportError('Wait for the current operation to finish before adding variant content.'); return;
+        }
+        options.addVariantContent(position);
+      });
+      content.className = 'publishing-add-variant-content';
+      content.title = 'Choose which options apply, then write their content directly below this selector.';
+      dom.append(title.wrapper, controls, content, paragraphAfter(context));
+      let idsSignature = ''; let fields: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
         dom.setAttribute('aria-label', String(context.node.attrs.title));
         title.refresh();
         const choices = variantOptions(context.node.attrs.options);
         const signature = choices.map(choice => choice.id).join(',');
         if (signature !== idsSignature) {
-          idsSignature = signature; fields = []; labels.replaceChildren();
+          idsSignature = signature; fields = []; controls.replaceChildren();
           for (const choice of choices) {
-            const name = field(context, `Option name (${choice.id})`, () => variantOptions(context.node.attrs.options).find(option => option.id === choice.id)!.label,
-              value => set({ options: variantOptions(context.node.attrs.options).map(option => option.id === choice.id ? { ...option, label: value } : option) }), false, true);
-            const remove = tool('Remove', () => {
+            const activate = () => { const pane = dom.closest<HTMLElement>('.document-pane'); if (pane) choosePublishingVariant(pane, choice.id); };
+            const name = choiceLabel(context, `Option name (${choice.id})`, () => variantOptions(context.node.attrs.options).find(option => option.id === choice.id)!.label,
+              value => set({ options: variantOptions(context.node.attrs.options).map(option => option.id === choice.id ? { ...option, label: value } : option) }), activate);
+            const remove = iconTool('Remove option', '\u00d7', () => {
               let used = false;
               editor.state.doc.descendants(node => { if (node.type.name === 'lekhZone' && node.attrs.variants.includes(choice.id)) used = true; });
               if (used) { options.reportError('Reassign or remove the content for this option before removing it.'); return; }
               if (context.node.attrs.options.length === 1) { options.reportError('Keep at least one selector option.'); return; }
               set({ options: variantOptions(context.node.attrs.options).filter(option => option.id !== choice.id) });
+              controls.querySelector<HTMLButtonElement>('[data-publishing-choice]')?.focus();
             });
-            name.wrapper.append(remove); fields.push(name); labels.append(name.wrapper);
+            const button = name.button;
+            button.dataset.publishingVariant = choice.id; button.dataset.publishingChoice = choice.id; button.dataset.publishingChoiceReady = 'true';
+            const item = document.createElement('div'); item.className = 'publishing-variant-item';
+            item.append(button, name.name.wrapper, remove); fields.push(name); controls.append(item);
           }
-        }
-        controls.replaceChildren();
-        for (const choice of choices) {
-          const button = tool(choice.label, () => { const pane = dom.closest<HTMLElement>('.document-pane'); if (pane) choosePublishingVariant(pane, choice.id); });
-          button.dataset.publishingVariant = choice.id; button.dataset.publishingChoice = choice.id; button.dataset.publishingChoiceReady = 'true'; controls.append(button);
+          controls.append(add);
         }
         fields.forEach(field => field.refresh());
         dom.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = !editor.isEditable; });
@@ -486,7 +582,7 @@ export function updateMetadataValue(yaml: string, key: 'title' | 'description', 
   const pattern = new RegExp(`^${key}:[^\\r\\n]*`, 'm');
   const line = `${key}: ${JSON.stringify(value)}`;
   const current = pattern.exec(yaml)?.[0];
-  if (current && /:\s*[|>]/.test(current)) throw new Error('This metadata field uses a multiline YAML value. Edit it in the metadata YAML field below.');
+  if (current && /:\s*[|>]/.test(current)) throw new Error('This field uses multiline YAML. Expand All metadata (YAML) to edit it without flattening the value.');
   let comment = '';
   let quoted = '';
   for (let index = (current?.indexOf(':') ?? -1) + 1; current && index < current.length; index++) {
@@ -517,6 +613,7 @@ const MetadataNode = Node.create<Options>({
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-metadata-block publishing-editable'; dom.contentEditable = 'false';
       const details = document.createElement('details'); details.className = 'publishing-metadata'; details.dataset.lekhMetadata = '';
+      details.open = true;
       const summary = document.createElement('summary'); summary.textContent = 'Document metadata';
       const fields = (['title', 'description'] as const).map(key => {
         const input = field(context, key === 'title' ? 'Document title' : 'Document description',
@@ -533,7 +630,10 @@ const MetadataNode = Node.create<Options>({
         yaml.input.setCustomValidity(error);
         if (!error) set({ yaml: value });
       }, true);
-      details.append(summary, ...fields.map(field => field.wrapper), yaml.wrapper, paragraphAfter(context));
+      const advanced = document.createElement('details'); advanced.className = 'publishing-advanced';
+      const allFields = document.createElement('summary'); allFields.textContent = 'All metadata (YAML)';
+      advanced.append(allFields, yaml.wrapper);
+      details.append(summary, ...fields.map(field => field.wrapper), advanced, paragraphAfter(context));
       const configured = document.createElement('div');
       const customize = tool('Make these choices editable', () => {
         const position = getPos();
@@ -664,7 +764,10 @@ const ImageDescriptionNode = Node.create<Options>({
         tr.setSelection(TextSelection.near(tr.doc.resolve(position + 1)));
         editor.view.dispatch(closeHistory(tr)); editor.view.focus();
       });
-      form.append(image, ...inputs.map(field => field.wrapper), description, paragraphAfter(context));
+      const settings = document.createElement('details'); settings.className = 'publishing-advanced';
+      const settingsTitle = document.createElement('summary'); settingsTitle.textContent = 'Image source and alternate text';
+      settings.append(settingsTitle, inputs[0].wrapper, inputs[1].wrapper);
+      form.append(image, inputs[2].wrapper, settings, description, paragraphAfter(context));
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-body'; dom.append(form, contentDOM);
       const refresh = () => {
         image.src = imageDisplayURL(String(context.node.attrs.source), options.documentId); image.alt = String(context.node.attrs.alt);

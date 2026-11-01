@@ -16,8 +16,7 @@ import { EditablePublishing, updateMetadataValue } from '../src/editable-publish
 import { editablePublishingBlockAtStart } from '../lib/publishing.js';
 import { publishingTemplateMarkdown } from '../lib/publishing-templates.js';
 import { documentPreviewHTML } from '../lib/markdown.js';
-import { toDocx, toPrintHTML } from '../lib/export.js';
-import { unzipEntries } from './zip.js';
+import { toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
 
 function fixture() {
   let schema: Schema;
@@ -164,22 +163,21 @@ test('reference consumers in edited and sibling publishing containers retain des
   const raw = ':::zone pivot="a"\nProducer text.\n\n[target]: https://example.com/path "Title"\n:::zone-end\n\n:::tabs\n:::tab First\n[Use][target]\n:::tab-end\n:::tab Second\nOther.\n:::tab-end\n:::tabs-end\n\n> [!NOTE]\n> [Sibling][target]';
   const saved = manager.serialize(changeText(parse(raw), 'Producer text.').toJSON());
   assert.ok(saved.includes('[target]: https://example.com/path "Title"'));
-  const html = await toPrintHTML(saved, null);
+  const html = await toOfflineHTML(saved, null);
   assert.ok(html.includes('https://example.com/path'));
-  const word = unzipEntries(await toDocx(saved, async () => { throw new Error('No image expected.'); }));
-  assert.match(word.get('word/_rels/document.xml.rels')!.toString(), /https:\/\/example\.com\/path/);
-  assert.match(word.get('word/document.xml')!.toString(), /Sibling/);
+  assert.match(html, /Sibling/);
+  await assert.rejects(() => toDocx(saved, async () => { throw new Error('No image expected.'); }), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(saved, null), /Word and PDF export.*HTML/);
 });
 
-test('all tabs and variants remain in DOCX/PDF after Visual model editing', async () => {
+test('all tabs and variants remain in interactive HTML after Visual model editing', async () => {
   const { parse, manager } = fixture();
   const raw = `${selector}\n\n${zone}\n\n:::zone pivot="scale-set"\nScale Set content.\n:::zone-end\n\n# [First](#tab/first)\n\nFirst body.\n\n# [Second](#tab/second)\n\nSecond body.\n\n---`;
   const saved = manager.serialize(changeText(parse(raw), 'Second body.').toJSON());
-  const html = await toPrintHTML(saved, null);
+  const html = await toOfflineHTML(saved, null);
   for (const text of ['Availability Zones', 'Scale Set content.', 'First body.', 'Second body. edited']) assert.ok(html.includes(text), text);
-  const word = unzipEntries(await toDocx(saved, async () => { throw new Error('No image expected.'); }));
-  const xml = word.get('word/document.xml')!.toString();
-  for (const text of ['Scale Set content.', 'First body.', 'Second body. edited']) assert.ok(xml.includes(text), text);
+  await assert.rejects(() => toDocx(saved, async () => { throw new Error('No image expected.'); }), /Word and PDF export.*HTML/);
+  await assert.rejects(() => toPrintHTML(saved, null), /Word and PDF export.*HTML/);
 });
 
 test('selector insertion is separate from content and never discards selected text', () => {

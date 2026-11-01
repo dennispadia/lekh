@@ -149,7 +149,7 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       bar.dataset.signature = signature;
       bar.setAttribute('role', 'group');
       bar.setAttribute('aria-label', 'Choose a variant');
-      bar.title = 'Selection changes rendered content only. Source and exports keep every alternative.';
+      bar.title = 'Selection changes rendered content only. Source and interactive HTML export keep every alternative.';
       const heading = document.createElement('strong');
       heading.textContent = 'Choose a variant';
       const controls = document.createElement('div');

@@ -1,18 +1,20 @@
 # Lekh user guide
 
-A local-first Windows desktop application for writing Markdown with a friendly visual editor and exporting to Word and PDF.
+A local-first Windows desktop application for writing Markdown with a friendly visual editor and exporting to interactive HTML, Word and PDF.
 
-This guide describes **[Lekh 0.9.0](https://github.com/dennispadia/lekh/releases/tag/v0.9.0)**, including fully editable Visual publishing blocks, independently placed variant content, separate Alerts/Blocks tools, synchronized scrolling, and offline grammar checking. See the [README](../README.md) for the verified public installer.
+This guide describes **Lekh 0.9.1**, including interactive offline HTML export, fully editable Visual publishing blocks, independently placed variant content, synchronized scrolling, and offline grammar checking. See the [releases page](https://github.com/dennispadia/lekh/releases) for verified installers.
 
 ## Open the application
 
-Download the verified installer using the link in the [README](../README.md#install-on-windows). The Lekh setup EXE embeds its offline MSI engine; choose **Install Lekh**, then open **Lekh** from your desktop or Start menu. It installs for your current Windows user without requesting administrator access. Save and close any installed Lekh first; setup does not force-close the editor. The origin story supports Pause/Resume and Previous/Next, respects Windows' animation preference, and never delays installation.
+Download the verified installer using the link in the [README](../README.md#install-on-windows). Run the Lekh setup EXE, which embeds its offline MSI engine and starts a fresh installation automatically. Open **Lekh** from your desktop or Start menu afterward. It installs for your current Windows user without requesting administrator access. If an older Lekh is running, setup asks you to save and close it; setup does not force-close the editor. The origin story supports Pause/Resume and Previous/Next, respects Windows' animation preference, and never delays installation.
+
+**Installer behavior in 0.9.1:** launching setup directly installs when Lekh is absent, or automatically upgrades a closed older version while showing both versions. Only a running editor prompts you to save and close; **Check again** proceeds directly once it is closed. The same version says **already installed** without offering reinstall, whether the editor is open or closed. Newer installed versions remain protected from downgrade. The old version is still removed before the new payload inside rollback protection; profiles and documents are preserved.
 
 For a source checkout, double-click **Launch.cmd** in the project root. The developer build is **release\win-unpacked\Lekh - Markdown editor.exe**; keep that entire folder together.
 
 Lekh uses a standalone `%APPDATA%\Lekh` profile for preferences, recent files, Chromium storage, and recovery drafts. Application files install to `%LOCALAPPDATA%\lekh`. **An existing Lekh profile is retained during upgrades; saved Markdown files can be opened normally.** It does not import another product's profile, use migration aliases, or uninstall another product. Its independent MSI upgrade code stays stable for future Lekh releases. Close Lekh before upgrading and choose it explicitly for `.md` file associations if desired.
 
-The 0.9.0 release passed a genuine published **0.8.1 -> 0.9.0** upgrade test on a clean Windows runner. Setup identifies the installed version and asks users to save and close; old registration and payload removal are verified before the new payload stage. Cancellation after removal restores the exact old registration and every old payload byte. Upgrade, repair and uninstall preserve seeded profile settings and a recovery sentinel. Other upgrade paths have not been verified. See [build and validation details](BUILDING.md#build-outputs).
+The 0.9.0 release passed a genuine published **0.8.1 -> 0.9.0** upgrade test on a clean Windows runner. Its setup identified the installed version and asked users to save and close; old registration and payload removal were verified before the new payload stage. Cancellation after removal restored the exact old registration and every old payload byte. Upgrade, repair and uninstall preserved seeded profile settings and a recovery sentinel. See [build and validation details](BUILDING.md#build-outputs).
 
 No Microsoft Word, Pandoc, account, or internet connection is required to edit or export documents after setup. Images hosted on websites are deliberately not downloaded.
 
@@ -34,7 +36,7 @@ The app is a local development build and is **not code-signed**. It is not a Mic
 2. Write in **Visual** mode, just as you would in a word processor.
 3. Use the toolbar for headings, bold, italics, strikethrough, lists, checklists, quotes, code, links, images, tables, and horizontal rules.
 4. Choose **Save**, then select a name and location. The result is a normal UTF-8 `.md` file that other editors can open.
-5. Choose **Export → Word document** or **Export → PDF document** to create a separate document.
+5. Choose **Export → Interactive HTML**, **Word document**, or **PDF document** to create a separate document. Documents containing tabbed examples or variants require HTML.
 
 Export uses the **active tab's** current text, including unsaved edits. Exporting does not save or replace the Markdown source.
 
@@ -104,24 +106,28 @@ Supported containers, including tabs and variant bodies around an alert, are edi
 
 #### Tabs and variant selectors
 
-**Blocks** includes **Tabbed examples, Variant selector, Variant content, Structured steps, Image with description, Document metadata, and Local include**.
+**Blocks** includes **Tabbed examples, Variant selector, Structured steps, Image with description, and Document metadata**. Variant content is a follow-on action after creating a selector, not a separate starting option.
 Select existing content before choosing tabs, steps or variant content to retain it inside the new body. A selector inserts only choices, retaining selected prose separately rather than bundling variant bodies.
 
-**Tabbed examples:** select a tab and type/format directly in its body. Edit **Tab name** in that panel to rename it. Every alternative remains editable; **Add tab**, **Remove tab** and normal undo/redo manage examples. **Write after block** places a normal paragraph after the group.
+**Tabbed examples:** select a tab and type/format directly in its body, with no separate tab-name form above the content. Double-click the name on the tab, or focus it and press **F2**, to rename it in place. **Enter** finishes renaming; **Escape** restores the previous name. The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Keep at least one tab or delete the entire group. **Write after block** places a normal paragraph after the group.
 
 **Variant selector and distributed content:**
 
-1. Insert **Blocks > Variant selector** once. Edit **Selector prompt** and the option-name fields directly in Visual. Renaming a label keeps its stable ID and all matching content.
-2. Put the caret at any other position in the document, or select text to wrap.
-3. Choose **Blocks > Variant content**, select one or more existing options, and insert. This command is disabled until an editable selector exists.
+1. Insert **Blocks > Variant selector** once. Type directly in its displayed prompt. Double-click a choice, or focus it and press **F2**, to rename it in place rather than using a duplicate option-name form. **+** adds a choice; **×** removes it once its content has been reassigned. Renaming a label keeps its stable ID and all matching content.
+2. Click **Add variant content…** on the selector and select one or more existing options. Insert their content directly below the selector.
+3. To place content elsewhere, put the caret there or select text to wrap, then choose **Blocks > Add variant content…**: the original selector menu entry changes to this action once a selector exists. The native Insert and right-click menus follow the same workflow.
 4. Write and format directly in the new body. Repeat at other locations; content does not have to sit beside the selector.
 5. Inactive content retains a compact card with **Show and edit**. **Applies to...** changes its option assignments; at least one assignment is required.
 6. **Add option** adds a stable new ID. Removing an option is blocked while any variant content still uses it; reassign or remove that content first.
 
 Tabs switch examples within one block. Variant selectors switch matching content throughout the current document; they are independent of tabs.
+The selector must exist before creating its content, but its position imposes no restriction: variant content may appear before it, after it, or under other headings.
+
+![Choose existing options when inserting variant content at the current position](images/variant-content-light.png)
+
 Selectors stay inside Visual or the rendered Preview. In Visual + Source, they never span or displace the Source column.
 Source always retains every alternative. In Visual, inactive cards make hidden content visible and directly reachable for editing.
-Read-only previews hide inactive content. Static exports include **all** labeled alternatives.
+Read-only previews hide inactive content. Interactive HTML export retains all alternatives and lets the reviewer choose which to display.
 
 ![A selector contained within Visual, with readable Dark tabbed examples](images/publishing-split-dark.png)
 
@@ -135,12 +141,15 @@ Read-only previews hide inactive content. Static exports include **all** labeled
 
 **Structured steps** have a rich editable body. Use ordinary list/paragraph formatting and **Write after block** to continue outside the container.
 **Image with description** has editable source, alternate text and caption fields. A complex image's long description is rich editable content; **Add long description** creates one for an ordinary described image.
-**Document metadata** is collapsed outside article text. Expand it to edit title/description or **Metadata YAML (all fields)** directly in Visual. Arbitrary keys and comments are retained. Multiline YAML values are edited in that same YAML field, not by flattening them into a simple input. Keep at least one `name: value` field or delete the entire block; delimiter lines are managed separately. Lekh does not evaluate YAML tags or claim complete schema validation.
+**Document metadata** shows its title and description as directly editable text outside article content; collapse the block when finished. **All metadata (YAML)** keeps the full YAML editor out of the way until needed. Arbitrary keys and comments are retained. Multiline YAML values are edited in that YAML editor, not flattened into a simple input. Keep at least one `name: value` field or delete the entire block; delimiter lines are managed separately. Lekh does not evaluate YAML tags or claim complete schema validation.
+
+Block titles, include names/paths and image captions are edited directly where displayed. Image source and alternate text remain available under **Image source and alternate text**, while long descriptions, structured steps and variant content use normal rich document editing. These controls keep undo/redo and accessible field names without repeating visible form labels.
+Documents containing tabbed examples, variant selectors, or variant content cannot be exported to DOCX or PDF. Choose **Export → Interactive HTML** instead; the Export menu explains the restriction. It also applies when an authorized local include supplies one of these blocks. Documents with metadata alone still support DOCX and PDF.
 Unsupported or over-depth directives remain source-preserving and visibly identified. **Edit block** opens their raw syntax inline within Visual, without switching the document to Source.
 
 ![Edit metadata fields and arbitrary YAML directly in the Visual document](images/publishing-fields-dark.png)
 
-For local includes:
+For existing local include directives, Lekh retains editing and permission controls even though there is no Local include insertion option:
 
 1. Save the Markdown document inside its project folder.
 2. Choose **More tools > Allow local includes**, or **View > Allow local includes**.
@@ -277,13 +286,21 @@ Supported diagram families are flowchart, sequence, class, state, entity-relatio
 
 **Clipboard images and screenshots:** copy an image or capture a screenshot, then use **Ctrl+V**, **Edit → Paste**, or right-click **Paste**. A clipboard bitmap becomes PNG; choosing embedding in Source produces `![Image](data:image/png;base64,...)`, while choosing assets produces a relative file link. Image-file paste events also support JPEG, GIF, and WebP. Right-click an image and choose **Copy image** to copy its bitmap for use in another document or application. Copy/cut of an individually selected image is also supported. Clipboard bitmaps do not preserve GIF animation. Remote HTML image links are not downloaded.
 
-Embedded pasted images remain inside the saved Markdown file and can be reopened or exported to Word/PDF, with no separate folder to manage. For assets, keep the `assets` folder with the document when copying or sharing it. The 10 MB document limit still applies.
+Embedded pasted images remain inside the saved Markdown file and can be reopened or exported to HTML, Word or PDF, with no separate folder to manage. For assets, keep the `assets` folder with the Markdown document when copying or sharing it. The 10 MB document limit still applies.
 
 Existing relative image paths, such as `assets/photo.png`, are supported when the image is inside the saved Markdown file's folder or one of its subfolders. Access outside that folder, absolute file paths, and remote downloads are blocked. To use an image elsewhere, insert it using the toolbar. Moving a document with relative images requires copying its image folders, too; Save As warns when changing folders.
 
+### Interactive HTML for offline review
+
+Choose **Export → Interactive HTML** to create one `.html` file, then open it in a browser. Images and rendered Mermaid diagrams are embedded; the document does not need an internet connection or a separate assets folder. External links can still lead to websites when clicked.
+
+Click an example tab or use Left/Right, Home and End to navigate its tabs. Variant choices update matching content throughout the document, including content above the selector. Heading links reveal the tab and variant containing their destination, including nested examples. If variant content has no selector, HTML provides one using the variant IDs. When JavaScript is disabled, all labeled alternatives remain visible instead of becoming inaccessible.
+
+The HTML file contains **all** alternatives, including those not currently selected, and any authorized included content. Share it only with people allowed to see the entire document. Metadata remains outside the exported article. Missing, invalid, remote or unauthorized images cause an explicit export error.
+
 ### DOCX and PDF formatting
 
-Export uses the active document's current contents, including unsaved edits, and creates a separate file without saving the Markdown. Both formats use a readable **light print palette regardless of the editor theme**, so Dark mode does not produce dark pages.
+Export uses the active document's current contents, including unsaved edits, and creates a separate file without saving the Markdown. DOCX and PDF are available when the document and its resolved includes do not contain tabbed examples or variants. Both formats use a readable **light print palette regardless of the editor theme**, so Dark mode does not produce dark pages.
 
 - **Heading hierarchy and typography:** Lekh explicitly defines Segoe UI Heading 1–6 sizes, weights, spacing, and colors, rather than relying on a receiving application's default heading styles. Body text, quotes, and code have their own print formatting.
 - **Inline formatting and links:** bold, italic, and strikethrough are preserved. Hyperlinks are colored and underlined. Internal heading links, including generated table-of-contents links, are clickable; Word uses heading bookmarks for their destinations.
@@ -329,7 +346,7 @@ npm.cmd run package
 ```
 
 - `npm test`: unit tests for Markdown helpers, DOCX contents, print HTML, image boundaries, and safe file writes.
-- `npm run test:desktop`: builds and launches the real desktop app with an isolated temporary profile. Exercises visual typing, formatting, actual native right-click menus, source-only insertions, table-of-contents links, checkbox alignment (within 1 px of the first text line, including wrapped/nested tasks), per-tab state and undo, duplicate-file handling, Save All, closing tabs/app with unsaved work, native file handlers, exact source preservation, find/replace, external-change protection, DOCX/PDF generation, themes, and multi-tab draft recovery. Native dialog selections and clipboard contents are supplied through a test-only debugger connection; production code has no dialog bypass, and tests do not alter your real clipboard.
+- `npm run test:desktop`: builds and launches the real desktop app with an isolated temporary profile. Exercises visual typing, formatting, actual native right-click menus, source-only insertions, table-of-contents links, checkbox alignment (within 1 px of the first text line, including wrapped/nested tasks), per-tab state and undo, duplicate-file handling, Save All, closing tabs/app with unsaved work, native file handlers, exact source preservation, find/replace, external-change protection, interactive HTML export and its offline fallbacks, DOCX/PDF generation and restrictions, themes, and multi-tab draft recovery. Native dialog selections and clipboard contents are supplied through a test-only debugger connection; production code has no dialog bypass, and tests do not alter your real clipboard.
 - `npm run package`: creates `release\win-unpacked`.
 - `npm run generate:icon`: regenerates the multi-resolution Windows icon and window PNG from the original Enchanted Quill artwork in `assets/icon.svg`: an ivory feather and gold writing stroke on emerald, without a crescent. Builds run this automatically. The application remains unsigned; icon and version resources are embedded without code signing.
 - To test the packaged executable: `node scripts\smoke.mjs "release\win-unpacked\Lekh - Markdown editor.exe"`.

@@ -30,7 +30,7 @@ test('hosted setup fails immediately with native terminal-state details and stil
       $status = [pscustomobject]@{ State = $state; Heading = 'Working'; Description = ''; Details = '' }
       if (Test-HostedSetupProgress $status) { throw ('Nonterminal state falsely passed: ' + $state) }
     }
-    foreach ($state in @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade')) {
+    foreach ($state in @('error', 'cancelled', 'restart', 'open', 'detection-error', 'downgrade', 'installed')) {
       $status = [pscustomobject]@{ State = $state; Heading = 'Failure heading'; Description = 'Exact failure description'; Details = 'Windows Installer code 1603; native failure.' }
       $failure = ''
       try { [void](Test-HostedSetupProgress $status) } catch { $failure = $_.Exception.Message }
@@ -77,7 +77,7 @@ test('fresh setup diagnostics use the existing hosted artifact and never collect
   assert.ok(script.includes("if ($attempted -and $setupExited)"));
 });
 
-test('native upgrade detection, truthful removal/install stages, same-version maintenance, cancellation and previews', {
+test('native automatic startup, running-app retry, same-version rejection, truthful upgrade stages and cancellation', {
   skip: process.platform !== 'win32',
 }, async () => {
   const directory = join(root, 'build', 'tests', `native-installer-${randomUUID()}`);
@@ -115,7 +115,16 @@ test('native upgrade detection, truthful removal/install stages, same-version ma
     execFileSync(compiler, ['/nologo', '/target:exe', '/platform:x64', '/warnaserror+',
       '/main:Lekh.Setup.TestRunner', `/out:${executable}`, ...references, ...resources, ...sources, info, runner],
     { encoding: 'utf8', timeout: 30_000 });
-    const output = execFileSync(executable, [], { encoding: 'utf8', timeout: 30_000 });
+    let output: string;
+    try {
+      output = execFileSync(executable, [], { encoding: 'utf8', timeout: 30_000 });
+    } catch (error) {
+      if (error instanceof Error && 'stdout' in error) {
+        if (typeof error.stdout === 'string') console.error(error.stdout);
+        else if (Buffer.isBuffer(error.stdout)) console.error(error.stdout.toString('utf8'));
+      }
+      throw error;
+    }
     assert.match(output, /PASS: \d+ native setup assertions\./);
     console.log(output.trim());
     // Compile the shipping entry point too, but never run a real installer or product.
@@ -137,10 +146,19 @@ test('native setup never terminates the editor, restarts it, or performs a separ
   for (const property of ['REBOOT=ReallySuppress', 'MSIRESTARTMANAGERCONTROL=DisableShutdown', 'MSIDISABLERMRESTART=1']) {
     assert.ok(engine.includes(property));
   }
-  assert.ok(setup.indexOf('else RefreshReady();') < setup.indexOf('private async void Primary()'),
+  assert.ok(setup.indexOf('else RefreshReady();') < setup.indexOf('private void Primary()'),
     'registration detection runs before the initial ready page, not only after Install');
   assert.ok(setup.includes('!InstalledProduct.Same(previousProduct, ProductDiscovery.Detect())'),
     'registration is rechecked immediately before extraction/installation');
   const launch = setup.indexOf('Process.Start(new ProcessStartInfo(SetupPolicy.AppPath)');
   assert.ok(setup.lastIndexOf('if (state == "success")', launch) >= 0, 'app launch remains an explicit success-page action only');
+});
+
+test('running-editor detection compares executable paths without filtering Windows sessions', async () => {
+  const engine = await readFile(join(root, 'installer', 'Engine.cs'), 'utf8');
+  const detection = engine.slice(engine.indexOf('internal static bool AppIsOpen('), engine.indexOf('public static void ValidateProperties'));
+  assert.match(detection, /IsInstalledApp\(executablePath\(process\)\)/);
+  assert.match(detection, /process\.MainModule\.FileName/);
+  assert.match(detection, /if \(!process\.HasExited\) throw/);
+  assert.doesNotMatch(detection, /SessionId|catch\s*\(Exception/);
 });
