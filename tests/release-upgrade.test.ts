@@ -59,6 +59,8 @@ test('the only old installer is the immutable public 0.9.0 asset, verified befor
   assert.doesNotMatch(ready, /Stop-Process|\.Kill\(|MsiConfigureProduct/);
   assert.ok(ready.includes("Wait-UpgradeSetup $setup 'open'"));
   assert.ok(ready.includes("$status.Primary.Current.Name -cne 'Check again'"));
+  assert.ok(ready.includes("if (-not $states.Contains('upgrade') -and -not $states.Contains('preparing'))"),
+    'a passing upgrade must actually expose the version-bearing state');
   inOrder(ready, 'Assert-PayloadPreserved $before', '$editor.CloseMainWindow()', '$editor.WaitForExit(30000)',
     'Assert-AppNotRunning', '$status.Primary.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()');
   assert.ok(ready.includes('owned-editor-profile'));
@@ -288,8 +290,8 @@ test('queued Check again tolerates only the initial open state before upgrade pr
       if ($script:states.Count -eq 0) { return $null }
       $state = $script:states.Dequeue()
       return [pscustomobject]@{
-        State = $state; Heading = 'Upgrading Lekh 0.9.0 to 0.9.1.'
-        Description = 'fixture'; Primary = $null
+        State = $state; Heading = $script:heading
+        Description = 'fixture'; Primary = $null; PrimaryVisible = $script:primaryVisible
       }
     }
     function Invoke-Sequence([string[]]$Sequence, [bool]$AllowPendingOpen) {
@@ -298,6 +300,8 @@ test('queued Check again tolerates only the initial open state before upgrade pr
       $stages = [Collections.Generic.List[string]]::new()
       return Wait-UpgradeSetup $null 'success' $stages 1 -AllowPendingOpen:$AllowPendingOpen
     }
+    $script:heading = 'Upgrading Lekh 0.9.0 to 0.9.1.'
+    $script:primaryVisible = $false
     $result = Invoke-Sequence @('open', 'open', 'preparing', 'success') $true
     if ($result.State -cne 'success') { throw 'Queued retry did not complete.' }
     foreach ($case in @(
@@ -309,6 +313,18 @@ test('queued Check again tolerates only the initial open state before upgrade pr
       try { [void](Invoke-Sequence $case.States $case.Allow) } catch { $failure = $_.Exception.Message }
       if (-not $failure.Contains($case.Error)) { throw ("Expected $($case.Error), got: $failure") }
     }
+    $script:heading = 'Upgrading Lekh 0.9.0.0 to 0.9.1.'
+    $failure = ''
+    try { [void](Invoke-Sequence @('preparing') $false) } catch { $failure = $_.Exception.Message }
+    if (-not $failure.Contains("expected heading 'Upgrading Lekh 0.9.0 to 0.9.1.'") -or
+        -not $failure.Contains("actual heading 'Upgrading Lekh 0.9.0.0 to 0.9.1.'")) {
+      throw ("Version mismatch must report both headings: $failure")
+    }
+    $script:heading = 'Upgrading Lekh 0.9.0 to 0.9.1.'
+    $script:primaryVisible = $true
+    $failure = ''
+    try { [void](Invoke-Sequence @('upgrade') $false) } catch { $failure = $_.Exception.Message }
+    if (-not $failure.Contains('primary visible: True')) { throw ("Visible install action must be reported: $failure") }
     Write-Output 'PASS: queued, unexpected, regressed, and failed setup states.'
   `;
   const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',

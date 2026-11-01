@@ -122,7 +122,7 @@ test('native automatic startup, running-app retry, same-version rejection, truth
     { encoding: 'utf8', timeout: 30_000 });
     let output: string;
     try {
-      output = execFileSync(executable, [], { encoding: 'utf8', timeout: 30_000 });
+      output = execFileSync(executable, [], { encoding: 'utf8', timeout: 90_000 });
     } catch (error) {
       if (error instanceof Error && 'stdout' in error) {
         if (typeof error.stdout === 'string') console.error(error.stdout);
@@ -142,7 +142,27 @@ test('native automatic startup, running-app retry, same-version rejection, truth
     await writeFile(previewRunner, `namespace Lekh.Setup {
       internal static class PreviewRunner {
         [System.STAThread] public static int Main(string[] args) {
-          if (args.Length != 1 || !args[0].StartsWith("--preview=")) return 1;
+          if (args.Length != 1) return 1;
+          if (args[0] == "--simulated-upgrade") {
+            var simulatedApp = new System.Windows.Application();
+            SetupWindow simulatedSetup = null;
+            var render = typeof(SetupWindow).GetMethod("Render",
+              System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var timer = new System.Windows.Threading.DispatcherTimer {
+              Interval = System.TimeSpan.FromSeconds(5)
+            };
+            timer.Tick += (sender, eventArgs) => {
+              timer.Stop();
+              render.Invoke(simulatedSetup, new object[] { "success", null });
+            };
+            simulatedSetup = new SetupWindow(null,
+              () => new InstalledProduct("{11111111-1111-1111-1111-111111111111}", "0.9.0.0"),
+              () => false,
+              () => { render.Invoke(simulatedSetup, new object[] { "preparing", null }); timer.Start(); });
+            simulatedApp.Run(simulatedSetup.Window);
+            return simulatedSetup.ExitCode;
+          }
+          if (!args[0].StartsWith("--preview=")) return 1;
           string state = args[0].Substring("--preview=".Length);
           if (System.Array.IndexOf(SetupWindow.PreviewStates, state) < 0) return 1;
           var app = new System.Windows.Application();
@@ -176,15 +196,56 @@ test('native automatic startup, running-app retry, same-version rejection, truth
       foreach ($state in @('ready', 'upgrade', 'installed', 'open', 'removing', 'rollback')) {
         Test-SetupPreview $state $false
       }
+      $ast = [Management.Automation.Language.Parser]::ParseFile($request.upgradeScript, [ref]$tokens, [ref]$errors)
+      if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+      foreach ($name in @('Read-UpgradeSetup', 'Wait-UpgradeSetup')) {
+        $function = $ast.Find({ param($node)
+          $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+        }, $true)
+        if ($null -eq $function) { throw ('Missing upgrade UI helper ' + $name) }
+        . ([scriptblock]::Create($function.Extent.Text))
+      }
+      $old = [pscustomobject]@{ Version = '0.9.0' }
+      $new = [pscustomobject]@{ Version = $request.version }
+      $stages = [Collections.Generic.List[string]]::new()
+      $simulated = Start-Process -FilePath $SetupPath -ArgumentList '--simulated-upgrade' -PassThru
+      $window = $null
+      try {
+        $status = Wait-UpgradeSetup $simulated 'success' $stages 20
+        $window = $status.Window
+        if (-not $stages.Contains('preparing')) {
+          throw ("Simulated four-part MSI upgrade did not expose preparation: $($stages -join ', ')")
+        }
+        $window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close()
+        if (-not $simulated.WaitForExit(5000)) { throw 'Simulated upgrade window did not close.' }
+        Write-Output 'PASS: four-part MSI version appears in the real accessible upgrade UI without an install action.'
+      } finally {
+        if (-not $simulated.HasExited) {
+          if ($null -ne $window) {
+            try { $window.GetCurrentPattern([Windows.Automation.WindowPattern]::Pattern).Close() }
+            catch { Write-Warning "Could not close the simulated upgrade: $_" }
+          }
+          if (-not $simulated.WaitForExit(5000)) {
+            Stop-Process -Id $simulated.Id -Force -ErrorAction SilentlyContinue
+            [void]$simulated.WaitForExit(5000)
+          }
+        }
+        $simulated.Dispose()
+      }
     `;
     const previewOutput = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
       Buffer.from(previewCommand, 'utf16le').toString('base64')], {
-      encoding: 'utf8', timeout: 60_000,
-      input: JSON.stringify({ script: join(root, 'scripts', 'Test-Setup.ps1'), executable: previewExecutable, version: manifest.version }),
+      encoding: 'utf8', timeout: 90_000,
+      input: JSON.stringify({
+        script: join(root, 'scripts', 'Test-Setup.ps1'),
+        upgradeScript: join(root, 'scripts', 'Test-Upgrade.ps1'),
+        executable: previewExecutable, version: manifest.version,
+      }),
     });
     for (const state of ['ready', 'upgrade', 'installed', 'open', 'removing', 'rollback']) {
       assert.match(previewOutput, new RegExp(`PASS: native accessible preview ${state}\\.`));
     }
+    assert.match(previewOutput, /PASS: four-part MSI version appears in the real accessible upgrade UI without an install action/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

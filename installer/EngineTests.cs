@@ -504,8 +504,14 @@ namespace Lekh.Setup
             Check(ProductDiscovery.Read(new string[0], property) == null, "No registration means fresh installation.");
             InstalledProduct old = ProductDiscovery.Read(new[] { oldCode }, property);
             Check(old.ProductCode == oldCode && old.Version == "0.8.1" && old.Mode == "upgrade", "Registered published old version is detected exactly.");
+            InstalledProduct registered = ProductDiscovery.Read(new[] { oldCode }, (code, context, field) =>
+                context != 2 ? null : field == "VersionString" ? "0.9.0.0" : BuildInfo.ProductName);
+            Check(registered.Version == "0.9.0", "Four-part MSI versions use the published three-part version in setup.");
+            Check(InstalledProduct.Same(registered, new InstalledProduct(oldCode, "0.9.0")),
+                "Equivalent three- and four-part registrations have the same identity.");
             Check(new InstalledProduct(oldCode, BuildInfo.Version + ".0").Mode == "repair", "Same MSI version is maintenance, not downgrade.");
             Check(new InstalledProduct(oldCode, "99.0.0").Mode == "downgrade", "Newer registration blocks downgrade.");
+            Reject(() => new InstalledProduct(oldCode, "0.9.0.1"), "A nonzero fourth version component is not silently discarded.");
             Reject(() => ProductDiscovery.Read(new[] { oldCode, "{22222222-2222-2222-2222-222222222222}" }, property), "Multiple installations are not silently swept.");
             Reject(() => ProductDiscovery.Read(new[] { oldCode }, (code, context, field) => "Other editor"), "Managed/machine scope is not silently changed.");
             Reject(() => ProductDiscovery.Read(new[] { oldCode }, (code, context, field) => context == 2 ? "Other editor" : null), "Wrong named related product rejected.");
@@ -520,7 +526,7 @@ namespace Lekh.Setup
         }
         private static void StartupFlow()
         {
-            InstalledProduct old = new InstalledProduct("{11111111-1111-1111-1111-111111111111}", "0.8.1");
+            InstalledProduct old = new InstalledProduct("{11111111-1111-1111-1111-111111111111}", "0.8.1.0");
             InstalledProduct same = new InstalledProduct(old.ProductCode, BuildInfo.Version + ".0");
             InstalledProduct newer = new InstalledProduct(old.ProductCode, "99.0.0");
             foreach (InstalledProduct blocked in new[] { same, newer })
@@ -560,9 +566,28 @@ namespace Lekh.Setup
                             running ? "open" : product == null ? "ready" : "upgrade";
                         Check(System.Windows.Automation.AutomationProperties.GetItemStatus(window.Window) == expected,
                             "The real startup window chooses the expected version/process state.");
+                        if (expected == "upgrade")
+                        {
+                            string heading = ((TextBlock)window.Window.FindName("Heading")).Text;
+                            Check(heading == "Upgrading Lekh 0.8.1 to " + BuildInfo.Version + "." &&
+                                button.Visibility == System.Windows.Visibility.Collapsed,
+                                "An idle upgrade shows published version numbers without an extra install action.");
+                            System.Reflection.MethodInfo render = typeof(SetupWindow).GetMethod("Render",
+                                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                            render.Invoke(window, new object[] { "preparing", null });
+                            Check(((TextBlock)window.Window.FindName("Heading")).Text == heading &&
+                                button.Visibility == System.Windows.Visibility.Collapsed,
+                                "Preparation retains both published version numbers without an install action.");
+                            render.Invoke(window, new object[] { "removing", null });
+                            Check(((TextBlock)window.Window.FindName("Description")).Text.Contains("uninstalling Lekh 0.8.1."),
+                                "The removal stage shows the published old version number.");
+                        }
                         if (eligible && running)
                         {
                             Check(button.Content.ToString() == "Check again", "Open application offers one explicit recheck.");
+                            if (product == old)
+                                Check(((TextBlock)window.Window.FindName("Description")).Text.Contains("Lekh 0.8.1 is installed and open."),
+                                    "The open-app prompt shows the published old version number.");
                             button.RaiseEvent(new System.Windows.RoutedEventArgs(Button.ClickEvent));
                             Check(starts == 0, "Recheck while still open cannot start setup.");
                             isOpen = false;

@@ -515,16 +515,21 @@ function Read-UpgradeSetup($Process) {
     try {
         $window = [Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
         if ($window.Current.ProcessId -ne $Process.Id) { return $null }
+        $state = $window.Current.ItemStatus
         $controls = @{}
         foreach ($id in @('Heading', 'Description', 'Primary')) {
             $condition = [Windows.Automation.PropertyCondition]::new([Windows.Automation.AutomationElement]::AutomationIdProperty, $id)
             $controls[$id] = $window.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
         }
         if ($null -eq $controls.Heading -or $null -eq $controls.Description) { return $null }
+        $heading = $controls.Heading.Current.Name
+        $description = $controls.Description.Current.Name
+        $primaryVisible = $null -ne $controls.Primary -and -not $controls.Primary.Current.IsOffscreen
+        if ($window.Current.ItemStatus -cne $state) { return $null }
         return [pscustomobject]@{
-            Window = $window; State = $window.Current.ItemStatus
-            Heading = $controls.Heading.Current.Name; Description = $controls.Description.Current.Name
-            Primary = $controls.Primary
+            Window = $window; State = $state
+            Heading = $heading; Description = $description
+            Primary = $controls.Primary; PrimaryVisible = $primaryVisible
         }
     } catch [Windows.Automation.ElementNotAvailableException] { return $null }
     catch [Runtime.InteropServices.COMException] { return $null }
@@ -537,9 +542,9 @@ function Wait-UpgradeSetup($Process, [string]$Expected, $Stages, [int]$Seconds =
         if ($null -ne $status) {
             if ($Stages.Count -eq 0 -or $Stages[$Stages.Count - 1] -cne $status.State) { $Stages.Add($status.State) }
             if ($Expected -ceq 'success' -and $status.State -cin @('upgrade', 'preparing')) {
-                if ($status.Heading -cne "Upgrading Lekh $($old.Version) to $($new.Version)." -or
-                    ($null -ne $status.Primary -and -not $status.Primary.Current.IsOffscreen)) {
-                    throw 'Idle upgrade must identify both versions without an extra install action.'
+                $expectedHeading = "Upgrading Lekh $($old.Version) to $($new.Version)."
+                if ($status.Heading -cne $expectedHeading -or $status.PrimaryVisible) {
+                    throw "Idle upgrade mismatch in state '$($status.State)': expected heading '$expectedHeading'; actual heading '$($status.Heading)'; primary visible: $($status.PrimaryVisible)."
                 }
             }
             if ($status.State -ceq $Expected) { return $status }
@@ -602,7 +607,7 @@ function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
             $status = Wait-UpgradeSetup $setup 'installed' $states 30
             $window = $status.Window
             if ($status.Heading -notlike "*$($manifest.version)*already installed*" -or
-                ($null -ne $status.Primary -and -not $status.Primary.Current.IsOffscreen)) {
+                $status.PrimaryVisible) {
                 throw 'Same-version setup must report already installed without offering reinstall.'
             }
             Assert-Installed $new
@@ -629,6 +634,9 @@ function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
             $status = Wait-UpgradeSetup $setup 'success' $states -AllowPendingOpen:$OpenEditor.IsPresent
             $window = $status.Window
             if ($status.Heading.Replace([char]0x2019, [char]0x27) -cne "You're ready to write.") { throw 'Unexpected success heading.' }
+            if (-not $states.Contains('upgrade') -and -not $states.Contains('preparing')) {
+                throw "Real upgrade never exposed its version heading to UI Automation: $($states -join ', ')."
+            }
             if (-not $states.Contains('removing') -or -not $states.Contains('installing') -or
                 $states.IndexOf('removing') -ge $states.IndexOf('installing')) {
                 throw "Real upgrade did not show removal before installation: $($states -join ', ')."

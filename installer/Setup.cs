@@ -250,7 +250,6 @@ namespace Lekh.Setup
         private void Render(string next, int? percent)
         {
             state = next;
-            AutomationProperties.SetItemStatus(Window, next);
             string title, body, label = "SETTING UP", action = null, secondaryAction = "Cancel", note = null;
             switch (next)
             {
@@ -354,6 +353,7 @@ namespace Lekh.Setup
                 detailText.Text = "Design preview: no installation, app closure, or restart is performed.\nExample: Windows Installer code 1618.";
                 Find<Button>("OpenLog").IsEnabled = false;
             }
+            AutomationProperties.SetItemStatus(Window, next);
         }
         private void MotionChanged(object sender, PropertyChangedEventArgs args)
         {

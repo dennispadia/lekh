@@ -11,7 +11,11 @@ namespace Lekh.Setup
     internal sealed class InstalledProduct
     {
         public readonly string ProductCode, Version;
-        public InstalledProduct(string code, string version) { ProductCode = code; Version = version; }
+        public InstalledProduct(string code, string version)
+        {
+            ProductCode = code;
+            Version = ProductDiscovery.ParseVersion(version).ToString(3);
+        }
         public string Mode
         {
             get
@@ -51,7 +55,6 @@ namespace Lekh.Setup
                 if (name != BuildInfo.ProductName || property(code, 2, "InstalledProductName") != BuildInfo.ProductName)
                     throw new InvalidDataException("A related MSI registration is not the expected installed Lekh product. Setup will not modify it.");
                 string version = property(code, 2, "VersionString");
-                ParseVersion(version);
                 if (found != null) throw new InvalidDataException("Multiple related Lekh installations are registered. Manage them in Windows Settings before continuing.");
                 found = new InstalledProduct(code, version);
             }
