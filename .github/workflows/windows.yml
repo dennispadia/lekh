@@ -76,9 +76,9 @@ jobs:
           cache: npm
       - name: Restore locked dependencies
         run: npm ci --registry=https://registry.npmjs.org
-      - name: Verify file-symlink include and image boundaries without skipping
+      - name: Verify file-symlink image boundaries without skipping
         shell: bash
         run: |
           set -o pipefail
-          ./node_modules/.bin/tsx --test --test-name-pattern='^file symlinks cannot expose non-Markdown or HTML image files$' tests/includes.test.ts | tee "$RUNNER_TEMP/lekh-symlink-results.tap"
+          ./node_modules/.bin/tsx --test --test-name-pattern='^file symlinks cannot expose non-Markdown or HTML image files$' tests/images.test.ts | tee "$RUNNER_TEMP/lekh-symlink-results.tap"
           grep -Eq '^ok [0-9]+ - file symlinks cannot expose non-Markdown or HTML image files$' "$RUNNER_TEMP/lekh-symlink-results.tap"

@@ -84,7 +84,7 @@ test('distribution uses the public npm registry and ships notices without develo
   assert.match(workflow, /defaults:\s+run:\s+shell: powershell/);
   assert.match(workflow, /name: lekh-windows-x64/);
   assert.match(workflow, /validate-file-symlinks:\s+runs-on: ubuntu-latest/);
-  assert.ok(workflow.includes("--test-name-pattern='^file symlinks cannot expose non-Markdown or HTML image files$'"));
+  assert.ok(workflow.includes("--test-name-pattern='^file symlinks cannot expose non-Markdown or HTML image files$' tests/images.test.ts"));
   assert.ok(workflow.includes("grep -Eq '^ok [0-9]+ - file symlinks cannot expose non-Markdown or HTML image files$'"));
   const publisher = await readFile(new URL('../.github/workflows/publish-release.yml', import.meta.url), 'utf8');
   assert.ok(publisher.includes("a.name === 'lekh-windows-x64'"));

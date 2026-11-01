@@ -151,3 +151,21 @@ test('existing image reads keep embedded and bounded relative paths, including s
     assert.throws(() => imageMime('image.svg'), /Supported image formats/);
   });
 });
+
+test('file symlinks cannot expose non-Markdown or HTML image files', async t => {
+  await fixture(async (_root, document) => {
+    const directory = path.dirname(document);
+    const html = path.join(directory, 'private.html');
+    await writeFile(html, '<html>private</html>');
+    try {
+      await symlink(html, path.join(directory, 'fake.png'), 'file');
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        t.skip('The filesystem does not permit file symlinks.');
+        return;
+      }
+      throw error;
+    }
+    await assert.rejects(readImage('fake.png', document), /Supported image formats/);
+  });
+});

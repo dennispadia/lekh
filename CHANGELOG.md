@@ -9,6 +9,13 @@
 - Show only the heading text, not linked URLs, in generated tables of contents.
 - Combine Insert and Refresh table of contents into one action that inserts a table of contents or refreshes the existing one.
 - Tighten Word export typography to match the Visual editor: 12 pt body text, 1.75 line spacing, and spacing only after paragraphs.
+- Group the toolbar into labeled sections with **Blocks** and **Alerts** menus; whole groups move into **More** in narrow windows.
+- Add a command palette (**Ctrl+Shift+P** or header search), a Visual slash menu with icons and descriptions, and a floating block toolbar (move, duplicate, remove).
+- Add block commands to **Edit > Block**, right-click **Block** and **Alt+Shift+Up/Down**.
+- Let the outline collapse/expand and move top-level sections by drag or **Alt+Up/Down** without splitting zones, tabs or lists.
+- Show format previews in the export panel and recommend HTML for tabs/variants.
+- Make the status bar word count (document statistics) and save state clickable.
+- Soften menu shadows and add subtle transitions that respect reduced-motion settings.
 - Guard the genuine 0.9.1 -> 0.9.2 hosted upgrade matrix.
 
 ## 0.9.1

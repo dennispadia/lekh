@@ -69,6 +69,7 @@ export class WritingAssistance {
   open(open = this.panel.hidden): void {
     this.panel.hidden = !open;
     document.querySelector('#writing-toggle')!.setAttribute('aria-expanded', String(open));
+    for (const control of document.querySelectorAll('.grammar-control')) control.setAttribute('aria-pressed', String(open));
     if (open) this.enabled.focus();
     else {
       const context = this.options.context();
@@ -110,6 +111,9 @@ export class WritingAssistance {
     this.snapshot = undefined;
     this.issues = [];
     this.list.replaceChildren();
+    const toggle = document.querySelector<HTMLElement>('#writing-toggle')!;
+    toggle.textContent = 'Writing assistance';
+    toggle.title = 'Offline English grammar checking';
     if (!this.enabled.checked) { this.status.textContent = 'Off. Enable offline English grammar checking above.'; return; }
     if (context.markdown.length > maxGrammarCharacters) {
       this.status.textContent = `Not checked: writing assistance supports documents up to ${maxGrammarCharacters.toLocaleString()} characters.`;
@@ -200,6 +204,9 @@ export class WritingAssistance {
     const visible = this.visibleIssues();
     this.list.replaceChildren();
     this.status.textContent = `${visible.length}${this.limited ? '+' : ''} suggestion${visible.length === 1 ? '' : 's'} · English · Offline${this.limited ? ' · Showing the first results; correct these and check again.' : ''}`;
+    const toggle = document.querySelector<HTMLElement>('#writing-toggle')!;
+    toggle.textContent = visible.length ? `Writing assistance · ${visible.length}${this.limited ? '+' : ''}` : 'Writing assistance';
+    toggle.title = visible.length ? `${visible.length} writing suggestion${visible.length === 1 ? '' : 's'}: open writing assistance` : 'Offline English grammar checking';
     for (const [index, issue] of this.issues.entries()) {
       if (!visible.includes(issue)) continue;
       const row = document.createElement('li');

@@ -188,6 +188,16 @@ function insertItems(): MenuItemConstructorOptions[] {
   ];
 }
 
+function blockItems(contextual = true): MenuItemConstructorOptions[] {
+  const visual = !contextual || editorContext.mode === 'visual';
+  return [
+    { label: 'Move block up', accelerator: 'Alt+Shift+Up', registerAccelerator: false, enabled: visual, click: () => action('block:up') },
+    { label: 'Move block down', accelerator: 'Alt+Shift+Down', registerAccelerator: false, enabled: visual, click: () => action('block:down') },
+    { label: 'Duplicate block', enabled: visual, click: () => action('block:duplicate') },
+    { label: 'Remove block', enabled: visual, click: () => action('block:remove') },
+  ];
+}
+
 async function validateRaster(data: Buffer, mime: string): Promise<void> {
   if (!nativeImage.createFromBuffer(data).isEmpty()) return;
   // NativeImage only decodes PNG/JPEG; Chromium also validates GIF/WebP in an isolated sandbox.
@@ -618,7 +628,10 @@ function createWindow(): void {
         ] },
         { label: 'Paragraph', submenu: paragraphItems() },
         { label: 'Insert', submenu: insertItems() },
+        { label: 'Block', submenu: blockItems() },
         { label: 'View and tools', submenu: [
+          { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', registerAccelerator: false, click: () => action('command-palette') },
+          { type: 'separator' },
           { label: 'Visual + Source', click: () => action('side-by-side') },
           { label: 'Visual only', click: () => action('visual') },
           { label: 'Source only', click: () => action('source') },
@@ -689,8 +702,11 @@ function createWindow(): void {
         click: send(`format:${item.command}`),
       })) },
       { type: 'separator' }, { label: 'Paragraph', submenu: paragraphItems() }, { label: 'Insert', submenu: insertItems() },
+      { label: 'Block', submenu: blockItems(false) },
     ] },
     { label: '&View', submenu: [
+      { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', click: send('command-palette') },
+      { type: 'separator' },
       { label: 'Visual + Source', click: send('side-by-side') },
       { label: 'Visual / source', accelerator: 'CmdOrCtrl+/', click: send('mode') },
       { label: 'Source + Preview', click: send('preview') },

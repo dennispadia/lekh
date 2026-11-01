@@ -6,13 +6,18 @@ import { TableKit } from '@tiptap/extension-table';
 import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Markdown } from '@tiptap/markdown';
-import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, requiresInteractiveExport, wordCount } from '../lib/markdown.js';
+import { documentPreviewHTML, escapeHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, requiresInteractiveExport, topLevelBlocks, wordCount } from '../lib/markdown.js';
 import { replaceSearchMatches, type SearchMatch, type SearchResult } from '../lib/search.js';
 import { hasMarkedTableOfContents, tableOfContents, updateTableOfContents } from '../lib/contents.js';
 import type { Result } from './bridge.js';
 import { isTheme, restoreTheme, themes, type Theme } from '../lib/themes.js';
 import { createPair, DEFAULT_SIDEBAR_WIDTH, groupTabs, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, pairFor, sidebarWidth, splitRatio, type SplitPair } from '../lib/workspace.js';
 import { formattingShortcuts } from '../lib/shortcuts.js';
+import { canMoveSection, relocateSection, sectionEndIndex, siblingTarget } from '../lib/outline.js';
+import { commandEntries, slashEntries, type CommandEntry } from '../lib/commands.js';
+import { CommandPalette, SlashMenu } from './command-palette.js';
+import { Fragment } from '@tiptap/pm/model';
+import { NodeSelection, Selection } from '@tiptap/pm/state';
 import { productName } from '../lib/branding.js';
 import { MAX_TABLE_COLUMNS, MAX_TABLE_ROWS, tableMarkdown, validateTableSize } from '../lib/tables.js';
 import { syntaxCSS } from '../lib/highlight.js';
@@ -33,6 +38,8 @@ import { synchronizeDocumentScroll } from './synchronized-scroll.js';
 import './style.css';
 
 let writingAssistance: WritingAssistance | undefined;
+let slashMenu: SlashMenu | undefined;
+let slashDismissed = '';
 const syntaxStyle = document.createElement('style');
 syntaxStyle.textContent = [
   syntaxCSS('.tiptap'),
@@ -83,11 +90,35 @@ const icons = {
   refresh: '<path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/>',
   diagram: '<rect x="8" y="2" width="8" height="5" rx="1"/><rect x="2" y="17" width="7" height="5" rx="1"/><rect x="15" y="17" width="7" height="5" rx="1"/><path d="M12 7v5H5v5m7-5h7v5"/>',
   blocks: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="8" height="7" rx="2"/><rect x="15" y="14" width="6" height="7" rx="2"/>',
+  check: '<path d="m4 12 5 5L20 6"/>',
+  command: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 10 3 2-3 2M12 15h5"/>',
+  html: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 13l-2 2 2 2m6-4 2 2-2 2"/>',
+  word: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 11l1.5 6 1.5-4 1.5 4 1.5-6"/>',
+  pdf: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 17v-5h2a1.5 1.5 0 0 1 0 3H9"/>',
+  grip: '<circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
 };
 type Icon = keyof typeof icons;
 const icon = (name: Icon) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
 const button = (action: string, label: string, name?: Icon, className = '') => `<button type="button" data-action="${action}" class="${className}" title="${label}">${name ? icon(name) : ''}<span>${label}</span></button>`;
 const formatButton = (command: Icon, label: string) => `<button type="button" data-command="${command}" title="${label}" aria-label="${label}">${icon(command)}<span>${label}</span></button>`;
+const group = (id: string, caption: string, controls: string, className = '') => `<div class="toolbar-group ${className}" data-group="${id}" role="group" aria-label="${caption}"><div class="group-controls">${controls}</div><span class="group-caption" aria-hidden="true">${caption}</span></div>`;
+const menuItem = (attributes: string, iconHTML: string, label: string, description: string) =>
+  `<button type="button" ${attributes} title="${escapeHTML(description)}" aria-description="${escapeHTML(description)}">${iconHTML}<span>${label}</span><small aria-hidden="true">${escapeHTML(description)}</small></button>`;
+const exportItem = (format: 'html' | 'docx' | 'pdf', iconHTML: string, label: string, description: string) =>
+  menuItem(`data-action="export-${format}"`, iconHTML, label, description).replace('</button>', `<span class="export-preview export-preview-${format}" aria-hidden="true"><i></i><i></i><i></i></span></button>`);
+const templateItem = (id: string) => {
+  const item = publishingTemplates.find(entry => entry.id === id)!;
+  return menuItem(`data-action="insert:${item.id}" class="publishing-menu-${item.color || 'generic'}"`, publishingIcon(item.icon), item.label, item.description);
+};
+const blocksMenuHTML = `<div class="menu-section" role="presentation">Structure</div>
+  ${menuItem('data-action="insert:toc"', icon('contents'), 'Table of contents', 'Insert a linked table of contents, or refresh the existing one.')}
+  ${menuItem('data-action="insert:mermaid"', icon('diagram'), 'Mermaid diagram', 'Flowcharts, sequence and other diagrams written as text.')}
+  ${menuItem('data-command="rule"', icon('rule'), 'Horizontal rule', 'Divide sections with a horizontal line.')}
+  ${templateItem('publishing-metadata')}${templateItem('publishing-image')}
+  <div class="menu-section" role="presentation">Interactive \u00b7 HTML export only</div>
+  ${templateItem('publishing-tabs')}${templateItem('publishing-selector')}`;
 const app = document.querySelector<HTMLDivElement>('#app')!;
 const brandIcon = new URL('../assets/icon.svg', import.meta.url).href;
 const brandDarkIcon = new URL('../assets/icon-dark.svg', import.meta.url).href;
@@ -110,30 +141,22 @@ app.innerHTML = `
       <div id="tabs" role="tablist" aria-label="Open documents"></div>${button('new', 'New tab', 'plus', 'icon-only')}
       <div class="document-name sr-only"><span id="filename">Untitled.md</span><span id="dirty-indicator"></span></div>
       <div class="workspace-actions">
+        <button type="button" data-action="command-palette" class="command-search" title="Search all commands (Ctrl+Shift+P)" aria-label="Search commands" aria-keyshortcuts="Control+Shift+P">${icon('search')}<span>Search commands\u2026</span><kbd>Ctrl+Shift+P</kbd></button>
         ${button('find', 'Find and replace', 'search', 'icon-only quiet')}
         <div class="save-control"><div class="save-button">${button('save', 'Save', 'save')}<button type="button" data-action="save-menu" aria-label="More save actions" title="More save actions" aria-haspopup="menu" aria-controls="save-menu" aria-expanded="false">${icon('chevron')}</button></div><div id="save-menu" class="dropdown" role="menu" hidden><button type="button" data-action="save-all" role="menuitem">Save all files<kbd>Ctrl+Alt+S</kbd></button><button type="button" data-action="save-as" role="menuitem">Save as...<kbd>Ctrl+Shift+S</kbd></button></div></div>
-        <div class="export-control"><button type="button" data-action="export-menu" class="primary" title="Export as HTML, Word, or PDF" aria-haspopup="menu" aria-controls="export-menu" aria-expanded="false"><span>Export</span></button><div id="export-menu" class="dropdown" role="menu" hidden>${button('export-html', 'Interactive HTML (.html)')}${button('export-docx', 'Word document (.docx)')}${button('export-pdf', 'PDF document (.pdf)')}<p id="export-restriction" role="status" aria-live="polite" hidden>Tabbed examples and variants require HTML. Word and PDF are not supported for this document.</p></div></div>
+        <div class="export-control"><button type="button" data-action="export-menu" class="primary" title="Export as HTML, Word, or PDF" aria-haspopup="menu" aria-controls="export-menu" aria-expanded="false"><span>Export</span></button><div id="export-menu" class="dropdown export-cards" role="menu" aria-labelledby="export-menu-title" hidden><div class="menu-section" id="export-menu-title" role="presentation">Export document</div>${exportItem('html', icon('html'), 'Interactive HTML (.html)', 'Clickable tabs and variants, like Microsoft Learn. Works offline.')}${exportItem('docx', icon('word'), 'Word document (.docx)', 'Editable document for Microsoft Word.')}${exportItem('pdf', icon('pdf'), 'PDF document (.pdf)', 'Print-ready pages.')}<p id="export-restriction" role="status" aria-live="polite" hidden>Tabbed examples and variants require HTML. Word and PDF are not supported for this document.</p></div></div>
       </div>
     </header>
     <div class="toolbar" role="toolbar" aria-label="Text formatting">
-      <div class="global-modes"><button type="button" id="view-switch" data-action="side-by-side" class="view-switch" role="switch" aria-checked="false" aria-controls="canvas" title="Show Source beside Visual"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>Visual + Source</span></button></div>
-      ${button('split', 'Split', 'split', 'split-control')}
-      <span class="divider"></span>
-      <select id="heading" aria-label="Paragraph style"><option value="0">Paragraph</option><option value="1">Heading 1</option><option value="2">Heading 2</option><option value="3">Heading 3</option><option value="4">Heading 4</option><option value="5">Heading 5</option><option value="6">Heading 6</option></select>
-      <span class="divider"></span>
-      ${formatButton('bold', 'Bold')}${formatButton('italic', 'Italic')}${formatButton('strike', 'Strikethrough')}${formatButton('code', 'Inline code')}
-      <span class="divider"></span>
-      ${formatButton('bullet', 'Bullet list')}${formatButton('ordered', 'Numbered list')}${formatButton('task', 'Task list')}${formatButton('quote', 'Block quote')}
-      <span class="divider"></span>
-      ${button('link', 'Insert / edit link', 'link', 'icon-only')}${button('image', 'Insert image', 'image', 'icon-only')}${button('table', 'Insert table', 'table', 'icon-only')}
-      ${formatButton('codeblock', 'Code block')}${formatButton('rule', 'Horizontal rule')}
-      <span class="divider"></span>
-      ${button('insert:toc', 'Table of contents', 'contents', 'icon-only')}${button('insert:mermaid', 'Mermaid diagram', 'diagram', 'icon-only')}
-      <button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span></button>
-      <button type="button" data-action="publishing-menu" aria-label="Insert publishing block" title="Editable tabs, selectors, variant content, images and metadata" aria-haspopup="menu" aria-controls="publishing-menu" aria-expanded="false">${icon('blocks')}<span>Blocks</span></button>
+      ${group('view', 'View', `<div class="global-modes"><button type="button" id="view-switch" data-action="side-by-side" class="view-switch" role="switch" aria-checked="false" aria-controls="canvas" title="Show Source beside Visual"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>Visual + Source</span></button></div>${button('split', 'Split', 'split', 'split-control')}`)}
+      ${group('style', 'Style', `<select id="heading" aria-label="Paragraph style" title="Paragraph style (Ctrl+0 to Ctrl+6)"><option value="0">Paragraph</option><option value="1">Heading 1</option><option value="2">Heading 2</option><option value="3">Heading 3</option><option value="4">Heading 4</option><option value="5">Heading 5</option><option value="6">Heading 6</option></select>`)}
+      ${group('text', 'Text', `${formatButton('bold', 'Bold')}${formatButton('italic', 'Italic')}${formatButton('strike', 'Strikethrough')}${formatButton('code', 'Inline code')}${button('link', 'Insert / edit link', 'link', 'icon-only')}`)}
+      ${group('paragraph', 'Paragraph', `${formatButton('bullet', 'Bullet list')}${formatButton('ordered', 'Numbered list')}${formatButton('task', 'Task list')}${formatButton('quote', 'Block quote')}`)}
+      ${group('insert', 'Insert', `<button type="button" data-action="image" title="Insert image (Ctrl+Shift+I)" aria-label="Insert image">${icon('image')}<span>Image</span></button><button type="button" data-action="table" title="Insert table (Ctrl+T)" aria-label="Insert table">${icon('table')}<span>Table</span></button><button type="button" data-command="codeblock" title="Code block (Ctrl+Shift+K)" aria-label="Code block">${icon('codeblock')}<span>Code</span></button>`, 'labelled')}
+      ${group('publishing', 'Publishing', `<button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span>${icon('chevron')}</button><button type="button" data-action="publishing-menu" aria-label="Insert block" title="Table of contents, diagrams, metadata, tabbed examples and variants" aria-haspopup="menu" aria-controls="publishing-menu" aria-expanded="false">${icon('blocks')}<span>Blocks</span>${icon('chevron')}</button>`, 'labelled')}
       <div class="toolbar-more"><button type="button" data-action="format-menu" aria-label="More tools and views" title="More tools and views" aria-haspopup="menu" aria-controls="format-menu" aria-expanded="false">${icon('more')}</button></div>
       <span class="toolbar-spacer"></span>
-      ${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}
+      ${group('review', 'Review', `<button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
     </div>
     <div id="table-tools" hidden><span>TABLE</span>${button('row', '+ Row')}${button('column', '+ Column')}${button('delete-row', 'Remove row')}${button('delete-column', 'Remove column')}${button('delete-table', 'Remove table')}</div>
     <section id="find-panel" hidden aria-label="Find and replace">
@@ -149,10 +172,11 @@ app.innerHTML = `
       <p class="writing-note">Powered by Harper, entirely on this device. Suggestions never change your text unless you apply them. English only; suggestions may be imperfect.</p>
       <p id="writing-status" role="status" aria-live="polite"></p><ul id="writing-suggestions" aria-label="Grammar suggestions"></ul>
     </section>
-    <footer><span id="word-count">0 words</span><span class="local-status">Local only</span><button type="button" id="writing-toggle" data-action="writing-assistance" aria-controls="writing-panel" aria-expanded="false" title="Offline English grammar checking">Writing assistance</button><span id="save-status" aria-live="polite">Ready to write</span><div class="zoom-controls" role="group" aria-label="Zoom controls"><button type="button" id="zoom-out" data-action="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button type="button" id="zoom-reset" data-action="zoom-reset" aria-label="Reset zoom to 100%" title="Reset zoom to 100%">100%</button><button type="button" id="zoom-in" data-action="zoom-in" aria-label="Zoom in" title="Zoom in">+</button></div></footer>
+    <footer><button type="button" id="word-count" class="status-button" data-action="document-stats" title="Show document statistics">0 words</button><span id="cursor-position" hidden></span><span class="local-status">Local only</span><button type="button" id="writing-toggle" data-action="writing-assistance" aria-controls="writing-panel" aria-expanded="false" title="Offline English grammar checking">Writing assistance</button><button type="button" id="save-status" class="status-button" data-action="save" aria-live="polite" title="Save (Ctrl+S)">Ready to write</button><div class="zoom-controls" role="group" aria-label="Zoom controls"><button type="button" id="zoom-out" data-action="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><button type="button" id="zoom-reset" data-action="zoom-reset" aria-label="Reset zoom to 100%" title="Reset zoom to 100%">100%</button><button type="button" id="zoom-in" data-action="zoom-in" aria-label="Zoom in" title="Zoom in">+</button></div></footer>
   </main>
   <div id="tabs-menu" class="dropdown view-menu" role="menu" aria-label="Open documents" hidden></div>
-  ${(['alerts', 'content'] as const).map(category => `<div id="${category === 'alerts' ? 'alerts-menu' : 'publishing-menu'}" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="${category === 'alerts' ? 'Alerts' : 'Content blocks'}" hidden>${publishingTemplates.filter(item => item.category === category).map(item => `<button type="button" data-action="insert:${item.id}" class="publishing-menu-${item.color || 'generic'}" title="${item.description}" aria-description="${item.description}">${publishingIcon(item.icon)}<span>${item.label}</span></button>`).join('')}</div>`).join('')}
+  ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
+  <div id="publishing-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Blocks" hidden>${blocksMenuHTML}</div>
   <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('visual', 'Visual only')}${button('source', 'Source only')}${button('preview', 'Source + Preview (read-only)')}${button('writing-assistance', 'Writing assistance')}${button('allow-image-folder', 'Allow local image folder...')}${button('revoke-image-folder', 'Stop local image folder access')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-image-dialog" aria-labelledby="publishing-image-title"><form method="dialog">
@@ -213,6 +237,10 @@ app.innerHTML = `
       <tr><th scope="row">Visual / Source</th><td><kbd>Ctrl+/</kbd></td></tr>
       <tr><th scope="row">Next / Previous tab</th><td><kbd>Ctrl+Tab / Ctrl+Shift+Tab</kbd></td></tr>
       <tr><th scope="row">Toggle sidebar</th><td><kbd>Ctrl+Shift+B</kbd></td></tr>
+      <tr><th scope="row">Command palette</th><td><kbd>Ctrl+Shift+P</kbd></td></tr>
+      <tr><th scope="row">Insert a block (empty Visual line)</th><td><kbd>/</kbd></td></tr>
+      <tr><th scope="row">Move block up / down (Visual)</th><td><kbd>Alt+Shift+Up / Alt+Shift+Down</kbd></td></tr>
+      <tr><th scope="row">Move outline section</th><td><kbd>Alt+Up / Alt+Down</kbd></td></tr>
       <tr><th colspan="2" scope="colgroup">Files and navigation</th></tr>
       <tr><th scope="row">New / Open</th><td><kbd>Ctrl+N / Ctrl+O</kbd></td></tr>
       <tr><th scope="row">Save / Save as</th><td><kbd>Ctrl+S / Ctrl+Shift+S</kbd></td></tr>
@@ -228,7 +256,8 @@ app.innerHTML = `
     <p><b>Tabs:</b> Open and New keep other files open. Each tab keeps its edits and undo history. Click its x to close; a dot means unsaved changes. Save and Export use the active tab; Save all saves every modified tab.</p>
     <p><b>Split tabs:</b> choose <b>Split with...</b> or right-click a tab, then choose another open file from its thumbnail preview card. Previews include current unsaved edits. One paired tab displays exactly those two files side by side. Other tabs still open alone; clicking the pair restores both files. Each side keeps its own Visual/Source mode and undo. Click a side to target formatting, Find, Save, and Export. Drag the divider or focus it and use Left/Right to resize. <b>Unsplit</b> restores individual tabs without closing files. The pair's x closes both files with unsaved-change prompts; Ctrl+W closes only the active file.</p>
     <p><b>Themes:</b> choose Light or Dark at the bottom of the sidebar, or use View &gt; Color theme when the sidebar is hidden. Recent Files starts collapsed; expand its heading to browse history. This preference is remembered, and the outline gets the remaining space.</p>
-    <p><b>Save:</b> the Save button saves the active file. Its arrow opens Save All and Save As. Hover over tools for their keyboard shortcuts, or open ${button('shortcuts', 'Keyboard shortcuts')} (F1). At narrower widths, More formatting keeps less-used tools available.</p>
+    <p><b>Save:</b> the Save button saves the active file. Its arrow opens Save All and Save As. Hover over tools for their keyboard shortcuts, or open ${button('shortcuts', 'Keyboard shortcuts')} (F1). The toolbar is grouped into View, Style, Text, Paragraph, Insert and Blocks; at narrower widths whole groups move into More.</p>
+    <p><b>Search commands</b> (Ctrl+Shift+P, or the search box in the header) finds any command, block, theme or setting by name. In Visual mode, type <code>/</code> on an empty line to insert a heading, list, table, alert or block; Escape dismisses the list. <b>Block</b> commands (right-click, Edit menu or palette) move, duplicate or remove the block at the cursor; Alt+Shift+Up/Down moves it. Clicking into a block shows a small floating toolbar with the same commands. Drag top-level outline headings, or focus one and press Alt+Up/Down, to move a section with its subsections; Left/Right collapse or expand it. Ctrl+Z undoes any move. Click the word count for document statistics.</p>
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
@@ -281,6 +310,7 @@ let source = element<HTMLTextAreaElement>('source-editor');
 let visual = element<HTMLElement>('visual-editor');
 const initialPane = createPane(visual, source);
 let documentId = '';
+const collapsedOutline = new Map<string, Set<string>>();
 let markdown = '';
 let exportCheckedMarkdown: string | undefined;
 let exportCheckedDocumentId = '';
@@ -382,7 +412,13 @@ setFindOpen(false);
 updateRecentDisclosure();
 
 function updateThemeUI(): void {
-  document.documentElement.dataset.theme = theme;
+  const root = document.documentElement;
+  if (root.dataset.theme !== theme) {
+    root.classList.add('theme-switching');
+    root.dataset.theme = theme;
+    void root.offsetHeight;
+    root.classList.remove('theme-switching');
+  }
   const control = element<HTMLButtonElement>('theme-toggle');
   control.querySelector('span')!.textContent = theme === 'dark' ? 'Dark' : 'Light';
   control.title = `Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`;
@@ -692,7 +728,9 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
       }
     }
   },
-  onSelectionUpdate: ({ editor: updated }) => { if (updated === editor) updateToolbar(); },
+  onSelectionUpdate: ({ editor: updated }) => { if (updated === editor) { updateToolbar(); updateSlashMenu(); scheduleBlockToolbar(); } },
+  onFocus: ({ editor: updated }) => { if (updated === editor) scheduleBlockToolbar(); },
+  onBlur: () => { slashMenu?.close(); scheduleBlockToolbar(); },
   });
   return created;
 }
@@ -1368,8 +1406,8 @@ function update(): void {
   document.title = `${dirty ? '* ' : ''}${documentName} - ${productName}`;
   window.lekh.setDirty(tabs.some(tab => tab.markdown !== tab.savedMarkdown));
   const words = wordCount(markdown);
-  element('word-count').textContent = `${words.toLocaleString()} words`;
-  element('word-count').title = `${markdown.length.toLocaleString()} characters / ${Math.max(1, Math.ceil(words / 220))} min read`;
+  element('word-count').textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} \u00b7 ${Math.max(1, Math.ceil(words / 220))} min read`;
+  updateCursorPosition();
   element('save-status').innerHTML = `<span class="status-dot ${dirty ? 'unsaved' : ''}"></span>${dirty ? 'Unsaved changes' : documentPath ? 'All changes saved' : 'Ready to write'}`;
   const outline = element('outline');
   outline.replaceChildren();
@@ -1382,11 +1420,86 @@ function update(): void {
     exportCheckPending = false;
     exportCheckRevision++;
   }
-  for (const [index, item] of headings(markdown, tokens).entries()) {
+  const outlineHeadings = headings(markdown, tokens);
+  const collapsed = collapsedOutline.get(documentId) ?? new Set<string>();
+  const occurrences = new Map<string, number>();
+  const keys = outlineHeadings.map(item => {
+    const base = `${item.level}:${item.displayText}`;
+    const count = occurrences.get(base) ?? 0;
+    occurrences.set(base, count + 1);
+    return `${base}:${count}`;
+  });
+  const ancestors: { level: number; key: string }[] = [];
+  for (const [index, item] of outlineHeadings.entries()) {
+    while (ancestors.length && ancestors[ancestors.length - 1].level >= item.level) ancestors.pop();
+    const hiddenByParent = ancestors.some(ancestor => collapsed.has(ancestor.key));
+    ancestors.push({ level: item.level, key: keys[index] });
+    const row = document.createElement('div');
+    row.className = 'outline-row';
+    row.hidden = hiddenByParent;
+    row.style.paddingLeft = `${(item.level - 1) * 12}px`;
+    const hasChildren = (outlineHeadings[index + 1]?.level ?? 0) > item.level;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'outline-toggle';
+    toggle.tabIndex = -1;
+    if (hasChildren) {
+      const isCollapsed = collapsed.has(keys[index]);
+      toggle.innerHTML = icon('chevron');
+      toggle.setAttribute('aria-expanded', String(!isCollapsed));
+      toggle.setAttribute('aria-label', `${isCollapsed ? 'Expand' : 'Collapse'} \u201c${item.displayText || 'Untitled heading'}\u201d`);
+      toggle.title = isCollapsed ? 'Expand section' : 'Collapse section';
+      toggle.addEventListener('click', () => {
+        const next = new Set(collapsed);
+        if (next.has(keys[index])) next.delete(keys[index]); else next.add(keys[index]);
+        collapsedOutline.set(documentId, next);
+        update();
+        element('outline').querySelector<HTMLButtonElement>(`.outline-entry[data-outline-index="${index}"]`)?.focus();
+      });
+    } else {
+      toggle.setAttribute('aria-hidden', 'true');
+      toggle.disabled = true;
+    }
     const entry = document.createElement('button');
     entry.textContent = item.displayText || 'Untitled heading';
     entry.title = item.displayText;
-    entry.style.paddingLeft = `${12 + (item.level - 1) * 12}px`;
+    entry.className = `outline-entry outline-level-${item.level}`;
+    entry.draggable = item.root;
+    entry.dataset.outlineIndex = String(index);
+    if (item.root) entry.setAttribute('aria-description', 'Drag, or press Alt+Up or Alt+Down, to move this section with its subsections.' + (hasChildren ? ' Press Left or Right to collapse or expand it.' : ''));
+    entry.addEventListener('keydown', event => {
+      if (!event.altKey && hasChildren && ((event.key === 'ArrowLeft' && !collapsed.has(keys[index])) || (event.key === 'ArrowRight' && collapsed.has(keys[index])))) { event.preventDefault(); toggle.click(); return; }
+      if (!event.altKey || !['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      if (!busy) moveOutlineSection(index, event.key === 'ArrowUp' ? -1 : 1);
+    });
+    entry.addEventListener('dragstart', event => {
+      event.dataTransfer?.setData('application/x-lekh-section', String(index));
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      entry.classList.add('dragging');
+    });
+    entry.addEventListener('dragend', () => {
+      entry.classList.remove('dragging');
+      for (const target of outline.querySelectorAll('.drop-before, .drop-after')) target.classList.remove('drop-before', 'drop-after');
+    });
+    entry.addEventListener('dragover', event => {
+      if (!event.dataTransfer?.types.includes('application/x-lekh-section')) return;
+      event.preventDefault();
+      const after = event.offsetY > entry.clientHeight / 2;
+      entry.classList.toggle('drop-after', after);
+      entry.classList.toggle('drop-before', !after);
+    });
+    entry.addEventListener('dragleave', () => entry.classList.remove('drop-before', 'drop-after'));
+    entry.addEventListener('drop', event => {
+      if (!event.dataTransfer?.types.includes('application/x-lekh-section')) return;
+      const from = Number(event.dataTransfer.getData('application/x-lekh-section'));
+      event.preventDefault();
+      entry.classList.remove('drop-before', 'drop-after');
+      if (!Number.isInteger(from) || busy) return;
+      const after = event.offsetY > entry.clientHeight / 2;
+      const target = after ? sectionEndIndex(outlineHeadings, index) : index;
+      moveOutlineSectionTo(from, target);
+    });
     entry.addEventListener('click', () => {
       if (mode === 'source') {
         const offset = markdown.split('\n').slice(0, item.line).join('\n').length + (item.line > 0 ? 1 : 0);
@@ -1398,7 +1511,8 @@ function update(): void {
         if (target) { revealPublishingElement(target); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
       }
     });
-    outline.append(entry);
+    row.append(toggle, entry);
+    outline.append(row);
   }
   if (!outline.childElementCount) outline.innerHTML = '<p class="empty-note">Add a heading to give your ideas a little structure.</p>';
   updateToolbar();
@@ -1484,6 +1598,7 @@ function updateToolbar(): void {
   }
   const restriction = element('export-restriction');
   restriction.hidden = !interactiveExportRequired && !exportCheckPending;
+  document.querySelector('#export-menu [data-action="export-html"]')?.classList.toggle('recommended', interactiveExportRequired);
   restriction.textContent = exportCheckPending ? 'Checking local variant configuration for tabbed examples and variants...' :
     'Tabbed examples and variants require HTML. Word and PDF are not supported for this document.';
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="export-docx"],[data-action="export-pdf"]')) {
@@ -1505,8 +1620,7 @@ function updateToolbar(): void {
     : source.value.slice(sourceLineStart).match(/^ {0,3}(#{1,6})[ \t]+/)?.[1].length;
   element<HTMLSelectElement>('heading').value = String(level ?? 0);
   element('table-tools').hidden = mode !== 'visual' || !editor.isActive('table');
-  const hasSelector = mode === 'visual' ? documentVariantOptions(editor).length > 0 :
-    publishingBlockRanges(markdown).some(block => block.kind === 'selector');
+  const hasSelector = documentHasSelector();
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="insert:publishing-selector"]')) {
     const template = variantInsertionTemplate(hasSelector);
     control.querySelector('span')!.textContent = template.label;
@@ -1622,12 +1736,188 @@ function insertAdvanced(kind: string): void {
   notify('Inserted in Source mode. Math and footnotes remain source syntax; YAML is preserved as metadata rather than article text.');
 }
 
+function applyDocumentEdit(updated: string): void {
+  if (mode === 'visual') editor.commands.setContent(updated, { contentType: 'markdown', emitUpdate: false });
+  else source.value = updated;
+  changed(updated);
+}
+
+function moveOutlineSectionTo(from: number, target: number): void {
+  const tokens = parser.parse(markdown, {});
+  const list = headings(markdown, tokens);
+  if (!canMoveSection(list, from)) { notify('Headings inside lists, quotes, zones or tabbed examples move with their block.'); return; }
+  const result = relocateSection(markdown, list, from, target, topLevelBlocks(tokens));
+  if (result === undefined) { if (target !== from && target !== sectionEndIndex(list, from)) notify('A section cannot be moved inside itself or into a quote, list, table, zone or tabbed example.'); return; }
+  applyDocumentEdit(result.markdown);
+  focusOutlineLine(result.line);
+  notify(`Moved section \u201c${list[from].displayText || 'Untitled heading'}\u201d. Press Ctrl+Z to undo.`);
+}
+
+function moveOutlineSection(index: number, direction: -1 | 1): void {
+  const list = headings(markdown);
+  if (!canMoveSection(list, index)) { notify('Headings inside lists, quotes, zones or tabbed examples move with their block.'); return; }
+  const target = siblingTarget(list, index, direction);
+  if (target === undefined) { notify(`This section is already the ${direction < 0 ? 'first' : 'last'} at its level.`); return; }
+  moveOutlineSectionTo(index, target);
+}
+
+function focusOutlineLine(line: number): void {
+  const index = headings(markdown).findIndex(item => item.line === line);
+  element('outline').querySelector<HTMLButtonElement>(`.outline-entry[data-outline-index="${index}"]`)?.focus();
+}
+
+function documentHasSelector(): boolean {
+  return mode === 'visual' ? documentVariantOptions(editor).length > 0 :
+    publishingBlockRanges(markdown).some(block => block.kind === 'selector');
+}
+
+function updateCursorPosition(): void {
+  const status = element('cursor-position');
+  status.hidden = mode !== 'source';
+  if (status.hidden) return;
+  const before = source.value.slice(0, source.selectionStart);
+  const line = before.split('\n').length;
+  status.textContent = `Ln ${line}, Col ${source.selectionStart - before.lastIndexOf('\n')}`;
+}
+
+/** Moves, duplicates or removes the top-level Visual block that contains the selection. */
+function editBlock(operation: 'up' | 'down' | 'duplicate' | 'remove'): void {
+  if (mode !== 'visual') throw new Error('Block commands work in Visual mode. Switch to Visual, place the cursor in a block and try again.');
+  const { state } = editor;
+  const { doc, selection } = state;
+  const index = selection.$from.index(0);
+  if (index >= doc.childCount) throw new Error('Place the cursor inside a block first.');
+  const node = doc.child(index);
+  let from = 0;
+  for (let child = 0; child < index; child++) from += doc.child(child).nodeSize;
+  const offset = selection.from - from;
+  const wholeNode = selection instanceof NodeSelection && selection.from === from;
+  const tr = closeHistory(state.tr);
+  let target = from;
+  if (operation === 'up' || operation === 'down') {
+    const neighbor = operation === 'up' ? index - 1 : index + 1;
+    if (neighbor < 0 || neighbor >= doc.childCount) { notify(`This block is already the ${operation === 'up' ? 'first' : 'last'} in the document.`); return; }
+    const other = doc.child(neighbor);
+    if (operation === 'up') {
+      target = from - other.nodeSize;
+      tr.replaceWith(target, from + node.nodeSize, Fragment.from([node, other]));
+    } else {
+      target = from + other.nodeSize;
+      tr.replaceWith(from, from + node.nodeSize + other.nodeSize, Fragment.from([other, node]));
+    }
+  } else if (operation === 'duplicate') {
+    target = from + node.nodeSize;
+    tr.insert(target, node.copy(node.content));
+  } else {
+    if (doc.childCount === 1) tr.replaceWith(0, doc.content.size, state.schema.nodes.paragraph.create());
+    else tr.delete(from, from + node.nodeSize);
+    target = Math.min(from, tr.doc.content.size);
+    tr.setSelection(Selection.near(tr.doc.resolve(target), index === doc.childCount - 1 ? -1 : 1));
+  }
+  if (operation !== 'remove') {
+    tr.setSelection(wholeNode || node.isAtom ? NodeSelection.create(tr.doc, target) : Selection.near(tr.doc.resolve(Math.min(target + offset, tr.doc.content.size))));
+  }
+  editor.view.dispatch(tr.scrollIntoView());
+  editor.view.focus();
+  if (operation === 'remove') notify('Block removed. Press Ctrl+Z to undo.');
+}
+
+function updateSlashMenu(): void {
+  const menu = slashMenu;
+  if (!menu) return;
+  const { selection } = editor.state;
+  const { $from } = selection;
+  const text = $from.parent.textContent;
+  const match = /^\/([\p{L}\p{N} -]{0,24})$/u.exec(text);
+  const eligible = mode === 'visual' && !busy && editor.isEditable && editor.isFocused && selection.empty && $from.depth === 1 &&
+    $from.parent.type.name === 'paragraph' && $from.parentOffset === text.length && match;
+  const key = `${$from.start()}:${text}`;
+  if (!eligible || slashDismissed === key) { menu.close(); if (!eligible) slashDismissed = ''; return; }
+  const coordinates = editor.view.coordsAtPos($from.pos);
+  menu.update(match[1], new DOMRect(coordinates.left, coordinates.top, 0, coordinates.bottom - coordinates.top));
+}
+
+function runSlashEntry(entry: CommandEntry): void {
+  slashMenu?.close();
+  const { $from } = editor.state.selection;
+  if (/^\//.test($from.parent.textContent)) editor.chain().focus().deleteRange({ from: $from.start(), to: $from.end() }).run();
+  void runAction(entry.id);
+}
+
+function dismissSlashMenu(): void {
+  const { $from } = editor.state.selection;
+  slashDismissed = `${$from.start()}:${$from.parent.textContent}`;
+  slashMenu?.close();
+}
+
+let blockToolbar: HTMLElement | undefined;
+let blockToolbarFrame = 0;
+let blockToolbarTyping = false;
+
+function scheduleBlockToolbar(): void {
+  cancelAnimationFrame(blockToolbarFrame);
+  blockToolbarFrame = requestAnimationFrame(positionBlockToolbar);
+}
+
+/** Small floating toolbar with move, duplicate and remove actions for the top-level block holding the cursor. */
+function positionBlockToolbar(): void {
+  const toolbar = blockToolbar;
+  if (!toolbar) return;
+  const hide = () => { toolbar.hidden = true; };
+  if (mode !== 'visual' || busy || blockToolbarTyping || !editor.isEditable || !editor.view.hasFocus() || slashMenu?.isOpen ||
+    commandPalette.isOpen || document.querySelector('dialog[open]')) return hide();
+  const { doc, selection } = editor.state;
+  const index = selection.$from.index(0);
+  if (index >= doc.childCount || (doc.childCount === 1 && !doc.firstChild!.textContent && doc.firstChild!.type.name === 'paragraph')) return hide();
+  let from = 0;
+  for (let child = 0; child < index; child++) from += doc.child(child).nodeSize;
+  const dom = editor.view.nodeDOM(from);
+  const canvas = element('canvas').getBoundingClientRect();
+  if (!(dom instanceof HTMLElement)) return hide();
+  const rect = dom.getBoundingClientRect();
+  if (rect.bottom < canvas.top || rect.top > canvas.bottom) return hide();
+  toolbar.querySelector<HTMLButtonElement>('[data-action="block:up"]')!.disabled = index === 0;
+  toolbar.querySelector<HTMLButtonElement>('[data-action="block:down"]')!.disabled = index === doc.childCount - 1;
+  toolbar.hidden = false;
+  const width = toolbar.offsetWidth;
+  const height = toolbar.offsetHeight;
+  const top = Math.min(Math.max(canvas.top + 4, rect.top - height - 4), canvas.bottom - height - 4);
+  const left = Math.min(Math.max(canvas.left + 4, rect.right - width), canvas.right - width - 12);
+  toolbar.style.top = `${top}px`;
+  toolbar.style.left = `${left}px`;
+}
+
+function createBlockToolbar(): void {
+  const toolbar = document.createElement('div');
+  toolbar.id = 'block-toolbar';
+  toolbar.className = 'block-toolbar';
+  toolbar.setAttribute('role', 'toolbar');
+  toolbar.setAttribute('aria-label', 'Block actions');
+  toolbar.hidden = true;
+  const buttons: [string, Icon, string][] = [
+    ['block:up', 'up', 'Move block up (Alt+Shift+Up)'],
+    ['block:down', 'down', 'Move block down (Alt+Shift+Down)'],
+    ['block:duplicate', 'copy', 'Duplicate block'],
+    ['block:remove', 'delete', 'Remove block'],
+  ];
+  toolbar.innerHTML = buttons.map(([action, name, label]) => `<button type="button" data-action="${action}" aria-label="${label}" title="${label}" tabindex="-1">${icon(name)}</button>`).join('');
+  toolbar.addEventListener('mousedown', event => event.preventDefault());
+  document.body.append(toolbar);
+  blockToolbar = toolbar;
+  element('canvas').addEventListener('scroll', scheduleBlockToolbar, true);
+  window.addEventListener('resize', scheduleBlockToolbar);
+  element('canvas').addEventListener('mousedown', () => { blockToolbarTyping = false; scheduleBlockToolbar(); });
+  element('canvas').addEventListener('keydown', event => {
+    if (!(event.target instanceof HTMLElement) || !event.target.closest('.tiptap')) return;
+    const typing = !event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || event.key === 'Enter' || event.key === 'Backspace' || event.key === 'Delete');
+    if (typing !== blockToolbarTyping) { blockToolbarTyping = typing; scheduleBlockToolbar(); }
+  });
+}
+
 function insertContents(): void {
   if (hasMarkedTableOfContents(markdown)) {
     const updated = updateTableOfContents(markdown);
-    if (mode === 'visual') editor.commands.setContent(updated, { contentType: 'markdown', emitUpdate: false });
-    else source.value = updated;
-    changed(updated);
+    applyDocumentEdit(updated);
     notify('Table of contents updated. Surrounding Markdown is unchanged.');
     return;
   }
@@ -1726,6 +2016,7 @@ async function openPending(): Promise<void> {
 
 async function runAction(action: string): Promise<void> {
   const focused = document.activeElement;
+  if (action === 'command-palette') { commandPalette.open(); return; }
   if ((action === 'undo' || action === 'redo') && mode === 'visual' && !busy && editor.isEditable &&
     (focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement) && focused.closest('.publishing-field')) {
     if (action === 'undo') editor.commands.undo(); else editor.commands.redo();
@@ -1733,7 +2024,7 @@ async function runAction(action: string): Promise<void> {
   }
   const id = documentId;
   await run(async () => dispatch(action));
-  if ((action.startsWith('insert:callout-') || action.startsWith('insert:publishing-')) && documentId === id && mode === 'visual' &&
+  if ((action.startsWith('insert:callout-') || action.startsWith('insert:publishing-') || action.startsWith('block:')) && documentId === id && mode === 'visual' &&
     !busy && editor.isEditable && !document.querySelector('dialog[open]') &&
     !(document.activeElement instanceof Element && document.activeElement.closest('.publishing-field'))) editor.view.focus();
 }
@@ -1897,7 +2188,14 @@ async function dispatch(action: string): Promise<void> {
     else insertAdvanced(kind);
     return;
   }
+  if (action.startsWith('block:')) {
+    const operation = action.slice(6);
+    if (operation !== 'up' && operation !== 'down' && operation !== 'duplicate' && operation !== 'remove') throw new Error('Unsupported block command.');
+    editBlock(operation);
+    return;
+  }
   switch (action) {
+    case 'command-palette': commandPalette.open(); break;
     case 'revoke-image-folder': {
       unwrap(await window.lekh.revokeImageFolder(documentId));
       invalidateExportCheck();
@@ -1924,6 +2222,14 @@ async function dispatch(action: string): Promise<void> {
       break;
     }
     case 'writing-assistance': writingAssistance?.open(); break;
+    case 'document-stats': {
+      const words = wordCount(markdown);
+      const tokens = parser.parse(markdown, {});
+      const paragraphs = tokens.filter(token => token.type === 'paragraph_open').length;
+      const headingCount = tokens.filter(token => token.type === 'heading_open').length;
+      notify(`${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} \u00b7 ${markdown.length.toLocaleString()} characters \u00b7 ${paragraphs.toLocaleString()} ${paragraphs === 1 ? 'paragraph' : 'paragraphs'} \u00b7 ${headingCount.toLocaleString()} ${headingCount === 1 ? 'heading' : 'headings'} \u00b7 about ${Math.max(1, Math.ceil(words / 220))} min read`);
+      break;
+    }
     case 'side-by-side': toggleSideBySide(); break;
     case 'split': openSplit(); break;
     case 'preview': togglePreview(); break;
@@ -2138,9 +2444,13 @@ element('canvas').addEventListener('keydown', event => {
     insertSource('  ');
   }
 });
+for (const type of ['keyup', 'mouseup', 'focusin', 'select'] as const) {
+  element('canvas').addEventListener(type, event => { if (event.target === source) updateCursorPosition(); });
+}
 document.querySelector('.toolbar')!.addEventListener('mousedown', event => {
   if ((event.target as HTMLElement).closest('button')) event.preventDefault();
 });
+document.querySelector('header .command-search')!.addEventListener('mousedown', event => event.preventDefault());
 document.addEventListener('click', event => {
   const target = event.target as HTMLElement;
   const command = target.closest<HTMLElement>('[data-command]')?.dataset.command;
@@ -2492,7 +2802,7 @@ function positionViewMenu(): void {
 const toolbar = document.querySelector<HTMLElement>('.toolbar')!;
 const overflow = element('toolbar-overflow');
 const toolbarSlots = [...toolbar.children]
-  .filter((node): node is HTMLElement => node instanceof HTMLElement && node.matches('button:not(.split-control), select, .divider'))
+  .filter((node): node is HTMLElement => node instanceof HTMLElement && node.matches('.toolbar-group:not([data-group="view"])'))
   .map(control => {
     const slot = document.createComment('toolbar position');
     control.before(slot);
@@ -2514,23 +2824,20 @@ function layoutResponsiveChrome(): void {
     toolbarLayoutKey = key;
     for (const { control, slot } of toolbarSlots) {
       slot.after(control);
-      control.hidden = false;
-      if (control instanceof HTMLButtonElement) {
-        control.removeAttribute('role');
-        control.removeAttribute('aria-checked');
+      control.setAttribute('role', 'group');
+      for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
+        item.removeAttribute('role');
+        item.removeAttribute('aria-checked');
       }
     }
-    // Move the original controls, retaining selection, handlers, and formatting state.
+    // Move whole groups, retaining selection, handlers, and formatting state; captions become section headers.
     for (const { control } of [...toolbarSlots].reverse()) {
       if (toolbar.scrollWidth <= toolbar.clientWidth) break;
       overflow.prepend(control);
-      if (control instanceof HTMLButtonElement) {
-        control.setAttribute('role', control.dataset.command ? 'menuitemcheckbox' : 'menuitem');
-        if (control.dataset.command) control.setAttribute('aria-checked', control.getAttribute('aria-pressed') ?? 'false');
+      for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
+        item.setAttribute('role', item.dataset.command ? 'menuitemcheckbox' : 'menuitem');
+        if (item.dataset.command) item.setAttribute('aria-checked', item.getAttribute('aria-pressed') ?? 'false');
       }
-    }
-    for (const divider of toolbar.querySelectorAll<HTMLElement>(':scope > .divider')) {
-      if (!divider.nextElementSibling || divider.nextElementSibling.matches('.toolbar-more, .toolbar-spacer')) divider.hidden = true;
     }
     toolbar.scrollLeft = 0;
     overflow.hidden = !overflow.children.length;
@@ -2601,6 +2908,34 @@ document.addEventListener('keydown', event => {
   void run(async () => format(shortcut.command));
 }, true);
 window.addEventListener('beforeunload', storeDraft);
+const slashIcons: Record<string, Icon> = { 'format:bullet': 'bullet', 'format:ordered': 'ordered', 'format:task': 'task', 'format:quote': 'quote', image: 'image', table: 'table', 'format:codeblock': 'codeblock', 'format:rule': 'rule', 'insert:toc': 'contents', 'insert:mermaid': 'diagram' };
+const slashIcon = (entry: CommandEntry): string => {
+  if (entry.id.startsWith('heading:')) return `<b class="heading-glyph">H${entry.id.slice(8)}</b>`;
+  const template = publishingTemplates.find(item => `insert:${item.id}` === entry.id);
+  if (template) return publishingIcon(template.icon);
+  return icon(slashIcons[entry.id] ?? 'blocks');
+};
+const commandPalette = new CommandPalette(() => commandEntries(documentHasSelector()), id => { void runAction(id); });
+slashMenu = new SlashMenu(() => slashEntries(documentHasSelector()), runSlashEntry, slashIcon);
+createBlockToolbar();
+document.addEventListener('keydown', event => {
+  if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey || event.code !== 'KeyP') return;
+  event.preventDefault();
+  if (!document.querySelector('dialog[open]')) void runAction('command-palette');
+}, true);
+element('canvas').addEventListener('keydown', event => {
+  if (!(event.target instanceof HTMLElement) || !event.target.closest('.tiptap') || event.target.closest('.publishing-field, .publishing-raw-editor, .code-block-controls')) return;
+  if (slashMenu?.isOpen) {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); dismissSlashMenu(); return; }
+    if (slashMenu.key(event)) { event.preventDefault(); event.stopPropagation(); return; }
+  }
+  if (event.altKey && event.shiftKey && !event.ctrlKey && !event.metaKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+    event.preventDefault();
+    event.stopPropagation();
+    activateEventPane(event);
+    void runAction(event.key === 'ArrowUp' ? 'block:up' : 'block:down');
+  }
+}, true);
 window.lekh.onAction(action => {
   if (action === 'open-pending') {
     pendingExternalOpen = true;

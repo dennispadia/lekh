@@ -14,7 +14,7 @@ export function requiresInteractiveExport(markdown: string): boolean {
   return hasInteractivePublishing(parser.parse(markdown, {}));
 }
 
-export function headings(markdown: string, tokens = parser.parse(markdown, {})): { level: number; text: string; displayText: string; line: number }[] {
+export function headings(markdown: string, tokens = parser.parse(markdown, {})): { level: number; text: string; displayText: string; line: number; root: boolean }[] {
   const inlineText = (children: typeof tokens): string => children.map(token => {
     if (token.children) return inlineText(token.children);
     if (token.type === 'text' || token.type === 'code_inline') return token.content;
@@ -26,8 +26,14 @@ export function headings(markdown: string, tokens = parser.parse(markdown, {})):
       text: tokens[index + 1].content,
       displayText: inlineText(tokens[index + 1].children ?? []).trim(),
       line: token.map?.[0] ?? 0,
+      root: token.level === 0,
     }]
     : []);
+}
+
+/** Line ranges [start, end) of top-level blocks such as zones, tab groups, lists, quotes, tables and code fences. */
+export function topLevelBlocks(tokens: ReturnType<typeof parser.parse>): [number, number][] {
+  return tokens.filter(token => token.level === 0 && token.nesting >= 0 && token.map && !/^(heading|paragraph)_open$/.test(token.type) && token.type !== 'inline').map(token => [token.map![0], token.map![1]] as [number, number]);
 }
 
 export function wordCount(markdown: string): number {

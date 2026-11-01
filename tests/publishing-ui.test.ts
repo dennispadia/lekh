@@ -60,7 +60,8 @@ test('tabbed and variant documents disable Word and PDF exports in the app menus
 test('the toolbar and insert menu provide one insert-or-refresh table-of-contents action', async () => {
   const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
   const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
-  assert.match(renderer, /button\('insert:toc', 'Table of contents'/);
+  assert.match(renderer, /data-action="insert:toc"', icon\('contents'\), 'Table of contents'/);
+  assert.equal(renderer.match(/data-action="insert:toc"/g)?.length, 1);
   assert.doesNotMatch(renderer, /insert:toc-update|Update table of contents/);
   assert.match(electron, /label: 'Table of contents', click: \(\) => action\('insert:toc'\)/);
   assert.doesNotMatch(electron, /insert:toc-update|Update table of contents/);

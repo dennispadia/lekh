@@ -103,7 +103,7 @@ class CDP {
   }
   async evaluate(expression, sessionId) {
     const result = await this.call('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId);
-    if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
+    if (result.exceptionDetails) throw new Error(`${result.exceptionDetails.exception?.description ?? JSON.stringify(result.exceptionDetails)}\nExpression: ${expression.slice(0, 300)}`);
     return result.result.value;
   }
 }
@@ -153,7 +153,7 @@ try {
   await ui(imageChoices);
   console.log('PASS: native desktop window loads rich editor, outline, table, and checklist');
   assert.equal(await ui("document.querySelectorAll('.tiptap table').length"), 1);
-  assert.ok(await ui("document.querySelectorAll('#outline button').length") > 3);
+  assert.ok(await ui("document.querySelectorAll('#outline .outline-entry').length") > 3);
   assert.ok(await ui("document.querySelectorAll('.tiptap input[type=checkbox]').length") >= 3);
   const taskOffsets = () => ui(`Array.from(document.querySelectorAll('.tiptap ul[data-type="taskList"] li')).filter(item => item.querySelector(':scope > label > input[type=checkbox]')).map(item => {
     const checkbox = item.querySelector(':scope > label > input').getBoundingClientRect();
@@ -241,10 +241,11 @@ try {
     await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'control action');
   };
   const clickMermaid = async () => {
-    if (await ui("document.querySelector('#toolbar-overflow [data-action=\"insert:mermaid\"]') !== null")) {
+    if (await ui("document.querySelector('#toolbar-overflow [data-action=\"publishing-menu\"]') !== null")) {
       await clickControl('[data-action="format-menu"]');
     }
-    await clickControl('[data-action="insert:mermaid"]');
+    await clickControl('[data-action="publishing-menu"]');
+    await clickControl('#publishing-menu [data-action="insert:mermaid"]');
   };
   const menuAction = async name => {
     await main.evaluate(`smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action', ${JSON.stringify(name)})`);
@@ -347,7 +348,7 @@ try {
   await action('redo');
   assert.equal(await ui("document.querySelector('#source-editor').value"), dualRaw);
   await ui("(() => {const editor=document.querySelector('.tiptap');editor.focus();const text=editor.querySelector('p').firstChild;const range=document.createRange();range.setStart(text,0);range.setEnd(text,7);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);})()");
-  await ui("document.querySelector('.toolbar > [data-command=bold]').click()");
+  await ui("document.querySelector('.toolbar [data-command=bold]').click()");
   await waitFor(async () => ui("document.querySelector('#source-editor').value.includes('**Unusual**')"), 'Visual toolbar edits synchronize Source');
   assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true', 'Formatting leaves both panes visible');
   await ui("document.querySelector('.tiptap').focus()");
@@ -396,7 +397,7 @@ try {
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1280,900)");
   await delay(150);
   assert.ok(await ui("document.querySelector('.toolbar').scrollWidth <= document.querySelector('.toolbar').clientWidth"), 'Every editing command fits on one row at 1280px');
-  assert.equal(await ui("document.querySelector('.toolbar > [data-action=split]').textContent"), 'Split', 'Split is directly visible beside the editable dual-view switch');
+  assert.equal(await ui("document.querySelector('.toolbar [data-action=split]').textContent"), 'Split', 'Split is directly visible beside the editable dual-view switch');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,600)");
   await delay(200);
   assert.equal(await ui("getComputedStyle(document.querySelector('.toolbar')).flexWrap"), 'nowrap', 'Editable dual-view toolbar stays on one row at minimum width');
@@ -567,7 +568,7 @@ try {
   await ui("document.querySelector('#source-editor').setSelectionRange(0,0)");
   await menuAction('insert:toc');
   await sourceEdit((await ui("document.querySelector('#source-editor').value")) + '\n## Added later\n');
-  await menuAction('insert:toc-update');
+  await menuAction('insert:toc');
   assert.match(await ui("document.querySelector('#source-editor').value"), /\[Added later\]\(#added-later\)/);
   await action('visual');
   assert.equal(await ui("document.querySelectorAll('[data-lekh-contents]').length"), 1);
@@ -592,12 +593,12 @@ try {
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].webContents.insertText('Visual edit')");
   await action('source');
   assert.match(await ui("document.querySelector('#source-editor').value"), /<!-- lekh:toc -->/);
-  await menuAction('insert:toc-update');
+  await menuAction('insert:toc');
   const contentsPrefix = '\n\n# Padded   heading\n\n\n';
   const contentsSuffix = '\n\nparagraph   with   spaces  \n\n';
   await sourceEdit(contentsPrefix + contentsSource + contentsSuffix);
   await action('visual');
-  await menuAction('insert:toc-update');
+  await menuAction('insert:toc');
   await action('source');
   const refreshedContents = await ui("document.querySelector('#source-editor').value");
   assert.ok(refreshedContents.startsWith(contentsPrefix), 'Visual TOC update preserves preceding source bytes');
@@ -886,7 +887,7 @@ try {
   assert.equal(await ui("getComputedStyle(document.body).backgroundColor"), 'rgb(11, 17, 21)');
   assert.equal(await ui("getComputedStyle(document.querySelector('.paper')).backgroundColor"), 'rgb(23, 25, 25)');
   assert.equal(await ui("getComputedStyle(document.body).getPropertyValue('--accent').trim()"), '#80bfb8');
-  assert.equal(await ui("getComputedStyle(document.querySelector('.primary')).backgroundColor"), 'rgb(128, 191, 184)');
+  await waitFor(async () => (await ui("getComputedStyle(document.querySelector('.primary')).backgroundColor")) === 'rgb(128, 191, 184)', 'Primary button settles on the Dark accent');
   assert.equal(await ui("document.querySelector('#theme-toggle span').textContent"), 'Dark');
   assert.equal(await ui("document.querySelector('#theme-toggle').getAttribute('aria-label')"), 'Switch to light theme');
   assert.equal(await ui("localStorage.getItem('lekh-theme')"), 'dark');
@@ -935,9 +936,9 @@ try {
   await nativeShortcut('Right', [], false);
   await waitFor(async () => ui("document.querySelector('#sidebar-resizer').getAttribute('aria-valuenow') === '330'"), 'keyboard sidebar resize');
   await nativeShortcut('Home', [], false);
-  assert.equal(await ui("document.querySelector('#sidebar').getBoundingClientRect().width"), 200);
+  await waitFor(async () => (await ui("document.querySelector('#sidebar').getBoundingClientRect().width")) === 200, 'sidebar width 200');
   await nativeShortcut('End', [], false);
-  assert.equal(await ui("document.querySelector('#sidebar').getBoundingClientRect().width"), 480);
+  await waitFor(async () => (await ui("document.querySelector('#sidebar').getBoundingClientRect().width")) === 480, 'sidebar width 480');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,600)");
   await waitFor(async () => ui("document.querySelector('#sidebar').getBoundingClientRect().width <= window.innerWidth - 480"), 'sidebar constrained in narrow window');
   assert.equal(await ui("localStorage.getItem('lekh-sidebar-width')"), '480', 'Window resizing retains preferred width');
@@ -2054,16 +2055,16 @@ try {
   const linkedOutlineMarkdown = '# Overview\n\n## Scenario 1: [Deployment **guide**](https://example.com/guide)\n\n## [Reference label][guide]\n\n[guide]: https://example.com/reference\n';
   await sourceEdit(linkedOutlineMarkdown);
   const linkedOutlineLabels = ['Overview', 'Scenario 1: Deployment guide', 'Reference label'];
-  assert.deepEqual(await ui("[...document.querySelectorAll('#outline button')].map(button => button.textContent)"), linkedOutlineLabels);
-  assert.deepEqual(await ui("[...document.querySelectorAll('#outline button')].map(button => button.title)"), linkedOutlineLabels);
-  await ui("document.querySelectorAll('#outline button')[1].click()");
+  assert.deepEqual(await ui("[...document.querySelectorAll('#outline .outline-entry')].map(button => button.textContent)"), linkedOutlineLabels);
+  assert.deepEqual(await ui("[...document.querySelectorAll('#outline .outline-entry')].map(button => button.title)"), linkedOutlineLabels);
+  await ui("document.querySelectorAll('#outline .outline-entry')[1].click()");
   assert.equal(await ui("document.querySelector('#source-editor').selectionStart"), linkedOutlineMarkdown.indexOf('## Scenario 1:'));
   assert.equal(await ui("document.querySelector('#source-editor').value"), linkedOutlineMarkdown, 'Outline navigation never modifies the heading link');
   await action('visual');
-  assert.deepEqual(await ui("[...document.querySelectorAll('#outline button')].map(button => button.textContent)"), linkedOutlineLabels);
+  assert.deepEqual(await ui("[...document.querySelectorAll('#outline .outline-entry')].map(button => button.textContent)"), linkedOutlineLabels);
   assert.equal(await ui("document.querySelector('#visual-editor h2 a').getAttribute('href')"), 'https://example.com/guide');
   assert.equal(await ui("document.querySelector('#visual-editor h2 a').textContent"), 'Deployment guide');
-  await ui("document.querySelectorAll('#outline button')[1].click()");
+  await ui("document.querySelectorAll('#outline .outline-entry')[1].click()");
   assert.equal(await ui("document.querySelector('#link-dialog').open"), false, 'Outline labels navigate instead of opening the linked address');
   await action('source');
   assert.equal(await ui("document.querySelector('#source-editor').value"), linkedOutlineMarkdown, 'Rendering readable outline labels preserves original Markdown');
@@ -2146,7 +2147,7 @@ try {
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1600,900)");
   await delay(150);
   assert.equal(await ui("document.querySelector('#toolbar-overflow').children.length"), 0, 'Widening restores all original controls');
-  assert.ok(await ui("document.querySelector('.toolbar > [data-command=quote]') !== null"), 'Restored toolbar command is not duplicated');
+  assert.ok(await ui("document.querySelector('.toolbar [data-command=quote]') !== null"), 'Restored toolbar command is not duplicated');
   assert.equal(await ui("document.querySelectorAll('[data-command=quote]').length"), 1);
   await menuAction('theme:light');
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'sidebar Light theme');
@@ -2267,15 +2268,15 @@ try {
   for (const directory of ['docs', 'includes', 'assets']) await mkdir(path.join(publishingRoot, directory), { recursive: true });
   await writeFile(path.join(publishingRoot, 'assets', 'pixel.png'), testPNG(1, 1));
   await writeFile(path.join(publishingRoot, 'includes', 'shared.md'), 'Shared included prose.\n\n![Shared pixel](../assets/pixel.png)\n');
-  await writeFile(path.join(publishingRoot, 'zone-pivot-groups.yml'), 'groups:\n- id: example-options\n  title: Approaches\n  prompt: Choose an approach\n  pivots:\n  - id: first\n    title: First approach\n  - id: second\n    title: Second approach\n');
   const publishingFixture = [
-    '---', 'title: Publishing fixture', 'zone_pivot_groups: example-options', '---', '',
+    '---', 'title: Publishing fixture', '---', '',
     '# Publishing fixture', '', 'Unrelated prose.', '',
     '> [!NOTE]', '> A purple note.', '', '> [!TIP]', '> A helpful green tip.', '',
     '> [!IMPORTANT]', '> Essential blue information.', '', '> [!CAUTION]', '> Red caution.', '',
     '> [!WARNING]', '> Orange warning.', '',
     '#### [Managed identity](#tab/msi)', '', '```bash', 'printf "identity"', '```', '',
     '#### [Service principal](#tab/spn)', '', '```bash', 'printf "principal"', '```', '', '---', '',
+    ':::selector title="Choose an approach"', '- [First approach](#variant/first)', '- [Second approach](#variant/second)', ':::selector-end', '',
     ':::zone pivot="first"', 'First variant body.', ':::zone-end', '',
     ':::zone pivot="second"', 'Second variant body.', ':::zone-end', '',
     '[!INCLUDE [Shared content](../includes/shared.md)]', '',
@@ -2307,11 +2308,9 @@ try {
   assert.equal(await ui("document.activeElement.dataset.publishingTab"), '1', 'Tabs support keyboard navigation');
   await ui("document.querySelector('[data-publishing-tab=\"0\"]').click(); [...document.querySelectorAll('.code-block-controls button')].find(button=>button.textContent==='Copy').click()");
   await waitFor(async () => (await main.evaluate('smokeElectron.clipboard.readText()')) === 'printf "identity"', 'editable rich-block copy matches the current code text without fence syntax');
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await action('allow-includes');
-  await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-selector]')?.getAttribute('aria-label') === 'Choose an approach' && document.querySelector('.tiptap').textContent.includes('Shared included prose.') && [...document.querySelectorAll('.publishing-include-preview img')].some(image=>image.complete && image.naturalWidth===1)"), 'authorized includes, rebased images and local publishing labels');
-  await ui("[...document.querySelectorAll('.publishing-metadata-block button')].find(button=>button.textContent==='Make these choices editable').click()");
-  await waitFor(async () => ui("document.querySelector('[data-lekh-selector]') && document.querySelectorAll('.visual-surface [data-publishing-selector]').length===1"), 'Configured choices become a single editable Visual selector');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-selector]') && document.querySelectorAll('.visual-surface [data-publishing-selector]').length===1"), 'a single editable Visual selector');
+  assert.equal(await ui("document.querySelector('.tiptap').textContent.includes('Shared included prose.')"), false, 'Local include directives are preserved but never loaded');
+  assert.equal(await ui("document.querySelector('[data-action=\"allow-includes\"]')"), null, 'No local include permission control remains');
   await action('side-by-side');
   assert.ok(await ui("(() => {const selector=document.querySelector('.visual-surface [data-publishing-selector]').getBoundingClientRect();const source=document.querySelector('.source-surface').getBoundingClientRect();return selector.right <= source.left+1 && selector.left >= document.querySelector('.visual-surface').getBoundingClientRect().left})()"), 'The selector belongs to Visual, never the Source column');
   assert.equal(await ui("document.querySelector('.document-pane > .publishing-document-selector')"), null);
@@ -2331,11 +2330,18 @@ try {
       const outer=menu.getBoundingClientRect(),inner=note.getBoundingClientRect();
       return {word:menu.querySelector('[data-action="export-docx"]').disabled,pdf:menu.querySelector('[data-action="export-pdf"]').disabled,
         html:!menu.querySelector('[data-action="export-html"]').disabled,note:!note.hidden,text:note.textContent,
+        recommended:menu.querySelector('[data-action="export-html"]').classList.contains('recommended'),previews:menu.querySelectorAll('.export-preview').length,heading:menu.querySelector('#export-menu-title')?.textContent,labelled:menu.getAttribute('aria-labelledby'),
+        previewInside:[...menu.querySelectorAll('.export-preview')].every(p=>{const r=p.getBoundingClientRect(),b=p.closest('button').getBoundingClientRect();return r.right<=b.right+1&&r.left>=b.left&&r.width>30}),
         fits:inner.left>=outer.left&&inner.right<=outer.right,contrast:(Math.max(foreground,background)+.05)/(Math.min(foreground,background)+.05)};
     })()`);
     assert.ok(exportUI.word && exportUI.pdf && exportUI.html && exportUI.note && exportUI.fits, JSON.stringify(exportUI));
     assert.match(exportUI.text, /require HTML.*Word and PDF are not supported/i);
     assert.ok(exportUI.contrast >= 4.5, `${theme} export warning contrast: ${exportUI.contrast}`);
+    assert.deepEqual([exportUI.recommended, exportUI.previews, exportUI.heading, exportUI.labelled, exportUI.previewInside], [true, 3, 'Export document', 'export-menu-title', true], 'Export panel shows a heading, three format previews and recommends HTML');
+    if (process.env.LEKH_SCREENSHOT) {
+      const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `export-panel-${theme}.png`), Buffer.from(shot.data, 'base64'));
+    }
     await action('export-menu');
   }
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,700)");
@@ -2367,24 +2373,9 @@ try {
   await action('export-menu');
   await action('export-html');
   const exportedPublishing = await readFile(publishingHTML, 'utf8');
-  for (const text of ['Managed identity', 'Service principal', 'First variant body.', 'Second variant body.', 'Shared included prose.']) assert.ok(exportedPublishing.includes(text), `HTML keeps ${text}`);
-  assert.match(exportedPublishing, /src="data:image\/png;base64,/);
-  assert.doesNotMatch(exportedPublishing, /zone_pivot_groups|Edit source|Copy failed/);
-  const revokedExport = path.join(temporary, 'revoked-grant.html');
-  await main.evaluate(`globalThis.smokeOriginalSaveDialog=smokeElectron.dialog.showSaveDialog;
-    smokeElectron.dialog.showSaveDialog=()=>new Promise(resolve=>{globalThis.smokeFinishGrantDialog=()=>resolve({canceled:false,filePath:${JSON.stringify(revokedExport)}})});
-    smokeOpenPath=${JSON.stringify(publishingRoot)};`);
-  await ui(`globalThis.smokeGrantResult=null;window.lekh.exportDocument(${JSON.stringify(publishingDocument)},${JSON.stringify(publishingFixture)},'html').then(result=>{globalThis.smokeGrantResult=result});true`);
-  await waitFor(async () => main.evaluate("typeof globalThis.smokeFinishGrantDialog === 'function'"), 'export pauses at the save dialog');
-  assert.equal((await ui(`window.lekh.revokePublishingIncludes(${JSON.stringify(publishingDocument)})`)).ok, true);
-  const reauthorized = await ui(`window.lekh.allowPublishingIncludes(${JSON.stringify(publishingDocument)})`);
-  assert.equal(reauthorized.ok && reauthorized.value, true, 'The same folder is explicitly allowed again');
-  await main.evaluate("smokeFinishGrantDialog();smokeElectron.dialog.showSaveDialog=smokeOriginalSaveDialog");
-  await waitFor(async () => ui("globalThis.smokeGrantResult !== null"), 'stale export rejects its replaced grant');
-  const revokedResult = await ui('globalThis.smokeGrantResult');
-  assert.equal(revokedResult.ok, false);
-  assert.match(revokedResult.error, /Local include access changed/);
-  await assert.rejects(() => readFile(revokedExport), { code: 'ENOENT' });
+  for (const text of ['Managed identity', 'Service principal', 'First variant body.', 'Second variant body.']) assert.ok(exportedPublishing.includes(text), `HTML keeps ${text}`);
+  assert.doesNotMatch(exportedPublishing, /Shared included prose|Edit source|Copy failed/);
+  assert.equal(await ui('typeof window.lekh.allowPublishingIncludes'), 'undefined', 'The include permission bridge is removed');
   await main.evaluate(`globalThis.smokeOfflineRequests=[]; globalThis.smokeReview=new smokeElectron.BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,partition:'lekh-offline-review'}});
     smokeReview.webContents.session.webRequest.onBeforeRequest((request,callback)=>{smokeOfflineRequests.push(request.url);callback({cancel:!request.url.startsWith('file:')&&!request.url.startsWith('data:')})});
     smokeReview.webContents.setWindowOpenHandler(()=>({action:'deny'})); smokeReview.loadFile(${JSON.stringify(publishingHTML)});`);
@@ -2528,9 +2519,8 @@ try {
   assert.ok(retainedPublishing.includes('Unrelated prose. Added.'));
   for (const block of publishingBlockRanges(publishingFixture)) assert.ok(retainedPublishing.includes(block.raw.trimEnd()), `Visual editing preserves ${block.kind} source`);
   assert.equal(await readFile(publishingFile, 'utf8'), publishingFixture, 'Rendering and interaction never save or overwrite the source');
-  await action('revoke-includes');
   await action('preview');
-  await waitFor(async () => ui("document.querySelector('.document-preview').textContent.includes('Publishing fixture') && !document.querySelector('.document-preview').textContent.includes('Shared included prose.')"), 'include access revocation clears rendered content');
+  await waitFor(async () => ui("document.querySelector('.document-preview').textContent.includes('Publishing fixture') && !document.querySelector('.document-preview').textContent.includes('Shared included prose.')"), 'Preview never loads local includes');
   await main.evaluate('smokeChoice=1');
   await menuAction('close-tab');
   const includeOnlyFile = path.join(publishingRoot, 'docs', 'include-only.md');
@@ -2538,22 +2528,8 @@ try {
   await writeFile(includeOnlyFile, '# Include-only article\n\n[!INCLUDE [Examples](../includes/interactive.md)]\n');
   await main.evaluate(`smokeOpenPath=${JSON.stringify(includeOnlyFile)}`);
   await action('open');
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await action('allow-includes');
   await action('export-menu');
-  await waitFor(async () => ui("!document.querySelector('#export-restriction').hidden && /require HTML/i.test(document.querySelector('#export-restriction').textContent) && document.querySelector('[data-action=\"export-docx\"]').disabled"), 'included tabs update the export menu');
-  await action('export-menu');
-  const beforeIncludedRejection = await main.evaluate('smokeSaveCalls');
-  await menuAction('export-docx');
-  assert.match(await ui("document.querySelector('#notification').textContent"), /Word and PDF export.*HTML/);
-  assert.equal(await main.evaluate('smokeSaveCalls'), beforeIncludedRejection);
-  const includeHTML = path.join(temporary, 'included-tabs.html');
-  await main.evaluate(`smokeSavePath=${JSON.stringify(includeHTML)}`);
-  await menuAction('export-html');
-  assert.match(await readFile(includeHTML, 'utf8'), /Included second example/);
-  await action('revoke-includes');
-  await action('export-menu');
-  await waitFor(async () => ui("document.querySelector('#export-restriction').hidden && !document.querySelector('[data-action=\"export-docx\"]').disabled"), 'revoking the include grant refreshes the export menu');
+  await waitFor(async () => ui("document.querySelector('#export-restriction').hidden && !document.querySelector('[data-action=\"export-docx\"]').disabled"), 'unloaded include directives never restrict static exports');
   await action('export-menu');
   await menuAction('close-tab');
   await action('new');
@@ -2584,7 +2560,7 @@ try {
   await main.evaluate('smokeChoice=1');
   await menuAction('close-tab');
   assert.equal(await tabCount(), 1);
-  console.log('PASS: publishing toolbar, exact light/dark alert colors, keyboard tabs, raw code copy, global variants/local labels, protected source roundtrip, authorized includes/images/revocation, HTML-only restrictions and described-image insertion');
+  console.log('PASS: publishing toolbar, exact light/dark alert colors, keyboard tabs, raw code copy, global variants/local labels, protected source roundtrip, unloaded local includes, HTML-only restrictions and described-image insertion');
 
   await action('new');
   await action('source');
@@ -2608,7 +2584,7 @@ try {
     await main.evaluate(`smokeOpenPath=${JSON.stringify(process.env.LEKH_PUBLISHING_REFERENCE)}`);
     await action('open');
     await main.evaluate(`smokeOpenPath=${JSON.stringify(process.env.LEKH_PUBLISHING_ROOT)}`);
-    await action('allow-includes');
+    await menuAction('allow-image-folder');
     await action('visual');
     await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-selector]')?.getAttribute('aria-label') === 'Choose your Pacemaker Fencing Solution' && document.querySelectorAll('[data-publishing-tabs]').length >= 2"), 'actual reference selectors, includes and implicitly terminated tab groups', 90000);
     await ui("document.querySelector('[data-publishing-choice=\"azure-fence-agent\"]').click()");
@@ -2705,7 +2681,7 @@ try {
   const { documentPreviewHTML } = await import(new URL('../build/lib/markdown.js', import.meta.url));
   assert.equal((documentPreviewHTML(savedAlertReferences, 'saved-alert').match(/href="https:\/\/example.com\/guide"/g) ?? []).length, 2, 'Serialized alert edits keep reference destinations used by siblings and protected tabs');
   await action('source');
-  await sourceEdit('> [!NOTE]\n> A readable note.\n\n# [First example](#tab/first)\n\nVisible example text.\n\n# [Second example](#tab/second)\n\nSecond example text.\n\n---\n\n[!INCLUDE [Unresolved](./unavailable.md)]\n');
+  await sourceEdit('> [!NOTE]\n> A readable note.\n\n# [First example](#tab/first)\n\nVisible example text.\n\n# [Second example](#tab/second)\n\nSecond example text.\n\n---\n\n:::custom-widget\nUnsupported widget body.\n:::custom-widget-end\n');
   await action('visual');
   await waitFor(async () => ui("document.querySelector('.publishing-unsupported pre') && document.querySelectorAll('[data-publishing-tab]').length===2"), 'contrast fixtures');
   for (const theme of ['light', 'dark']) {
@@ -2749,8 +2725,6 @@ try {
   await action('open');
   await action('visual');
   const visualPublishingId = await activeTab();
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await action('allow-includes');
   const publishingTool = async (kind, modal = false) => {
     if (!await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').getClientRects().length > 0")) await action('format-menu');
     await ui("document.querySelector('[aria-controls=\"publishing-menu\"]').click()");
@@ -2913,13 +2887,14 @@ try {
   assert.ok(await ui("(() => {const doc=document.querySelector('[data-lekh-selector]').closest('.tiptap').editor.getJSON().content;return doc.findIndex(node=>node.type==='lekhZone')<doc.findIndex(node=>node.type==='lekhSelector')})()"), 'Variant content can precede the selector as well as appear farther down the document');
   await nativeShortcut('Z', ['control'], false);
   await waitFor(async () => ui("document.querySelectorAll('[data-lekh-container=\"lekhZone\"]').length===2"), 'Undo only the variant created before its selector');
-  await ui("document.querySelector('[data-lekh-metadata]').open=true");
-  await inputText('[data-lekh-metadata] input[aria-label="Document title"]', 'Edited title');
+  const metadataYAML = '[data-lekh-metadata] textarea[aria-label="Metadata YAML"]';
+  assert.equal(await ui("document.querySelectorAll('[data-lekh-metadata] input').length"), 0, 'Metadata is a single YAML box without separate title/description fields');
+  assert.equal(await ui(`document.querySelector(${JSON.stringify(metadataYAML)}).value.trimEnd()`), 'title: Original title\ndescription: Original description\ncustom: [keep, these]');
+  await inputText(metadataYAML, 'title: Edited title\ndescription: Edited metadata in Visual\ncustom: [keep, these]');
   await nativeShortcut('Z', ['control'], false);
-  await waitFor(async () => ui("document.querySelector('[data-lekh-metadata] input[aria-label=\"Document title\"]').value==='Original title'"), 'Undo updates a focused Visual metadata field');
+  await waitFor(async () => ui(`document.querySelector(${JSON.stringify(metadataYAML)}).value.startsWith('title: Original title')`), 'Undo updates a focused Visual metadata field');
   await nativeShortcut('Z', ['control', 'shift'], false);
-  await waitFor(async () => ui("document.querySelector('[data-lekh-metadata] input[aria-label=\"Document title\"]').value==='Edited title'"), 'Redo restores a focused Visual metadata field');
-  await inputText('[data-lekh-metadata] input[aria-label="Document description"]', 'Edited metadata in Visual');
+  await waitFor(async () => ui(`document.querySelector(${JSON.stringify(metadataYAML)}).value.startsWith('title: Edited title')`), 'Redo restores a focused Visual metadata field');
   await ui("document.activeElement.blur();document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').click()");
   assert.equal(await ui("document.querySelectorAll('[data-lekh-tab] input').length"), 0, 'Example bodies start with document content, not a Tab name form');
   assert.ok(await ui("(() => {const list=document.querySelector('[data-lekh-tabs] .publishing-tablist');return list.lastElementChild.getAttribute('aria-label')==='Add tab'&&list.lastElementChild.textContent==='+'&&list.querySelectorAll('[data-remove-tab]').length===2})()"), 'Add follows the examples; each tab owns its remove icon');
@@ -2967,12 +2942,19 @@ try {
   assert.equal(await ui("document.querySelectorAll('.tiptap button').length && [...document.querySelectorAll('.tiptap button')].some(button=>button.textContent==='Edit source')"), false);
   const visualPublishingHTML = path.join(temporary, 'editable-publishing.html');
   await main.evaluate(`smokeSavePath=${JSON.stringify(visualPublishingHTML)}`);
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
+  await menuAction('allow-image-folder');
+  await waitFor(async () => ui("(document.querySelector('#notification')?.textContent || '').includes('Project-folder images are allowed')"), 'project image folder granted before Visual publishing export');
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'idle before Visual publishing export');
+  await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
   await menuAction('export-html');
+  await waitFor(async () => { try { await readFile(visualPublishingHTML); return true; } catch { return ui("document.querySelector('#notification')?.textContent || ''").then(text => { if (/fail|error|cannot|could not|wait|must be inside/i.test(text)) throw new Error(text); return false; }); } }, 'Visual publishing HTML export');
   const visualPublishingExport = await readFile(visualPublishingHTML, 'utf8');
   for (const text of ['Availability Zones edited directly.', 'Scale Set edited at a different location.', 'Scale [Set] example', 'Second example body. Edited in Visual.', 'Updated procedure.', 'Rich editable description.']) assert.ok(visualPublishingExport.includes(text), `Visual edits export without losing alternatives: ${text}`);
   await action('source');
   const fullyEditedPublishing = await ui("document.querySelector('#source-editor').value");
-  for (const text of ['title: "Edited title"', 'custom: [keep, these]', '#variant/first', '#variant/second', 'Availability Zones edited directly.', 'Scale Set edited at a different location.', 'Edited shared name', 'Edited image description']) assert.ok(fullyEditedPublishing.includes(text), text);
+  for (const text of ['title: Edited title', 'description: Edited metadata in Visual', 'custom: [keep, these]', '#variant/first', '#variant/second', 'Availability Zones edited directly.', 'Scale Set edited at a different location.', 'Edited shared name', 'Edited image description']) assert.ok(fullyEditedPublishing.includes(text), text);
   assert.equal((fullyEditedPublishing.match(/:::zone pivot=/g)||[]).length, 2);
   assert.ok(fullyEditedPublishing.indexOf(':::zone pivot="first"') < fullyEditedPublishing.indexOf('## A different location'));
   assert.ok(fullyEditedPublishing.indexOf(':::zone pivot="second"') > fullyEditedPublishing.indexOf('## A different location'));
@@ -2982,21 +2964,10 @@ try {
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input[aria-label=\"Option name (second)\"]').value"), 'Scale Set');
   assert.equal(await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').textContent"), 'Scale [Set] example');
   assert.equal(await activeTab(), visualPublishingId);
-  await ui("[...document.querySelectorAll('[data-lekh-include] button')].find(button=>button.textContent==='Open shared file in Visual').click()");
-  await waitFor(async () => activeTab().then(id=>id!==visualPublishingId), 'Open authorized shared content as its own Visual document');
-  const sharedPublishingId = await activeTab();
-  assert.equal(await ui("document.querySelector('#source-editor').hidden"), true);
-  await caretIn('Shared included prose.');
-  await browser.call('Input.insertText', { text: ' Edited in its own Visual document.' }, sessionId);
-  await menuAction('save');
-  await selectTab(visualPublishingId);
-  await waitFor(async () => ui("document.querySelector('.publishing-include-preview').textContent.includes('Edited in its own Visual document.')"), 'Saving shared content refreshes the authorized parent Visual preview');
-  assert.equal(await readFile(visualPublishingFile,'utf8'), fullyEditedPublishing, 'Shared-file editing never flattens or rewrites its parent include');
-  await selectTab(sharedPublishingId);
+  assert.equal(await ui("document.querySelector('[data-lekh-include]').textContent.includes('Shared included prose.')"), false, 'Include directives are never loaded in Visual');
+  assert.equal(await ui("[...document.querySelectorAll('[data-lekh-include] button')].some(button=>button.textContent==='Open shared file in Visual')"), false);
   await menuAction('close-tab');
-  await selectTab(visualPublishingId);
-  await menuAction('close-tab');
-  console.log('PASS: direct publishing bodies, in-place tab/choice names, inline add/remove icons, immediate new-example typing, rename undo/redo/Escape, metadata, includes and image descriptions preserve source, actual saves, every alternative and independent shared-file editing');
+  console.log('PASS: direct publishing bodies, in-place tab/choice names, inline add/remove icons, immediate new-example typing, rename undo/redo/Escape, single YAML metadata box, unloaded include directives and image descriptions preserve source, actual saves and every alternative');
 
   await action('new'); await action('source');
   await sourceEdit(':::selector title="Choose a variant"\n- [First](#variant/first)\n- [Second](#variant/second)\n:::selector-end\n');
@@ -3043,7 +3014,7 @@ try {
   await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===2"), 'Redo removing the first duplicate');
   await action('source');
   const duplicateSource = await ui("document.querySelector('#source-editor').value");
-  assert.ok(duplicateSource.includes('# [Second duplicate](#tab/shared)') && duplicateSource.includes('Second duplicate body.'));
+  assert.ok(duplicateSource.includes('# [Second duplicate](#tab/secondduplicate)') && duplicateSource.includes('Second duplicate body.'), 'Tab IDs are derived from the visible tab names');
   assert.ok(!duplicateSource.includes('First duplicate body.') && duplicateSource.includes('Independent body.'));
 
   const unpaddedJPEG = Buffer.from(JSON.parse(await readFile(path.join(root, 'tests', 'fixtures', 'jpeg-2x3.json'), 'utf8')).join(''), 'base64');
@@ -3190,6 +3161,334 @@ try {
   await menuAction('close-tab');
   assert.equal(await tabCount(), 1);
   console.log('PASS: real offline Harper grammar, opened CRLF files, focus-only dual-view transitions, code/URL exclusion, apply/ignore/ignore-document, per-tab isolation, bold preservation, undo, stale edit guards, opt-in persistence, and worker disable');
+
+  const pressKey = async (key, windowsVirtualKeyCode, modifiers = 0, text) => {
+    await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, windowsVirtualKeyCode, modifiers, ...(text ? { text } : {}) }, sessionId);
+    await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode, modifiers }, sessionId);
+    await delay(80);
+    await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), `key ${key}`);
+  };
+  const visualBlocks = () => ui("document.querySelector('#visual-editor .tiptap').editor.state.doc.content.content.map(node => node.textContent)");
+  const outlineLabels = () => ui("[...document.querySelectorAll('#outline .outline-entry')].map(entry => entry.textContent)");
+  const outlineFixture = '# Alpha\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Alpha child\n\nChild text.\n\n# Beta\n\nBeta text.\n';
+  await action('new');
+  await action('source');
+  await sourceEdit(outlineFixture);
+  await ui("(() => {const source=document.querySelector('#source-editor');source.focus();source.setSelectionRange(10,10);source.dispatchEvent(new Event('select'));})()");
+  await waitFor(async () => ui("document.querySelector('#cursor-position').textContent === 'Ln 3, Col 2' && !document.querySelector('#cursor-position').hidden"), 'Source status shows the caret line and column');
+  assert.match(await ui("document.querySelector('#word-count').textContent"), /^\d+ words · 1 min read$/);
+  assert.equal(await ui("document.querySelector('#word-count').tagName + ':' + document.querySelector('#word-count').dataset.action"), 'BUTTON:document-stats');
+  await clickControl('#word-count');
+  await waitFor(async () => ui("/\\d+ words.*\\d+ characters.*3 headings/i.test(document.querySelector('#notification').textContent)"), 'Clicking the word count shows document statistics');
+  assert.equal(await ui("document.querySelector('#save-status').tagName + ':' + document.querySelector('#save-status').dataset.action"), 'BUTTON:save');
+
+  // Outline: Alt+Arrow moves a section with its subsections in Source, and undo restores it.
+  assert.deepEqual(await outlineLabels(), ['Alpha', 'Alpha child', 'Beta']);
+  await ui("document.querySelector('#outline .outline-entry').focus()");
+  await pressKey('ArrowDown', 40, 1);
+  await waitFor(async () => ui("document.querySelector('#source-editor').value.startsWith('# Beta')"), 'Alt+Down moves the outline section in Source');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), '# Beta\n\nBeta text.\n\n# Alpha\n\nFirst paragraph.\n\nSecond paragraph.\n\n## Alpha child\n\nChild text.\n');
+  assert.deepEqual(await outlineLabels(), ['Beta', 'Alpha', 'Alpha child']);
+  assert.equal(await ui("document.activeElement.textContent"), 'Alpha', 'Focus follows the moved outline section');
+  await pressKey('ArrowDown', 40, 1);
+  assert.equal(await ui("document.querySelector('#source-editor').value.startsWith('# Beta')"), true, 'The last section stays in place');
+  await menuAction('undo');
+  await waitFor(async () => ui(`document.querySelector('#source-editor').value === ${JSON.stringify(outlineFixture)}`), 'Undo restores a Source outline move');
+
+  // Outline drag and drop in Visual, with undo.
+  await action('visual');
+  await waitFor(async () => (await outlineLabels()).length === 3, 'Visual outline');
+  await ui(`(() => {
+    const entries=[...document.querySelectorAll('#outline .outline-entry')];
+    const transfer=new DataTransfer();
+    entries[2].dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer:transfer}));
+    const box=entries[0].getBoundingClientRect();
+    const point={bubbles:true,cancelable:true,dataTransfer:transfer,clientX:box.x+4,clientY:box.y+2};
+    entries[0].dispatchEvent(new DragEvent('dragover',point));
+    if (!entries[0].classList.contains('drop-before')) throw new Error('Missing drop-before indicator');
+    entries[0].dispatchEvent(new DragEvent('drop',point));
+    entries[2].dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:transfer}));
+  })()`);
+  await waitFor(async () => (await outlineLabels())[0] === 'Beta', 'Dragging an outline heading moves its section');
+  assert.deepEqual(await visualBlocks(), ['Beta', 'Beta text.', 'Alpha', 'First paragraph.', 'Second paragraph.', 'Alpha child', 'Child text.']);
+  assert.equal(await ui("document.querySelectorAll('#outline .drop-before, #outline .drop-after, #outline .dragging').length"), 0);
+  await ui(`(() => {
+    const entries=[...document.querySelectorAll('#outline .outline-entry')];
+    const transfer=new DataTransfer();
+    transfer.setData('text/plain','not a section');
+    const box=entries[0].getBoundingClientRect();
+    entries[0].dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer,clientX:box.x+4,clientY:box.y+2}));
+  })()`);
+  await delay(150);
+  assert.equal((await outlineLabels())[0], 'Beta', 'Foreign drops never move sections');
+  await nativeShortcut('Z', ['control']);
+  await waitFor(async () => (await outlineLabels())[0] === 'Alpha', 'Ctrl+Z undoes a Visual outline move');
+  assert.deepEqual(await visualBlocks(), ['Alpha', 'First paragraph.', 'Second paragraph.', 'Alpha child', 'Child text.', 'Beta', 'Beta text.']);
+  assert.equal(await ui("document.querySelector('#cursor-position').hidden"), true, 'Line and column appear only in Source');
+  console.log('PASS: Source caret status, word/read-time count, outline Alt+Arrow and drag-and-drop section moves with subsections, foreign-drop guard, focus tracking, and undo in both modes');
+
+  // Outline collapse and expand: chevron, Left/Right keys, hidden children, and drag after collapse.
+  const outlineState = () => ui("[...document.querySelectorAll('#outline .outline-row')].map(row => [row.querySelector('.outline-entry').textContent, row.hidden, row.querySelector('.outline-toggle').getAttribute('aria-expanded'), row.querySelector('.outline-toggle').disabled])");
+  assert.deepEqual(await outlineState(), [['Alpha', false, 'true', false], ['Alpha child', false, null, true], ['Beta', false, null, true]]);
+  await clickControl('#outline .outline-row:first-child .outline-toggle');
+  await waitFor(async () => (await outlineState())[1][1] === true, 'Collapsing hides child headings');
+  assert.equal((await outlineState())[0][2], 'false');
+  assert.equal(await ui("document.activeElement.classList.contains('outline-entry') && document.activeElement.textContent"), 'Alpha', 'The toggle returns focus to its entry');
+  await pressKey('ArrowRight', 39);
+  await waitFor(async () => (await outlineState())[1][1] === false, 'Right expands a collapsed heading');
+  await pressKey('ArrowLeft', 37);
+  await waitFor(async () => (await outlineState())[1][1] === true, 'Left collapses an expanded heading');
+  assert.deepEqual(await visualBlocks(), ['Alpha', 'First paragraph.', 'Second paragraph.', 'Alpha child', 'Child text.', 'Beta', 'Beta text.'], 'Collapsing never edits the document');
+  if (process.env.LEKH_SCREENSHOT) {
+    const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'outline-collapsed.png'), Buffer.from(shot.data, 'base64'));
+  }
+  await pressKey('ArrowRight', 39);
+  await waitFor(async () => (await outlineState())[1][1] === false, 'expand again');
+  console.log('PASS: outline collapse/expand by chevron and Left/Right keys, hidden descendants, ARIA state, and focus return');
+
+  // Outline moves never split publishing zones or lists; nested headings are not draggable.
+  await action('source');
+  const zoneFixture = '# One\n\nIntro.\n\n:::zone pivot="a"\n\n## Inside\n\nZone text.\n\n:::zone-end\n\n# Two\n\nTail.\n';
+  await sourceEdit(zoneFixture);
+  await waitFor(async () => (await outlineLabels()).join('|') === 'One|Inside|Two', 'zone outline');
+  assert.deepEqual(await ui("[...document.querySelectorAll('#outline .outline-entry')].map(entry => entry.draggable)"), [true, false, true], 'Only top-level headings are draggable');
+  await ui("[...document.querySelectorAll('#outline .outline-entry')][2].focus()");
+  await pressKey('ArrowUp', 38, 1);
+  await waitFor(async () => ui("document.querySelector('#source-editor').value.startsWith('# Two')"), 'Alt+Up moves a section past a whole zone');
+  const movedZone = await ui("document.querySelector('#source-editor').value");
+  assert.equal((movedZone.match(/:::zone pivot/g) || []).length, 1);
+  assert.ok(movedZone.indexOf(':::zone pivot') < movedZone.indexOf(':::zone-end') && movedZone.indexOf('## Inside') < movedZone.indexOf(':::zone-end'), 'The zone stays intact');
+  await menuAction('undo');
+  await waitFor(async () => ui(`document.querySelector('#source-editor').value === ${JSON.stringify(zoneFixture)}`), 'undo zone move');
+  await sourceEdit(outlineFixture);
+  await action('visual');
+  await waitFor(async () => (await outlineLabels()).join('|') === 'Alpha|Alpha child|Beta', 'restore outline fixture');
+  console.log('PASS: outline moves keep publishing zones intact and only top-level headings can be dragged');
+
+  // Block commands: keyboard, native menus, compact context menu, palette, and undo.
+  await caretIn('Second paragraph.');
+  await pressKey('ArrowUp', 38, 9);
+  assert.deepEqual((await visualBlocks()).slice(0, 3), ['Alpha', 'Second paragraph.', 'First paragraph.'], 'Alt+Shift+Up moves the block');
+  assert.equal(await ui("document.querySelector('#visual-editor .tiptap').editor.state.selection.$from.parent.textContent"), 'Second paragraph.', 'The caret moves with its block');
+  await menuAction('block:down');
+  assert.deepEqual((await visualBlocks()).slice(0, 3), ['Alpha', 'First paragraph.', 'Second paragraph.'], 'Block > Move block down');
+  await ui("(() => {const root=document.querySelector('#visual-editor .tiptap');root.editor.chain().focus().setTextSelection(2).run();return true})()");
+  await menuAction('block:up');
+  await waitFor(async () => ui("document.querySelector('#notification').textContent.includes('already the first')"), 'First block explains why it cannot move');
+  await caretIn('Second paragraph.');
+  await showContext('.tiptap > p:nth-of-type(2)');
+  const blockMenu = await main.evaluate("smokeMenuItem(['Block']).submenu.items.map(item => [item.label, item.enabled])");
+  assert.deepEqual(blockMenu, [['Move block up', true], ['Move block down', true], ['Duplicate block', true], ['Remove block', true]]);
+  assert.equal(await main.evaluate("smokeMenuItem(['View and tools', 'Command palette...']).accelerator"), 'CmdOrCtrl+Shift+P');
+  await contextAction(['Block', 'Duplicate block']);
+  assert.equal((await visualBlocks()).filter(text => text === 'Second paragraph.').length, 2, 'Right-click Block > Duplicate block');
+  await ui("document.querySelector('#editor-context-menu').hidePopover?.()");
+  const appMenu = await main.evaluate(`(() => {
+    const items = smokeElectron.Menu.getApplicationMenu().items;
+    const edit = items.find(item => item.label.replace('&','') === 'Edit').submenu.items.find(item => item.label === 'Block');
+    const view = items.find(item => item.label.replace('&','') === 'View').submenu.items.find(item => item.label === 'Command palette...');
+    return {block: edit.submenu.items.map(item => item.label), palette: view.accelerator, registered: view.registerAccelerator !== false};
+  })()`);
+  assert.deepEqual(appMenu, { block: ['Move block up', 'Move block down', 'Duplicate block', 'Remove block'], palette: 'CmdOrCtrl+Shift+P', registered: true });
+
+  // Command palette: shortcut, header button, filtering, empty state, Enter, Escape, backdrop.
+  await nativeShortcut('P', ['control', 'shift']);
+  await waitFor(async () => ui("!document.querySelector('#command-palette').hidden && document.activeElement === document.querySelector('#command-palette input')"), 'Ctrl+Shift+P opens the command palette');
+  assert.ok(await ui("document.querySelectorAll('#command-results .command-group').length") >= 8, 'Empty query lists grouped commands');
+  assert.ok(await ui("(() => {const panel=document.querySelector('.command-panel').getBoundingClientRect();return panel.left>=0&&panel.right<=innerWidth&&panel.top>=0&&panel.bottom<=innerHeight})()"), 'Palette fits inside the window');
+  await browser.call('Input.insertText', { text: 'remove block' }, sessionId);
+  await waitFor(async () => ui("document.querySelector('#command-results [aria-selected=true]')?.dataset.commandId === 'block:remove'"), 'Palette filters by every typed word');
+  assert.equal(await ui("document.querySelector('#command-palette input').getAttribute('aria-activedescendant')"), await ui("document.querySelector('#command-results [aria-selected=true]').id"));
+  await pressKey('Enter', 13, 0, '\r');
+  await waitFor(async () => ui("document.querySelector('#command-palette').hidden"), 'Enter closes the palette');
+  assert.equal((await visualBlocks()).filter(text => text === 'Second paragraph.').length, 1, 'Palette runs Remove block at the restored caret');
+  assert.equal(await ui("document.querySelectorAll('#command-results [role=option]').length"), 0, 'Closed palette leaves no stale options');
+  assert.match(await ui("document.querySelector('#notification').textContent"), /Ctrl\+Z/);
+  await nativeShortcut('Z', ['control']);
+  await waitFor(async () => (await visualBlocks()).filter(text => text === 'Second paragraph.').length === 2, 'Undo restores a removed block');
+  await clickControl('header [data-action="command-palette"]');
+  await waitFor(async () => ui("!document.querySelector('#command-palette').hidden"), 'Header search opens the palette');
+  await browser.call('Input.insertText', { text: 'zzzz nothing' }, sessionId);
+  await waitFor(async () => ui("document.querySelector('#command-results .command-empty')?.textContent === 'No matching commands'"), 'Palette empty state');
+  await pressKey('Enter', 13, 0, '\r');
+  assert.equal(await ui("document.querySelector('#command-palette').hidden"), false, 'Enter with no match does nothing');
+  await pressKey('Escape', 27);
+  await waitFor(async () => ui("document.querySelector('#command-palette').hidden"), 'Escape closes the palette');
+  assert.equal(await ui("Boolean(document.activeElement.closest('.tiptap'))"), true, 'Closing the palette restores editor focus');
+  await menuAction('command-palette');
+  await waitFor(async () => ui("!document.querySelector('#command-palette').hidden"), 'Menu action opens the palette');
+  await menuAction('command-palette');
+  assert.equal(await ui("!document.querySelector('#command-palette').hidden && document.activeElement === document.querySelector('#command-palette input')"), true, 'Opening twice keeps one palette focused');
+  await pressKey('Tab', 9);
+  assert.equal(await ui("document.activeElement === document.querySelector('#command-palette input') && !document.querySelector('#command-palette').hidden"), true, 'Tab keeps focus inside the palette');
+  await pressKey('Tab', 9, 8);
+  assert.equal(await ui("document.activeElement === document.querySelector('#command-palette input')"), true, 'Shift+Tab keeps focus inside the palette');
+  await ui("document.querySelector('header [data-action=\"command-palette\"]').focus()");
+  await waitFor(async () => ui("document.querySelector('#command-palette').hidden"), 'Focus leaving the palette closes it');
+  await menuAction('command-palette');
+  await waitFor(async () => ui("!document.querySelector('#command-palette').hidden"), 'reopen palette');
+  for (const type of ['mousePressed', 'mouseReleased']) await browser.call('Input.dispatchMouseEvent', { type, x: 12, y: 300, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }, sessionId);
+  await waitFor(async () => ui("document.querySelector('#command-palette').hidden"), 'Backdrop click closes the palette');
+  await caretIn('Beta text.');
+  await nativeShortcut('P', ['control', 'shift'], false);
+  await waitFor(async () => ui("!document.querySelector('#command-palette').hidden"), 'palette for a toolbar command');
+  await browser.call('Input.insertText', { text: 'heading 2' }, sessionId);
+  await waitFor(async () => ui("document.querySelector('#command-results [aria-selected=true]')?.dataset.commandId === 'heading:2'"), 'Palette finds Heading 2');
+  await pressKey('Enter', 13, 0, '\r');
+  await waitFor(async () => ui("[...document.querySelectorAll('.tiptap h2')].some(heading => heading.textContent === 'Beta text.')"), 'Palette applies a paragraph style');
+  await nativeShortcut('Z', ['control']);
+  await waitFor(async () => ui("![...document.querySelectorAll('.tiptap h2')].some(heading => heading.textContent === 'Beta text.')"), 'Undo the palette style');
+  console.log('PASS: block move/duplicate/remove via Alt+Shift+Arrow, menus, right-click and palette with undo; palette shortcut, header button, filtering, ARIA, empty state, Escape, backdrop, focus restore and idempotent open');
+
+  // Floating block toolbar: appears for the clicked block, hides while typing, edge states, actions, and undo.
+  const clickParagraph = async text => {
+    const point = await ui(`(() => {const p=[...document.querySelectorAll('#visual-editor .tiptap p')].find(p=>p.textContent===${JSON.stringify(text)});p.scrollIntoView({block:'center'});const r=p.getBoundingClientRect();return {x:r.left+Math.min(r.width-2,60),y:r.top+r.height/2}})()`);
+    for (const type of ['mousePressed', 'mouseReleased']) await browser.call('Input.dispatchMouseEvent', { type, x: point.x, y: point.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 }, sessionId);
+    await delay(120);
+  };
+  const blockToolbar = () => ui(`(() => {
+    const bar=document.querySelector('.block-toolbar');
+    if (!bar || bar.hidden || !bar.getClientRects().length) return null;
+    const r=bar.getBoundingClientRect(), canvas=document.querySelector('#canvas').getBoundingClientRect();
+    return {actions:[...bar.querySelectorAll('button')].map(b=>[b.dataset.action,b.disabled,b.getAttribute('aria-label')||b.title]),inside:r.left>=canvas.left-1&&r.right<=canvas.right+1&&r.top>=canvas.top-1};
+  })()`);
+  await clickParagraph('First paragraph.');
+  await waitFor(async () => Boolean(await blockToolbar()), 'Clicking a block shows the floating block toolbar');
+  const toolbarState = await blockToolbar();
+  assert.deepEqual(toolbarState.actions.map(([id, disabled]) => [id, disabled]), [['block:up', false], ['block:down', false], ['block:duplicate', false], ['block:remove', false]]);
+  assert.ok(toolbarState.inside && toolbarState.actions.every(([, , label]) => label), JSON.stringify(toolbarState));
+  if (process.env.LEKH_SCREENSHOT) {
+    const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'block-toolbar.png'), Buffer.from(shot.data, 'base64'));
+  }
+  await pressKey('a', 65, 0, 'a');
+  await waitFor(async () => (await blockToolbar()) === null, 'Typing hides the block toolbar');
+  await pressKey('Backspace', 8);
+  await clickParagraph('First paragraph.');
+  await waitFor(async () => Boolean(await blockToolbar()), 'Clicking again shows the toolbar');
+  const before = await visualBlocks();
+  await clickControl('.block-toolbar [data-action="block:duplicate"]');
+  await waitFor(async () => (await visualBlocks()).filter(text => text === 'First paragraph.').length === 2, 'Toolbar duplicate');
+  assert.equal(await ui("Boolean(document.activeElement.closest('.tiptap'))"), true, 'Toolbar clicks keep editor focus');
+  await clickControl('.block-toolbar [data-action="block:remove"]');
+  await waitFor(async () => JSON.stringify(await visualBlocks()) === JSON.stringify(before), 'Toolbar remove');
+  await clickParagraph('First paragraph.');
+  await waitFor(async () => Boolean(await blockToolbar()), 'toolbar after remove');
+  await clickControl('.block-toolbar [data-action="block:down"]');
+  await waitFor(async () => (await visualBlocks())[1] === 'Second paragraph.', 'Toolbar move down');
+  await nativeShortcut('Z', ['control']);
+  await waitFor(async () => JSON.stringify(await visualBlocks()) === JSON.stringify(before), 'Undo a toolbar move');
+  await ui("(() => {const root=document.querySelector('#visual-editor .tiptap');root.editor.chain().focus().setTextSelection(2).run();return true})()");
+  await waitFor(async () => (await blockToolbar())?.actions[0][1] === true, 'Move up is disabled on the first block');
+  await action('source');
+  assert.equal(await blockToolbar(), null, 'The block toolbar is Visual-only');
+  await action('visual');
+  console.log('PASS: floating block toolbar placement, labels, typing hide, edge states, duplicate/remove/move with focus kept, undo, and Visual-only display');
+
+  // Slash menu on an empty Visual line.
+  await caretIn('Beta text.');
+  await pressKey('End', 35, 2);
+  await pressKey('Enter', 13, 0, '\r');
+  await browser.call('Input.insertText', { text: '/tabbed' }, sessionId);
+  await waitFor(async () => ui("!document.querySelector('#slash-results').hidden && document.querySelector('#slash-results [aria-selected=true]')?.dataset.commandId === 'insert:publishing-tabs'"), 'Typing /tabbed opens the slash menu');
+  assert.ok(await ui("(() => {const menu=document.querySelector('#slash-results').getBoundingClientRect();return menu.left>=0&&menu.right<=innerWidth&&menu.top>=0&&menu.bottom<=innerHeight})()"), 'Slash menu stays inside the window');
+  assert.equal(await ui("[...document.querySelectorAll('#slash-results [data-command-id]')].every(option => option.querySelector('.command-icon')?.children.length && option.querySelector('small')?.textContent.trim() && option.querySelector('small').getClientRects().length)"), true, 'Every slash entry shows an icon and a description');
+  assert.equal(await ui("[...document.querySelectorAll('#slash-results [data-command-id]')].some(option => ['save','export-pdf','block:up'].includes(option.dataset.commandId))"), false);
+  await pressKey('Escape', 27);
+  await waitFor(async () => ui("document.querySelector('#slash-results').hidden"), 'Escape dismisses the slash menu');
+  assert.equal((await visualBlocks()).at(-1), '/tabbed', 'Escape keeps the typed text');
+  await browser.call('Input.insertText', { text: ' ' }, sessionId);
+  await waitFor(async () => ui("!document.querySelector('#slash-results').hidden"), 'Typing again reopens the slash menu');
+  await pressKey('ArrowDown', 40);
+  await pressKey('ArrowUp', 38);
+  assert.equal(await ui("document.querySelector('#slash-results [aria-selected=true]').dataset.commandId"), 'insert:publishing-tabs', 'Arrow keys move through slash results');
+  await pressKey('Enter', 13, 0, '\r');
+  await waitFor(async () => ui("Boolean(document.querySelector('.tiptap [data-lekh-tabs]')) && document.querySelector('#slash-results').hidden"), 'Enter inserts the chosen block');
+  assert.equal((await visualBlocks()).includes('/tabbed '), false, 'The slash command text is removed');
+  await ui(`(() => {
+    const root=document.querySelector('#visual-editor .tiptap');
+    const heading=[...root.querySelectorAll('h1')].find(node=>node.textContent==='Beta');
+    root.editor.view.focus();
+    root.editor.commands.setTextSelection(root.editor.view.posAtDOM(heading, heading.childNodes.length));
+  })()`);
+  await browser.call('Input.insertText', { text: '/x' }, sessionId);
+  await delay(150);
+  assert.equal(await ui("document.querySelector('#slash-results').hidden"), true, 'Slash inside text or headings does not open the menu');
+  await caretIn('Beta text.');
+  await pressKey('End', 35, 2);
+  await pressKey('Enter', 13, 0, '\r');
+  await browser.call('Input.insertText', { text: '/qqqzz' }, sessionId);
+  await delay(150);
+  const blockCount = (await visualBlocks()).length;
+  await pressKey('Enter', 13, 0, '\r');
+  assert.equal((await visualBlocks()).length, blockCount + 1, 'Enter with no slash match creates a new paragraph');
+  assert.equal(await ui("document.querySelector('#slash-results').hidden"), true);
+  await nativeShortcut('Z', ['control']);
+  console.log('PASS: slash icons and descriptions; Enter falls through when nothing matches');
+  console.log('PASS: slash menu filtering, placement, block-only entries, Escape dismissal, reopen, arrow navigation and Enter insertion without leftover text');
+
+  // Grouped toolbar overflow keeps whole groups, with captions, at the minimum window size.
+  await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,600)");
+  await delay(300);
+  const grouped = await ui(`(() => {
+    const toolbar=document.querySelector('.toolbar');
+    const groups=[...toolbar.querySelectorAll('.toolbar-group')];
+    const overflow=document.querySelector('#toolbar-overflow');
+    return {
+      scroll: toolbar.scrollWidth <= toolbar.clientWidth + 1,
+      split: groups.filter(group => group.closest('#toolbar-overflow')).some(group => group.querySelectorAll('button').length === 0),
+      overflowGroups: overflow.querySelectorAll('.toolbar-group').length,
+      palette: getComputedStyle(document.querySelector('header [data-action="command-palette"]')).display !== 'none',
+      overlap: (() => {
+        const visible=[...toolbar.querySelectorAll('button, select')].filter(control => !control.closest('#toolbar-overflow, .dropdown') && control.getClientRects().length).map(control => control.getBoundingClientRect());
+        return visible.some((a, i) => visible.some((b, j) => i !== j && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1));
+      })(),
+      label: (() => {const s=document.querySelector('.toolbar .view-switch');return !s || s.closest('#toolbar-overflow') || s.scrollWidth <= s.clientWidth + 1;})(),
+      fonts: new Set([...document.querySelectorAll('#toolbar-overflow .toolbar-group button')].map(b => getComputedStyle(b).fontSize)).size,
+    };
+  })()`);
+  assert.equal(grouped.overlap, false, 'Visible toolbar controls never overlap at the minimum width');
+  assert.equal(grouped.label, true, 'The View switch label is never clipped');
+  assert.ok(grouped.fonts <= 1, 'Overflow items share one font size');
+  assert.equal(grouped.scroll, true, 'No horizontal toolbar scrolling');
+  assert.equal(grouped.split, false, 'Overflow never leaves an empty group');
+  assert.ok(grouped.overflowGroups > 0, 'Whole groups move into More');
+  assert.equal(grouped.palette, true, 'Search commands remains reachable at the minimum width');
+  if (process.env.LEKH_SCREENSHOT) {
+    await clickControl('[data-action="format-menu"]');
+    const narrow = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'toolbar-narrow-overflow.png'), Buffer.from(narrow.data, 'base64'));
+    await clickControl('[data-action="format-menu"]');
+  }
+  await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320,900)");
+  await delay(300);
+  if (process.env.LEKH_SCREENSHOT) {
+    await caretIn('First paragraph.');
+    await pressKey('End', 35, 2);
+    await pressKey('Enter', 13, 0, '\r');
+    await browser.call('Input.insertText', { text: '/' }, sessionId);
+    await waitFor(async () => ui("!document.querySelector('#slash-results').hidden"), 'slash screenshot');
+    const slash = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'slash-menu.png'), Buffer.from(slash.data, 'base64'));
+    await pressKey('Escape', 27);
+    await menuAction('command-palette');
+    const palette = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'command-palette.png'), Buffer.from(palette.data, 'base64'));
+    await pressKey('Escape', 27);
+    await browser.call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 700, y: 330 }, sessionId);
+    for (const theme of ['light', 'dark']) {
+      await menuAction(`theme:${theme}`);
+      await delay(200);
+      const full = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `grouped-toolbar-${theme}.png`), Buffer.from(full.data, 'base64'));
+    }
+  }
+  await main.evaluate('smokeChoice = 1');
+  await menuAction('close-tab');
+  assert.equal(await tabCount(), 1);
+  console.log('PASS: grouped toolbar overflow keeps whole groups and command search reachable at the minimum window size');
+
   await action('source');
   await sourceEdit('# Final unsaved draft');
   await main.evaluate('smokeChoice = 2');
@@ -3208,7 +3507,8 @@ try {
   smokeChoice = 1; smokeElectron.BrowserWindow.getAllWindows()[0].once('closed', () => process.stdout.write('SMOKE_LAST_TAB_CLOSED\\n')); smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action', 'close-tab')`);
   await waitFor(() => log.includes('SMOKE_LAST_TAB_CLOSED'), 'actual final-tab window closure');
   for (const client of clients) client.socket.close();
-  await waitFor(() => child.exitCode === 0, 'normal application exit after final tab', 15000);
+  await waitFor(() => child.exitCode !== null || child.signalCode !== null, 'normal application exit after final tab', 15000);
+  assert.equal(child.exitCode, 0, `Application exited with code ${child.exitCode} / signal ${child.signalCode}`);
   console.log('PASS: final-tab Cancel and canceled Save As retain edits; Discard closes the actual window and exits the application normally');
   console.log('Desktop smoke checks passed.');
 } catch (error) {

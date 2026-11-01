@@ -4,9 +4,9 @@ import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLi
 
 test('outline handles ATX and Setext headings and excludes code blocks', () => {
   assert.deepEqual(headings('# Title\n\n```\n# not a heading\n```\n\nSubtitle\n---\n\n### Details'), [
-    { level: 1, text: 'Title', displayText: 'Title', line: 0 },
-    { level: 2, text: 'Subtitle', displayText: 'Subtitle', line: 6 },
-    { level: 3, text: 'Details', displayText: 'Details', line: 9 },
+    { level: 1, text: 'Title', displayText: 'Title', line: 0, root: true },
+    { level: 2, text: 'Subtitle', displayText: 'Subtitle', line: 6, root: true },
+    { level: 3, text: 'Details', displayText: 'Details', line: 9, root: true },
   ]);
 });
 
@@ -22,15 +22,15 @@ test('outline labels show link descriptions without URLs or inline formatting sy
     ['', ''],
   ];
   for (const [source, displayText] of cases) {
-    assert.deepEqual(headings(`## ${source}`), [{ level: 2, text: source, displayText, line: 0 }]);
+    assert.deepEqual(headings(`## ${source}`), [{ level: 2, text: source, displayText, line: 0, root: true }]);
   }
 });
 
 test('outline labels resolve reference links and preserve Setext heading locations', () => {
   assert.deepEqual(headings('## [**Full** reference][guide]\n\n[guide]: https://example.com/guide\n\nSetext [guide][]\n---\n\n[guide]\n===\n'), [
-    { level: 2, text: '[**Full** reference][guide]', displayText: 'Full reference', line: 0 },
-    { level: 2, text: 'Setext [guide][]', displayText: 'Setext guide', line: 4 },
-    { level: 1, text: '[guide]', displayText: 'guide', line: 7 },
+    { level: 2, text: '[**Full** reference][guide]', displayText: 'Full reference', line: 0, root: true },
+    { level: 2, text: 'Setext [guide][]', displayText: 'Setext guide', line: 4, root: true },
+    { level: 1, text: '[guide]', displayText: 'guide', line: 7, root: true },
   ]);
 });
 
