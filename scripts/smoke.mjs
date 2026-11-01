@@ -2772,12 +2772,12 @@ try {
       const root=document.querySelector('#visual-editor .tiptap');
       const p=[...root.querySelectorAll('p')].find(p=>p.textContent===${JSON.stringify(text)});
       if (!p) throw new Error('Missing paragraph: '+${JSON.stringify(text)}+'; found: '+[...root.querySelectorAll('p')].map(node=>node.textContent).join(' | '));
-      root.focus();
-      const desired=root.editor.view.posAtDOM(p,p.childNodes.length),range=document.createRange();
-      range.selectNodeContents(p);range.collapse(false);window.getSelection().removeAllRanges();window.getSelection().addRange(range);
+      const desired=root.editor.view.posAtDOM(p,p.childNodes.length);
+      root.editor.view.focus();
+      root.editor.commands.setTextSelection(desired);
       return desired;
     })()`);
-    await waitFor(async () => ui(`document.querySelector('#visual-editor .tiptap').editor.state.selection.from === ${position}`), `caret sync for ${text}`);
+    await waitFor(async () => ui(`(() => {const selection=document.querySelector('#visual-editor .tiptap').editor.state.selection;return selection.empty && selection.from === ${position}})()`), `caret sync for ${text}`);
   };
   await waitFor(async () => ui("document.querySelector('[data-lekh-tabs]') && document.querySelector('[data-lekh-metadata]')"), 'real editable tab and metadata model');
   await showContext('.tiptap p');
