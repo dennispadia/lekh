@@ -157,5 +157,5 @@ export async function resolveIncludes(
     return result;
   }
 
-  return expand(initial, documentPath, [], 0);
+  return expand(initial, null, [], 0);
 }

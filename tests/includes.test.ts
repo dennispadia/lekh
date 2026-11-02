@@ -160,6 +160,34 @@ test('include access is independent of images and restricted to the document fol
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('includes resolve relative to the real document when opened through a directory link', async t => {
+  const { root, article, includes } = await fixture();
+  const links = await mkdtemp(path.join(os.tmpdir(), 'lekh-includes-links-'));
+  try {
+    const linkedRoot = path.join(links, 'project');
+    try { await symlink(root, linkedRoot, process.platform === 'win32' ? 'junction' : 'dir'); }
+    catch (error) {
+      if (['EPERM', 'EACCES', 'ENOSYS'].includes((error as NodeJS.ErrnoException).code ?? '')) {
+        t.skip('This account cannot create directory links.');
+        return;
+      }
+      throw error;
+    }
+
+    await writeFile(path.join(path.dirname(article), 'local.md'), 'Local linked content.');
+    await writeFile(path.join(includes, 'shared.md'), '[!INCLUDE [Nested](nested.md)]\n');
+    await writeFile(path.join(includes, 'nested.md'), 'Nested linked content.');
+    const linkedArticle = path.join(linkedRoot, 'articles', 'article.md');
+    const local = await resolveIncludes('[!INCLUDE [Local](local.md)]\n', linkedArticle);
+    assert.match(parser.renderer.render(local, parser.options, {}), /Local linked content/);
+    const shared = await resolveIncludes('[!INCLUDE [Shared](../includes/shared.md)]\n', linkedArticle, linkedRoot);
+    assert.match(parser.renderer.render(shared, parser.options, {}), /Nested linked content/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(links, { recursive: true, force: true });
+  }
+});
+
 test('include decoding and file size errors are reported explicitly', async () => {
   const { root, article, includes } = await fixture();
   try {
