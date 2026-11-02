@@ -85,7 +85,7 @@ export const PublishingNode = Node.create<Options>({
           const html = await publishingHTML(raw, options.documentId);
           if (destroyed || current !== revision) return;
           content.innerHTML = html;
-          initializePublishing(content, options.reportError);
+          initializePublishing(content, options.reportError, options.documentId);
           window.dispatchEvent(new CustomEvent('lekh-publishing-rendered', { detail: options.documentId }));
           await renderMermaidBlocks(content);
         } catch (error) {

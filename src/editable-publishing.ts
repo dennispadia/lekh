@@ -14,12 +14,10 @@ interface Options {
   schema: (() => Schema) | null;
   documentId: string;
   reportError: (message: string) => void;
-  allowIncludeFolder: () => void;
   refreshIncludeContent: () => void;
 }
 export type VariantOption = { id: string; label: string };
 const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message),
-  allowIncludeFolder: () => { throw new Error('Include folder access is unavailable.'); },
   refreshIncludeContent: () => { throw new Error('Include refresh is unavailable.'); } };
 let nextTabGroup = 0;
 const idPattern = /^[a-z0-9][\w-]*$/i;
@@ -709,8 +707,7 @@ const IncludeNode = Node.create<Options>({
       preview.textContent = 'Loading included content...';
       const footer = document.createElement('div'); footer.className = 'publishing-edit-tools';
       const refresh = tool('Refresh content', () => options.refreshIncludeContent());
-      const allow = tool('Allow include folder...', () => options.allowIncludeFolder());
-      footer.append(refresh, allow, paragraphAfter(context));
+      footer.append(refresh, paragraphAfter(context));
       dom.append(header, preview, footer);
       let revision = 0;
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -723,7 +720,7 @@ const IncludeNode = Node.create<Options>({
           if (destroyed || request !== revision) return;
           if (!result.ok) throw new Error(result.error);
           preview.innerHTML = result.value;
-          initializePublishing(preview, options.reportError);
+          initializePublishing(preview, options.reportError, options.documentId);
           await renderMermaidBlocks(preview);
         }).catch(error => {
           if (destroyed || request !== revision) return;

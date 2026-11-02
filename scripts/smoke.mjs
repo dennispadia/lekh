@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -108,7 +108,7 @@ class CDP {
   }
 }
 
-try {
+async function runChecks() {
   const mainURL = await waitFor(() => /Debugger listening on (ws:\/\/[^\s]+)/.exec(log)?.[1], 'main inspector');
   const browserURL = await waitFor(() => /DevTools listening on (ws:\/\/[^\s]+)/.exec(log)?.[1], 'desktop renderer', 90000);
   const main = await CDP.connect(mainURL);
@@ -186,7 +186,187 @@ try {
   assert.ok(taskAlignment.length >= 3 && taskAlignment.every(offset => offset <= 1), `Checkbox alignment must be within 1px of first text line: ${taskAlignment}`);
   console.log('PASS: task checkboxes align with the first line of their text within 1px');
   assert.equal(await ui("document.querySelector('#dirty-indicator').textContent"), '');
-  await main.evaluate(`globalThis.smokeElectron = ${electron}; globalThis.smokeSavePath = null; globalThis.smokeSaveCalls = 0; globalThis.smokeOpenPath = null; globalThis.smokeChoice = 2; globalThis.smokeChoices = []; smokeElectron.dialog.showSaveDialog = async () => { smokeSaveCalls++; return smokeSavePath ? ({canceled:false,filePath:smokeSavePath}) : ({canceled:true}); }; smokeElectron.dialog.showOpenDialog = async () => smokeOpenPath ? ({canceled:false,filePaths:[smokeOpenPath]}) : ({canceled:true,filePaths:[]}); smokeElectron.dialog.showMessageBox = async () => ({response:smokeChoices.length ? smokeChoices.shift() : smokeChoice});`);
+  await main.evaluate(`globalThis.smokeElectron = ${electron}; globalThis.smokeSavePath = null; globalThis.smokeSaveCalls = 0; globalThis.smokeOpenPath = null; globalThis.smokeChoice = 2; globalThis.smokeChoices = []; globalThis.smokeIncludeChoice = 0; globalThis.smokeIncludeQuestions = []; globalThis.smokeHoldInclude = false; globalThis.smokeResolveInclude = null;
+    smokeElectron.dialog.showSaveDialog = async () => { smokeSaveCalls++; return smokeSavePath ? ({canceled:false,filePath:smokeSavePath}) : ({canceled:true}); };
+    smokeElectron.dialog.showOpenDialog = async () => smokeOpenPath ? ({canceled:false,filePaths:[smokeOpenPath]}) : ({canceled:true,filePaths:[]});
+    smokeElectron.dialog.showMessageBox = async (_window, options) => {
+      if (options?.message === 'Allow this document to load shared files?') {
+        smokeIncludeQuestions.push(options);
+        if (smokeHoldInclude) return await new Promise(resolve => { smokeResolveInclude = resolve; });
+        return {response:smokeIncludeChoice};
+      }
+      return {response:smokeChoices.length ? smokeChoices.shift() : smokeChoice};
+    };`);
+  if (process.env.LEKH_INCLUDE_SMOKE_ONLY === '1') {
+    const project = path.join(temporary, 'include-project');
+    const articleDirectory = path.join(project, 'articles', 'sap', 'workloads');
+    const includeDirectory = path.join(project, 'includes');
+    await mkdir(articleDirectory, { recursive: true });
+    await mkdir(includeDirectory, { recursive: true });
+    await mkdir(path.join(project, 'assets'));
+    await writeFile(path.join(project, 'assets', 'pixel.png'), testPNG(1, 1));
+    await writeFile(path.join(includeDirectory, 'shared.md'), '---\ntitle: Private metadata\n---\n\nShared Include body.\n\n![Shared image](../assets/pixel.png)\n\n[!INCLUDE [Nested](nested.md)]\n');
+    await writeFile(path.join(includeDirectory, 'nested.md'), 'Nested Include body.\n');
+    await writeFile(path.join(includeDirectory, 'interactive.md'), '# [One](#tab/one)\n\nFirst included example.\n\n# [Two](#tab/two)\n\nSecond included example.\n\n---\n');
+    await writeFile(path.join(articleDirectory, 'local.md'), 'Document-folder include.');
+    const articleSource = [
+      '# Include permission fixture', '', '[!INCLUDE [Shared](../../../includes/shared.md)]', '',
+      '# [First example](#tab/first)', '', '[!INCLUDE [Shared in tab](../../../includes/shared.md)]', '',
+      '# [Second example](#tab/second)', '', 'Another example.', '', '---', '',
+    ].join('\n');
+    const article = path.join(articleDirectory, 'first.md');
+    const second = path.join(articleDirectory, 'second.md');
+    const third = path.join(articleDirectory, 'third.md');
+    for (const file of [article, second, third]) await writeFile(file, articleSource);
+    const send = async name => {
+      await main.evaluate(`smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action', ${JSON.stringify(name)})`);
+      await delay(100);
+      await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), name);
+    };
+    const activeId = () => ui("document.querySelector('.document-tab.selected').dataset.documentId");
+    const openFile = async file => {
+      await main.evaluate(`smokeOpenPath=${JSON.stringify(file)}`);
+      await send('open');
+      await waitFor(async () => ui(`document.querySelector('#filename').textContent === ${JSON.stringify(path.basename(file))}`), `open ${file}`);
+      return activeId();
+    };
+    const expression = (id, method, content = articleSource) => `window.lekh.${method}(${JSON.stringify(id)},${JSON.stringify(content)})`;
+
+    await main.evaluate('smokeIncludeQuestions=[]; smokeIncludeChoice=0; smokeHoldInclude=true; smokeResolveInclude=null');
+    const firstId = await openFile(article);
+    await waitFor(() => main.evaluate('smokeIncludeQuestions.length === 1 && typeof smokeResolveInclude === "function"'), 'one pending include permission');
+    const question = await main.evaluate('smokeIncludeQuestions[0]');
+    assert.ok(question.detail.includes(await realpath(project)), 'The prompt suggests the containing project folder');
+    assert.ok(question.detail.includes('shared.md') && question.detail.includes('ends when it is closed'), 'The prompt explains the requested file and session scope');
+    assert.equal(await ui("document.body.textContent.includes('Shared Include body.')"), false, 'External content is not displayed before consent');
+    await ui(`globalThis.includeResults=null; Promise.all([
+      ${expression(firstId, 'previewIncludes')},
+      ${expression(firstId, 'includesRequireInteractiveExport')},
+      ${expression(firstId, 'previewIncludes')}
+    ]).then(results => { globalThis.includeResults=results; }); true`);
+    await delay(800);
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 1, 'Simultaneous preview and export checks share one prompt');
+    await main.evaluate('smokeHoldInclude=false; smokeResolveInclude({response:0}); smokeResolveInclude=null');
+    await waitFor(async () => ui("globalThis.includeResults?.length === 3"), 'concurrent include requests complete');
+    const results = await ui('globalThis.includeResults');
+    assert.ok(results.every(result => result.ok), JSON.stringify(results));
+    assert.equal(results[1].value, true, 'An included or parent tab remains interactive');
+    const includedTabs = '[!INCLUDE [Examples](../../../includes/interactive.md)]\n';
+    const interactive = await ui(expression(firstId, 'includesRequireInteractiveExport', includedTabs));
+    assert.deepEqual(interactive, { ok: true, value: true }, 'Tabs inside an include restrict static export');
+    const word = await ui(`window.lekh.exportDocument(${JSON.stringify(firstId)},${JSON.stringify(includedTabs)},'docx')`);
+    assert.equal(word.ok, false);
+    assert.match(word.error, /HTML/i);
+    await waitFor(async () => ui("[...document.querySelectorAll('[data-lekh-include] .publishing-include-preview')].filter(item=>item.textContent.includes('Nested Include body.')).length >= 2"), 'Visual refreshes standalone and tabbed includes');
+    await waitFor(async () => ui("[...document.querySelectorAll('[data-lekh-include] img')].some(image=>image.complete && image.naturalWidth===1)"), 'included relative image loads after consent');
+    await send('preview');
+    await waitFor(async () => ui("document.querySelector('.document-preview').textContent.includes('Shared Include body.') && document.querySelector('.document-preview').textContent.includes('Nested Include body.')"), 'Preview refreshes included content');
+    await waitFor(async () => ui("document.querySelector('.document-preview img')?.naturalWidth === 1"), 'Preview displays the included image');
+    const output = path.join(temporary, 'include-export.html');
+    await main.evaluate(`smokeSavePath=${JSON.stringify(output)}`);
+    const exported = await ui(`window.lekh.exportDocument(${JSON.stringify(firstId)},${JSON.stringify(articleSource)},'html')`);
+    assert.equal(exported.ok, true, JSON.stringify(exported));
+    const html = await readFile(output, 'utf8');
+    assert.match(html, /Shared Include body/);
+    assert.match(html, /Nested Include body/);
+    assert.match(html, /data:image\/png;base64,/);
+    assert.doesNotMatch(html, /Private metadata/);
+    assert.equal(await readFile(article, 'utf8'), articleSource, 'Rendering and export do not rewrite the parent document');
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 1);
+    await send('close-tab');
+
+    await main.evaluate('smokeIncludeChoice=1; smokeHoldInclude=false');
+    const secondId = await openFile(second);
+    await waitFor(() => main.evaluate('smokeIncludeQuestions.length === 2'), 'separate document requests its own access');
+    await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-include] .publishing-include-access'))"), 'declined access shows contextual recovery');
+    assert.equal(await ui("document.body.textContent.includes('Shared Include body.')"), false, 'The previous document grant is not inherited');
+    const local = await ui(expression(secondId, 'previewIncludes', '[!INCLUDE [Local](local.md)]\n'));
+    assert.equal(local.ok, true);
+    assert.match(local.value, /Document-folder include/);
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2, 'Includes in the document folder need no permission prompt');
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const blocked = await ui(expression(secondId, 'previewIncludes'));
+      assert.equal(blocked.ok, true);
+      assert.doesNotMatch(blocked.value, /Shared Include body/);
+      const interactive = await ui(expression(secondId, 'includesRequireInteractiveExport'));
+      assert.equal(interactive.ok, false);
+      assert.match(interactive.error, /outside the allowed folder/);
+    }
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2, 'A declined request does not reappear on refresh');
+    assert.equal(await ui("Boolean(document.querySelector('[data-action=allow-include-folder], [data-action=revoke-include-folder]'))"), false);
+    const menuLabels = await main.evaluate(`(() => { const labels=[]; const walk=menu=>{for(const item of menu.items){labels.push(item.label);if(item.submenu)walk(item.submenu)}}; walk(smokeElectron.Menu.getApplicationMenu()); return labels; })()`);
+    assert.ok(!menuLabels.some(label => /Allow local include folder|Stop local include folder access/.test(label)), 'Native and context-menu permission entries are removed');
+    const blockedExport = await ui(`window.lekh.exportDocument(${JSON.stringify(secondId)},${JSON.stringify(articleSource)},'html')`);
+    assert.equal(blockedExport.ok, false);
+    assert.match(blockedExport.error, /outside the allowed folder/);
+    await main.evaluate(`smokeOpenPath=${JSON.stringify(project)}`);
+    await ui("document.querySelector('[data-lekh-include] .publishing-include-access').click()");
+    await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared Include body.')"), 'contextual folder selection retries the denied include');
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2);
+    const revoked = await ui(`window.lekh.revokeIncludeFolder(${JSON.stringify(secondId)})`);
+    assert.equal(revoked.ok, true);
+    await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-include] .publishing-include-access'))"), 'revocation refreshes the visible include');
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2, 'Revocation does not immediately trigger another prompt');
+    await ui("document.querySelector('[data-lekh-include] .publishing-include-access').click()");
+    await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared Include body.')"), 'contextual recovery can grant access again');
+
+    const rootTarget = path.join(path.parse(project).root, 'lekh-unavailable.md');
+    const rootRelative = path.relative(articleDirectory, rootTarget).split(path.sep).join('/');
+    const rootRequest = `[!INCLUDE [Outside](${rootRelative})]\n`;
+    const rootResult = await ui(expression(secondId, 'previewIncludes', rootRequest));
+    assert.equal(rootResult.ok, true);
+    assert.match(rootResult.value, /outside the allowed folder/);
+    assert.match(rootResult.value, /Choose project folder/);
+    assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2, 'A filesystem root is never suggested automatically');
+    const outside = path.join(temporary, 'outside-project');
+    await mkdir(outside);
+    await writeFile(path.join(outside, 'secret.md'), 'Outside content must remain private.');
+    try {
+      await symlink(outside, path.join(includeDirectory, 'linked-outside'), process.platform === 'win32' ? 'junction' : 'dir');
+      const junction = '[!INCLUDE [Escape](../../../includes/linked-outside/secret.md)]\n';
+      const junctionResult = await ui(expression(secondId, 'previewIncludes', junction));
+      assert.equal(junctionResult.ok, true);
+      assert.match(junctionResult.value, /symlink or junction escape/);
+      assert.doesNotMatch(junctionResult.value, /Outside content must remain private/);
+      assert.equal(await main.evaluate('smokeIncludeQuestions.length'), 2, 'A junction escape does not trigger an automatic grant');
+    } catch (error) {
+      if (!['EPERM', 'EACCES', 'ENOSYS'].includes(error.code)) throw error;
+      console.log('SKIP: directory-junction check is unavailable to this account');
+    }
+
+    await main.evaluate('smokeHoldInclude=true; smokeResolveInclude=null');
+    const staleId = await openFile(third);
+    await waitFor(() => main.evaluate('smokeIncludeQuestions.length === 3 && typeof smokeResolveInclude === "function"'), 'third document permission waits');
+    await ui(`globalThis.staleIncludeResult=null; ${expression(staleId, 'previewIncludes')}.then(result=>{globalThis.staleIncludeResult=result}); true`);
+    await send('close-tab');
+    await waitFor(async () => (await activeId()) !== staleId, 'close document while consent is pending');
+    await main.evaluate('smokeHoldInclude=false; smokeResolveInclude({response:0}); smokeResolveInclude=null');
+    await waitFor(async () => ui('globalThis.staleIncludeResult !== null'), 'closed document rejects pending access');
+    assert.equal(await ui('globalThis.staleIncludeResult.ok'), false);
+    assert.match(await ui('globalThis.staleIncludeResult.error'), /no longer open|changed/);
+    await main.evaluate('smokeIncludeChoice=1');
+    const reopenedId = await openFile(third);
+    assert.notEqual(reopenedId, staleId);
+    await waitFor(() => main.evaluate('smokeIncludeQuestions.length === 4'), 'reopening requires a new per-document grant');
+    await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-include] .publishing-include-access'))"), 'reopened document remains unapproved');
+    await main.evaluate(`smokeOpenPath=${JSON.stringify(project)}`);
+    await ui("document.querySelector('[data-lekh-include] .publishing-include-access').click()");
+    await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared Include body.')"), 'reopened document explicitly grants access');
+    const movedRoot = path.join(temporary, 'moved-project');
+    const moved = path.join(movedRoot, 'articles', 'sap', 'workloads', 'moved.md');
+    await mkdir(path.dirname(moved), { recursive: true });
+    await mkdir(path.join(movedRoot, 'includes'), { recursive: true });
+    await writeFile(path.join(movedRoot, 'includes', 'shared.md'), 'Moved project Include body.\n');
+    await main.evaluate(`smokeSavePath=${JSON.stringify(moved)}`);
+    await send('save-as');
+    await waitFor(async () => ui("document.querySelector('#filename').textContent === 'moved.md'"), 'Save As changes the document path');
+    await waitFor(() => main.evaluate('smokeIncludeQuestions.length === 5'), 'Save As requires new folder consent');
+    await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-include] .publishing-include-access'))"), 'moved document does not retain the old project grant');
+    assert.ok((await main.evaluate('smokeIncludeQuestions[4].detail')).includes(await realpath(movedRoot)));
+    assert.equal(await ui("document.body.textContent.includes('Moved project Include body.')"), false);
+    console.log('PASS: three-level relative Includes, one-time consent, concurrent requests, Visual/Preview/images/export, denial and retry, document isolation, Save As, stale prompts, and junction protection');
+    return;
+  }
   assert.equal(await main.evaluate("smokeElectron.app.getPath('userData')"), path.join(temporary, 'profile'), 'Test profile is isolated from real user data');
   assert.equal(await main.evaluate("smokeElectron.app.getPath('sessionData')"), path.join(temporary, 'profile'), 'Chromium storage is isolated in the same preserved profile');
   assert.equal(await main.evaluate("smokeElectron.app.getName()"), 'Lekh');
@@ -2378,8 +2558,6 @@ try {
   await action('visual');
   await waitFor(async () => ui("Boolean(document.querySelector('.visual-surface .publishing-load-labels'))"), 'Visual offers contextual variant-label access');
   assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-choice=windows]').textContent"), 'windows');
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await menuAction('allow-include-folder');
   await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared content for label refresh.')"), 'include access for the label fixture');
   assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-choice=windows]').textContent"), 'windows', 'An Include grant does not authorize project variant configuration');
   await main.evaluate('smokeOpenPath=null');
@@ -2397,6 +2575,41 @@ try {
   await action('preview');
   await waitFor(async () => ui("document.querySelector('.document-preview [data-publishing-variant=linux]')?.textContent === 'Updated Linux'"), 'project labels refresh in Preview');
   await action('preview');
+  await menuAction('close-tab');
+  const sharedVariantsFile = path.join(publishingRoot, 'shared-variant-groups.yml');
+  await writeFile(sharedVariantsFile, 'groups: []\n');
+  await action('new');
+  await action('visual');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(sharedVariantsFile)}`);
+  await ui("document.querySelector('[data-action=\"insert:publishing-selector\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#variant-storage-dialog').open"), 'shared selector storage choice');
+  await ui("document.querySelector('#variant-storage-dialog button[value=shared]').click()");
+  await waitFor(async () => ui("document.querySelector('#shared-variant-details-dialog').open"), 'shared selector file and entry details');
+  await main.evaluate('smokeOpenPath=null');
+  await ui(`(() => {
+    document.querySelector('#shared-variant-owner').value = 'smoke-owner';
+    document.querySelector('#shared-variant-id').value = 'smoke-platform';
+    document.querySelector('#shared-variant-title').value = 'Platform';
+    document.querySelector('#shared-variant-prompt').value = 'Choose a platform';
+    document.querySelector('#shared-variant-details-form button[value=review]').click();
+  })()`);
+  await waitFor(async () => ui("document.querySelector('#shared-variant-review-dialog').open"), 'review shared selector entry and article metadata');
+  assert.match(await ui("document.querySelector('#shared-variant-review-entry').textContent"), /# Owner: smoke-owner[\s\S]*- id: smoke-platform/);
+  assert.match(await ui("document.querySelector('#shared-variant-review-metadata').textContent"), /zone_pivot_groups: smoke-platform/);
+  await ui("document.querySelector('#shared-variant-review-dialog button[value=confirm]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false' && document.querySelector('.visual-surface .publishing-document-selector > strong')?.textContent === 'Choose a platform'"), 'shared selector appears in the Visual document');
+  const sharedVariantEntry = await readFile(sharedVariantsFile, 'utf8');
+  assert.match(sharedVariantEntry, /# Owner: smoke-owner[\s\S]*- id: smoke-platform/);
+  await action('source');
+  assert.match(await ui("document.querySelector('#source-editor').value"), /zone_pivot_groups: smoke-platform/);
+  await action('visual');
+  await ui("document.querySelector('[data-action=\"insert:publishing-selector\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'shared choices are available for Add variant content');
+  assert.deepEqual(await ui("Array.from(document.querySelectorAll('#variant-content-options input'), input => input.value)"), ['option-1', 'option-2']);
+  await ui("document.querySelector('#variant-content-dialog button[value=cancel]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'cancel shared variant content insertion');
+  console.log('PASS: shared selector mode, existing-file entry review/write, article metadata, Visual choices, and Add variant content options');
+  await main.evaluate('smokeOpenPath=null');
   await menuAction('close-tab');
   const imageAccessFile = path.join(publishingRoot, 'docs', 'image-access.md');
   await writeFile(imageAccessFile, '# Local image\n\n![Pixel](../assets/pixel.png)\n');
@@ -2428,7 +2641,7 @@ try {
   ].join('\n');
   const publishingFile = path.join(publishingRoot, 'docs', 'article.md');
   await writeFile(publishingFile, publishingFixture);
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingFile)}`);
+  await main.evaluate(`smokeIncludeChoice=1; smokeOpenPath=${JSON.stringify(publishingFile)}`);
   await action('open');
   const publishingDocument = await activeTab();
   await action('visual');
@@ -2454,10 +2667,11 @@ try {
   await waitFor(async () => (await main.evaluate('smokeElectron.clipboard.readText()')) === 'printf "identity"', 'editable rich-block copy matches the current code text without fence syntax');
   await waitFor(async () => ui("document.querySelector('[data-lekh-selector]') && document.querySelectorAll('.visual-surface [data-publishing-selector]').length===1"), 'a single editable Visual selector');
   await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-unsupported')?.textContent.includes('outside the allowed folder')"), 'out-of-folder include requires permission');
-  assert.ok(await ui("document.querySelector('[data-action=\"allow-include-folder\"]')"), 'Include folder access is available');
+  assert.equal(await ui("Boolean(document.querySelector('[data-action=\"allow-include-folder\"], [data-action=\"revoke-include-folder\"]'))"), false, 'Include permission commands are absent from toolbar menus');
   await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await menuAction('allow-include-folder');
+  await ui("document.querySelector('[data-lekh-include] .publishing-include-access').click()");
   await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared included prose.')"), 'authorized include loads in Visual');
+  await main.evaluate('smokeIncludeChoice=0');
   assert.equal(await ui("document.querySelector('[data-lekh-include] .publishing-include-preview').textContent.includes('Include metadata is not article content')"), false);
   await waitFor(async () => ui("(() => {const image=document.querySelector('[data-lekh-include] img');return image?.complete&&image.naturalWidth===1})()"), 'included relative image loads');
   await action('edit-split');
@@ -2685,8 +2899,6 @@ try {
   await writeFile(includeOnlyFile, '# Include-only article\n\n[!INCLUDE [Examples](../includes/interactive.md)]\n');
   await main.evaluate(`smokeOpenPath=${JSON.stringify(includeOnlyFile)}`);
   await action('open');
-  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
-  await menuAction('allow-include-folder');
   await action('export-menu');
   await waitFor(async () => ui("!document.querySelector('#export-restriction').hidden && document.querySelector('[data-action=\"export-docx\"]').disabled && document.querySelector('[data-action=\"export-pdf\"]').disabled"), 'included tabs restrict static exports');
   await action('export-menu');
@@ -2886,6 +3098,12 @@ try {
     const menu = ['publishing-tabs', 'publishing-selector'].includes(kind) ? 'interactive-menu' : 'structure-menu';
     await ui(`document.querySelector('[aria-controls="${menu}"]').click()`);
     await ui(`document.querySelector('#${menu} [data-action="insert:${kind}"]').click()`);
+    if (kind === 'publishing-selector') {
+      await waitFor(async () => ui("document.querySelector('#variant-storage-dialog').open || document.querySelector('#variant-content-dialog').open"), 'variant selector or content dialog');
+      if (await ui("document.querySelector('#variant-storage-dialog').open")) {
+        await ui("document.querySelector('#variant-storage-dialog button[value=local]').click()");
+      }
+    }
     if (!modal) await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Visual publishing toolbar insertion');
   };
   const inputText = async (selector, value) => {
@@ -3203,7 +3421,6 @@ try {
   await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
   await menuAction('allow-image-folder');
   await waitFor(async () => ui("(document.querySelector('#notification')?.textContent || '').includes('Project images and variant labels are allowed')"), 'project image folder granted before Visual publishing export');
-  await menuAction('allow-include-folder');
   await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared included prose.')"), 'include access granted for Visual publishing export');
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'idle before Visual publishing export');
   await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
@@ -3870,6 +4087,10 @@ try {
   assert.equal(child.exitCode, 0, `Application exited with code ${child.exitCode} / signal ${child.signalCode}`);
   console.log('PASS: final-tab Cancel and canceled Save As retain edits; Discard closes the actual window and exits the application normally');
   console.log('Desktop smoke checks passed.');
+}
+
+try {
+  await runChecks();
 } catch (error) {
   console.error(error);
   console.error(log);

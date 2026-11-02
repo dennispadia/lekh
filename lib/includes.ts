@@ -43,7 +43,54 @@ function rebaseTokens(tokens: Token[], from: string, document: string): void {
   }
 }
 
-type ResolveOptions = { displayErrors?: boolean };
+type ResolveOptions = {
+  displayErrors?: boolean;
+  onAccessRequired?: (document: string, candidate: string) => void;
+};
+
+export function suggestedIncludeFolder(document: string, targets: readonly string[]): string | null {
+  if (!path.isAbsolute(document) || !targets.length || targets.some(target => !path.isAbsolute(target))) return null;
+  let root = path.dirname(document);
+  for (const target of targets) {
+    while (!inside(root, target)) {
+      const parent = path.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+  }
+  return root === path.parse(root).root ? null : root;
+}
+
+type PromptState = { denied: string[]; pending?: Promise<boolean> };
+
+export class IncludeAccessPrompts {
+  private readonly states = new Map<string, PromptState>();
+
+  async request(id: string, root: string, confirm: () => Promise<boolean>): Promise<boolean> {
+    const state = this.states.get(id) ?? { denied: [] };
+    this.states.set(id, state);
+    if (state.pending) return state.pending;
+    if (state.denied.some(denied => inside(denied, root))) return false;
+    const pending = (async () => {
+      const allowed = await confirm();
+      if (!allowed) state.denied.push(root);
+      return allowed;
+    })();
+    state.pending = pending;
+    try { return await pending; }
+    finally { if (state.pending === pending) state.pending = undefined; }
+  }
+
+  deny(id: string, root: string): void {
+    const state = this.states.get(id) ?? { denied: [] };
+    state.denied.push(root);
+    this.states.set(id, state);
+  }
+
+  forget(id: string): void {
+    this.states.delete(id);
+  }
+}
 
 /**
  * Expands parsed include tokens without modifying the parent Markdown or interpreting
@@ -80,6 +127,7 @@ export async function resolveIncludes(
         result.push(token);
         continue;
       }
+      let accessRequired = false;
       try {
         const directive = parseIncludeDirective(token.content.replace(/^[ \t]+/, ''));
         if (!directive?.source.trim()) throw new Error('Use [!INCLUDE [title](filepath)] with a local Markdown file.');
@@ -95,7 +143,9 @@ export async function resolveIncludes(
         if (!markdownExtension.test(source)) throw new Error('Include files must have a .md, .markdown, or .mdown extension.');
         const candidate = path.resolve(path.dirname(currentPath ?? scope.document), source);
         if (!inside(scope.root, candidate)) {
-          throw new Error('This include is outside the allowed folder. Choose Allow local include folder and select a folder containing the document and include.');
+          accessRequired = true;
+          if (!path.isAbsolute(source)) options.onAccessRequired?.(scope.document, candidate);
+          throw new Error('This include is outside the allowed folder. Allow a project folder containing the document and include.');
         }
         let file: string;
         try { file = await realpath(candidate); }
@@ -105,7 +155,10 @@ export async function resolveIncludes(
           }
           throw new Error(`Include file is inaccessible: ${directive.source}`);
         }
-        if (!inside(scope.root, file)) throw new Error('The include resolves outside the allowed folder (symlink or junction escape).');
+        if (!inside(scope.root, file)) {
+          accessRequired = true;
+          throw new Error('The include resolves outside the allowed folder (symlink or junction escape).');
+        }
         if (!markdownExtension.test(file)) throw new Error('The include must resolve to a Markdown file.');
         if (stack.some(item => sameFile(item, file)) || sameFile(scope.document, file)) throw new Error(`Include cycle detected: ${directive.source}`);
         const handle = await open(file, 'r');
@@ -150,7 +203,7 @@ export async function resolveIncludes(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (!options.displayErrors) throw new Error(`Could not load include: ${message}`);
-        token.meta = { ...token.meta, reason: `Could not load include: ${message}` };
+        token.meta = { ...token.meta, reason: `Could not load include: ${message}`, includeAccessRequired: accessRequired };
         result.push(token);
       }
     }

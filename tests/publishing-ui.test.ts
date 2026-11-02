@@ -140,20 +140,32 @@ test('formatting selected text retains Markdown, code and literal replacement ch
   assert.equal(publishingTemplateMarkdown('unknown'), undefined);
 });
 
-test('include loading has a separate, revocable folder grant and visible refresh controls', async () => {
+test('include loading has a separate session grant and contextual recovery', async () => {
   const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
   const bridge = await readFile(new URL('../src/bridge.ts', import.meta.url), 'utf8');
   const renderer = await readFile(new URL('../src/editable-publishing.ts', import.meta.url), 'utf8');
+  const publishing = await readFile(new URL('../src/publishing-view.ts', import.meta.url), 'utf8');
   assert.match(electron, /includeRoots\.set\(String\(id\), \{ root \}\)/);
   assert.match(electron, /includeRoots\.delete\(String\(id\)\)/);
   assert.match(bridge, /allowIncludeFolder/);
-  assert.match(bridge, /revokeIncludeFolder/);
+  assert.match(bridge, /onIncludeAccessChanged/);
   assert.match(renderer, /Refresh content/);
-  assert.match(renderer, /Allow include folder/);
+  assert.doesNotMatch(renderer, /Allow include folder/);
+  assert.match(publishing, /publishing-include-access/);
   assert.match(bridge, /allowImageFolder/);
   assert.match(bridge, /revokeImageFolder/);
   assert.match(electron, /imageRoots\.set\(String\(id\), \{ root \}\)/);
   assert.match(electron, /resolveIncludes\(prepared, currentPath, includeGrant\?\.root/);
+});
+
+test('include permission commands are absent from More, View and right-click menus', async () => {
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const formatMenu = renderer.slice(renderer.indexOf('<div id="format-menu"'), renderer.indexOf('<div id="notification"'));
+  assert.doesNotMatch(formatMenu, /allow-include-folder|revoke-include-folder/);
+  assert.doesNotMatch(electron, /label: '(?:Allow local include folder|Stop local include folder access)/);
+  assert.match(renderer, /structureMenuHTML/);
+  assert.match(electron, /label: 'Structure', submenu/);
 });
 
 test('image-folder permission commands are absent from menus while contextual access remains scoped', async () => {

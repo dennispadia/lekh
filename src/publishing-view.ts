@@ -16,6 +16,11 @@ export function setProjectVariantLabels(pane: HTMLElement, prepared: string | nu
   refreshPublishingVariants(pane);
 }
 
+export function projectVariantOptions(pane: HTMLElement): { title: string; options: { id: string; label: string }[] } | undefined {
+  const documentId = pane.dataset.documentId;
+  return documentId ? projectVariantLabels.get(documentId) : undefined;
+}
+
 export function choosePublishingVariant(pane: HTMLElement, id: string): void {
   if (!pane.dataset.documentId) return;
   selectedVariants.set(pane.dataset.documentId, id);
@@ -43,7 +48,30 @@ export async function publishingHTML(markdown: string, documentId: string): Prom
   return template.innerHTML;
 }
 
-export function initializePublishing(root: HTMLElement, reportError?: (message: string) => void): void {
+export function initializePublishing(root: HTMLElement, reportError?: (message: string) => void, documentId?: string): void {
+  for (const button of root.querySelectorAll<HTMLButtonElement>('.publishing-include-access')) {
+    if (button.dataset.accessReady) continue;
+    button.dataset.accessReady = 'true';
+    const id = documentId ?? root.closest<HTMLElement>('.document-pane')?.dataset.documentId;
+    if (!id) {
+      button.disabled = true;
+      button.title = 'Open the document to choose a project folder.';
+      continue;
+    }
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      event.stopPropagation();
+      button.disabled = true;
+      void window.lekh.allowIncludeFolder(id).then(result => {
+        if (!result.ok) throw new Error(result.error);
+      }).catch(error => {
+        const message = `Could not allow include access: ${String(error)}`;
+        button.title = message;
+        console.error(message);
+        reportError?.(message);
+      }).finally(() => { if (button.isConnected) button.disabled = false; });
+    });
+  }
   for (const code of root.querySelectorAll<HTMLElement>('pre > code')) {
     if (code.closest('.publishing-code') || code.classList.contains('language-mermaid')) continue;
     const pre = code.parentElement!;
@@ -123,7 +151,10 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
     pane.querySelector<HTMLElement>('.visual-surface'),
     pane.querySelector<HTMLElement>('.document-preview'),
   ].filter((surface): surface is HTMLElement => surface !== null);
+  const configuredLabels = projectVariantLabels.get(documentId);
+  const hasSharedMetadata = pane.dataset.variantConfig === 'true';
   const primary = surfaces.find(surface => !surface.closest('[hidden]') && surface.querySelector('[data-publishing-zone], [data-publishing-selector]:not(.publishing-document-selector)'))
+    ?? (configuredLabels || hasSharedMetadata ? surfaces.find(surface => !surface.closest('[hidden]')) : undefined)
     ?? surfaces.find(surface => surface.querySelector('[data-publishing-zone], [data-publishing-selector]:not(.publishing-document-selector)'));
   const zones = [...pane.querySelectorAll<HTMLElement>('[data-publishing-zone]')];
   const selectors = [...pane.querySelectorAll<HTMLElement>('[data-publishing-selector]')]
@@ -140,8 +171,8 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       if (!choices.has(id)) choices.set(id, id.replace(/[-_]/g, ' '));
     }
   }
-  const configured = !selectors.some(selector => primary?.contains(selector)) ? projectVariantLabels.get(documentId) : undefined;
-  if (choices.size && configured) {
+  const configured = !selectors.some(selector => primary?.contains(selector)) ? configuredLabels : undefined;
+  if (configured) {
     const additional = [...choices].filter(([id]) => !configured.options.some(option => option.id === id));
     choices.clear();
     for (const option of configured.options) choices.set(option.id, option.label);
@@ -163,9 +194,10 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
   for (const surface of surfaces) {
     let bar = surface.querySelector<HTMLElement>(':scope > .publishing-document-selector');
     const explicit = selectors.some(selector => surface.contains(selector));
-    if (!choices.size || explicit || !surface.querySelector('[data-publishing-zone]')) { bar?.remove(); continue; }
+    if ((!choices.size && !hasSharedMetadata) || explicit ||
+      (!configured && !hasSharedMetadata && !surface.querySelector('[data-publishing-zone]'))) { bar?.remove(); continue; }
     const hasConfiguration = pane.dataset.variantConfig === 'true';
-    const signature = JSON.stringify({ choices: [...choices], hasConfiguration, title: configured?.title });
+    const signature = JSON.stringify({ choices: [...choices], hasConfiguration, hasSharedMetadata, title: configured?.title });
     if (!bar || bar.dataset.signature !== signature) {
       bar?.remove();
       bar = document.createElement('section');
@@ -203,6 +235,14 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
         load.textContent = 'Load variant labels...';
         load.addEventListener('click', () => window.dispatchEvent(new CustomEvent('lekh-project-assets', { detail: documentId })));
         bar.append(load);
+      }
+      if (hasSharedMetadata && !configured) {
+        const choose = document.createElement('button');
+        choose.type = 'button';
+        choose.className = 'publishing-choose-shared-file';
+        choose.textContent = 'Choose shared file...';
+        choose.addEventListener('click', () => window.dispatchEvent(new CustomEvent('lekh-shared-variant-file', { detail: documentId })));
+        bar.append(choose);
       }
       surface.prepend(bar);
     }

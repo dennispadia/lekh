@@ -15,6 +15,7 @@ export type PublishingMeta = {
   index?: number;
   label?: string;
   reason?: string;
+  includeAccessRequired?: boolean;
   variants?: string[];
   options?: { id: string; label: string }[];
 };
@@ -771,8 +772,12 @@ export function registerPublishing(parser: MarkdownIt): void {
   parser.renderer.rules.publishing_tab_close = () => '</section>\n';
   parser.renderer.rules.publishing_metadata = (tokens, index, _options, env) => env.publishingExport ? '' :
     `<pre class="publishing-metadata">${escape(tokens[index].content)}</pre>\n`;
-  parser.renderer.rules.publishing_unsupported = (tokens, index) =>
-    `<aside class="publishing-unsupported" role="note"><p>${escape((tokens[index].meta as PublishingMeta).reason!)}</p><pre>${escape(tokens[index].content)}</pre></aside>\n`;
+  parser.renderer.rules.publishing_unsupported = (tokens, index, _options, env) => {
+    const meta = tokens[index].meta as PublishingMeta;
+    const access = meta.includeAccessRequired && !env.publishingExport
+      ? '<button type="button" class="publishing-include-access">Choose project folder...</button>' : '';
+    return `<aside class="publishing-unsupported" role="note"><p>${escape(meta.reason!)}</p><pre>${escape(tokens[index].content)}</pre>${access}</aside>\n`;
+  };
 }
 
 export const publishingCalloutPalette: Record<string, { background: string; border: string; darkBackground: string; darkBorder: string }> = {
