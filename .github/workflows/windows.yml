@@ -34,7 +34,7 @@ jobs:
         run: npm run build:setup
       - name: Verify setup engine, previews and hosted install/uninstall
         run: npm run verify:setup -- -InstallOnHostedRunner
-      - name: Verify genuine 0.9.2 to 0.9.3 installer decisions, rollback, upgrade and repair on hosted runner
+      - name: Verify genuine 0.9.3 to 0.9.4 installer decisions, rollback, upgrade and repair on hosted runner
         run: .\scripts\Test-Upgrade.ps1 -InstallOnHostedRunner
       - name: Create clean source archive
         run: npm run package:source

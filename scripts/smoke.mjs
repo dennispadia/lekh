@@ -2487,10 +2487,15 @@ try {
     assert.match(exportUI.text, /require HTML.*Word and PDF are not supported/i);
     assert.ok(exportUI.contrast >= 4.5, `${theme} export warning contrast: ${exportUI.contrast}`);
     assert.deepEqual([exportUI.recommended, exportUI.previews, exportUI.heading, exportUI.labelled, exportUI.previewInside], [true, 3, 'Export document', 'export-menu-title', true], 'Export panel shows a heading, three format previews and recommends HTML');
-    if (process.env.LEKH_SCREENSHOT) {
+    if (process.env.LEKH_SCREENSHOT || (process.env.LEKH_PUBLIC_SCREENSHOTS === '1' && theme === 'light')) {
       await ui("document.querySelector('#notification').hidden=true");
       const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
-      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `export-panel-${theme}.png`), Buffer.from(shot.data, 'base64'));
+      if (process.env.LEKH_SCREENSHOT) {
+        await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `export-panel-${theme}.png`), Buffer.from(shot.data, 'base64'));
+      }
+      if (process.env.LEKH_PUBLIC_SCREENSHOTS === '1' && theme === 'light') {
+        await writeFile(path.join(root, 'docs', 'images', 'export-panel.png'), Buffer.from(shot.data, 'base64'));
+      }
     }
     await action('export-menu');
   }
@@ -3693,10 +3698,15 @@ try {
   const toolbarState = await blockToolbar();
   assert.deepEqual(toolbarState.actions.map(([id, disabled]) => [id, disabled]), [['block:up', false], ['block:down', false], ['block:duplicate', false], ['block:remove', false]]);
   assert.ok(toolbarState.inside && toolbarState.actions.every(([, , label]) => label), JSON.stringify(toolbarState));
-  if (process.env.LEKH_SCREENSHOT) {
+  if (process.env.LEKH_SCREENSHOT || process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
     await ui("document.querySelector('#notification').hidden=true");
     const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
-    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'block-toolbar.png'), Buffer.from(shot.data, 'base64'));
+    if (process.env.LEKH_SCREENSHOT) {
+      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'block-toolbar.png'), Buffer.from(shot.data, 'base64'));
+    }
+    if (process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
+      await writeFile(path.join(root, 'docs', 'images', 'block-toolbar.png'), Buffer.from(shot.data, 'base64'));
+    }
   }
   await pressKey('a', 65, 0, 'a');
   await waitFor(async () => (await blockToolbar()) === null, 'Typing hides the block toolbar');
@@ -3804,7 +3814,7 @@ try {
   }
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320,900)");
   await delay(300);
-  if (process.env.LEKH_SCREENSHOT) {
+  if (process.env.LEKH_SCREENSHOT || process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
     await caretIn('First paragraph.');
     await pressKey('End', 35, 2);
     await pressKey('Enter', 13, 0, '\r');
@@ -3812,8 +3822,15 @@ try {
     await waitFor(async () => ui("!document.querySelector('#slash-results').hidden"), 'slash screenshot');
     await ui("document.querySelector('#notification').hidden=true");
     const slash = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
-    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'slash-menu.png'), Buffer.from(slash.data, 'base64'));
+    if (process.env.LEKH_SCREENSHOT) {
+      await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'slash-menu.png'), Buffer.from(slash.data, 'base64'));
+    }
+    if (process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
+      await writeFile(path.join(root, 'docs', 'images', 'slash-menu.png'), Buffer.from(slash.data, 'base64'));
+    }
     await pressKey('Escape', 27);
+  }
+  if (process.env.LEKH_SCREENSHOT) {
     await menuAction('command-palette');
     const palette = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), 'command-palette.png'), Buffer.from(palette.data, 'base64'));

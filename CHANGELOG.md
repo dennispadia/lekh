@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.4
+
+- Restore **Structure > Include** with title and file path, read-only local content in Visual and Preview, and expansion in HTML, Word and PDF exports. Include files keep their source unchanged and their opening YAML stays out of article content.
+- Resolve nested includes relative to their containing files, with separate, per-document folder authorization, bounded reads and explicit errors for unavailable or unauthorized content. Interactive content in an include requires HTML export.
+- Rename tab and selector options directly in place; use **+** to add and **×** to remove them. Removing the last tab or selector option removes its block, and undo restores it.
+- Place variant content independently through **Interactive > Add variant content**, with matching native and right-click commands. Preserve a selected block when inserting content after it and place the caret in the new variant.
+- Offer distinct **Visual**, **Markdown** and **Split** editing views, plus interactive **Preview** with optional editable Markdown on the right. Returning to editing restores the previous view.
+- Keep Preview read-only for image paste and drop, while allowing image insertion in the optional Markdown pane.
+- Offer contextual project-folder access for external images and variant labels, separate from local Include permissions.
+- Guard the genuine 0.9.3 -> 0.9.4 hosted upgrade matrix.
+
 ## 0.9.3
 
 - Use 1.15 line spacing consistently in Word exports instead of the larger editor-oriented spacing.
