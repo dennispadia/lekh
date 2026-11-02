@@ -578,19 +578,25 @@ function refreshProjectVariantLabels(tab: DocumentTab, force = false): void {
   const field = sharedVariantMetadataField(tab.markdown);
   const key = JSON.stringify([tab.path, field]);
   if (!force && tab.variantConfigKey === key) return;
+  void loadProjectVariantLabels(tab).catch(error => {
+    notify(`Variant labels could not be loaded: ${String(error)}`, true);
+  });
+}
+
+async function loadProjectVariantLabels(tab: DocumentTab): Promise<boolean> {
+  const field = sharedVariantMetadataField(tab.markdown);
+  const key = JSON.stringify([tab.path, field]);
+  if (tab.variantConfigKey !== key || !field) setProjectVariantLabels(tab.pane, null);
   tab.variantConfigKey = key;
   const revision = (tab.variantConfigRevision ?? 0) + 1;
   tab.variantConfigRevision = revision;
-  setProjectVariantLabels(tab.pane, null);
-  if (!field) return;
+  if (!field) return false;
   const snapshot = tab.markdown;
-  void window.lekh.prepareVariantConfiguration(tab.id, snapshot).then(result => {
-    if (!tabs.includes(tab) || tab.variantConfigRevision !== revision) return;
-    if (!result.ok) throw new Error(result.error);
-    setProjectVariantLabels(tab.pane, result.value === snapshot ? null : result.value);
-  }).catch(error => {
-    if (tabs.includes(tab) && tab.variantConfigRevision === revision) notify(`Variant labels could not be loaded: ${String(error)}`, true);
-  });
+  const result = await window.lekh.prepareVariantConfiguration(tab.id, snapshot);
+  if (!tabs.includes(tab) || tab.variantConfigRevision !== revision) return false;
+  if (!result.ok) throw new Error(result.error);
+  setProjectVariantLabels(tab.pane, result.value === snapshot ? null : result.value);
+  return Boolean(projectVariantOptions(tab.pane));
 }
 
 function togglePreview(): void {
@@ -864,7 +870,14 @@ function createPane(host: HTMLElement, text: HTMLTextAreaElement): { pane: HTMLE
   const visualViewport = document.createElement('div');
   visualViewport.className = 'visual-surface';
   visualViewport.append(host);
-  viewport.append(visualViewport, preview, surface);
+  let ratio = 0.5;
+  const divider = resizeDivider(viewport, 'Resize document views', () => ratio, value => {
+    ratio = splitRatio(value);
+    viewport.style.setProperty('--pane-columns', `minmax(0, ${ratio}fr) 8px minmax(0, ${1 - ratio}fr)`);
+  });
+  divider.className = 'pane-divider';
+  divider.hidden = true;
+  viewport.append(visualViewport, preview, divider, surface);
   pane.append(header, viewport);
   synchronizeDocumentScroll(pane, text, visualViewport, () => tabs.find(tab => tab.pane === pane)?.editor ?? editor);
   return { pane, viewport, visualViewport };
@@ -940,19 +953,29 @@ function visibleTabs(): DocumentTab[] {
 function resizeSplit(pair: SplitPair, ratio: number): void {
   pair.ratio = splitRatio(ratio);
   element('canvas').style.gridTemplateColumns = `minmax(0, ${pair.ratio}fr) 8px minmax(0, ${1 - pair.ratio}fr)`;
-  element('canvas').querySelector('[role="separator"]')?.setAttribute('aria-valuenow', String(Math.round(pair.ratio * 100)));
+  element('canvas').querySelector(':scope > .split-divider')?.setAttribute('aria-valuenow', String(Math.round(pair.ratio * 100)));
 }
 
 function splitDivider(pair: SplitPair): HTMLElement {
+  return resizeDivider(element('canvas'), 'Resize split editors', () => pair.ratio, value => resizeSplit(pair, value));
+}
+
+function resizeDivider(container: HTMLElement, label: string, ratio: () => number, resize: (value: number) => void): HTMLElement {
   const divider = document.createElement('div');
   divider.className = 'split-divider';
   divider.tabIndex = 0;
   divider.setAttribute('role', 'separator');
-  divider.setAttribute('aria-label', 'Resize split editors');
+  divider.setAttribute('aria-label', label);
   divider.setAttribute('aria-orientation', 'vertical');
   divider.setAttribute('aria-valuemin', '25');
   divider.setAttribute('aria-valuemax', '75');
+  divider.setAttribute('aria-valuenow', String(Math.round(ratio() * 100)));
   divider.title = 'Drag to resize; Left/Right keys resize, Home/End set limits';
+  const updateRatio = (value: number) => {
+    const bounded = splitRatio(value);
+    resize(bounded);
+    divider.setAttribute('aria-valuenow', String(Math.round(bounded * 100)));
+  };
   let dragging = false;
   divider.addEventListener('pointerdown', event => {
     if (busy || event.button !== 0) return;
@@ -963,8 +986,8 @@ function splitDivider(pair: SplitPair): HTMLElement {
   });
   divider.addEventListener('pointermove', event => {
     if (!dragging || busy) return;
-    const bounds = element('canvas').getBoundingClientRect();
-    resizeSplit(pair, (event.clientX - bounds.left) / bounds.width);
+    const bounds = container.getBoundingClientRect();
+    if (bounds.width > 0) updateRatio((event.clientX - bounds.left) / bounds.width);
   });
   divider.addEventListener('lostpointercapture', () => { dragging = false; });
   divider.addEventListener('pointerup', event => {
@@ -974,7 +997,8 @@ function splitDivider(pair: SplitPair): HTMLElement {
   divider.addEventListener('keydown', event => {
     if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    if (!busy) resizeSplit(pair, event.key === 'Home' ? 0.25 : event.key === 'End' ? 0.75 : pair.ratio + (event.key === 'ArrowLeft' ? -0.05 : 0.05));
+    event.stopPropagation();
+    if (!busy) updateRatio(event.key === 'Home' ? 0.25 : event.key === 'End' ? 0.75 : ratio() + (event.key === 'ArrowLeft' ? -0.05 : 0.05));
   });
   return divider;
 }
@@ -1106,7 +1130,11 @@ function showMode(): void {
   activeTab?.viewport.classList.toggle('side-by-side', sideBySide);
   activeTab?.viewport.classList.toggle('reader-preview', preview);
   activeTab?.viewport.classList.toggle('has-preview', previewSource);
-  if (activeTab) activeTab.viewport.querySelector<HTMLElement>('.live-preview')!.hidden = !preview;
+  if (activeTab) {
+    activeTab.viewport.querySelector<HTMLElement>('.live-preview')!.hidden = !preview;
+    activeTab.viewport.querySelector<HTMLElement>('.pane-divider')!.hidden = !sideBySide && !previewSource;
+    refreshPublishingVariants(activeTab.pane);
+  }
   const current = sideBySide ? 'split' : mode === 'source' ? 'markdown' : 'visual';
   for (const view of ['visual', 'markdown', 'split']) {
     const control = element<HTMLButtonElement>(`view-${view}`);
@@ -1595,13 +1623,14 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
       .flatMap(block => block.kind === 'selector' ? editablePublishingBlockAtStart(block.raw)?.options ?? [] : []);
     if (!choices.length && activeTab) choices.push(...(projectVariantOptions(activeTab.pane)?.options ?? []));
     if (!choices.length && sharedVariantMetadataField(markdown)) {
+      if (activeTab) await loadProjectVariantLabels(activeTab);
+      if (activeTab) choices.push(...(projectVariantOptions(activeTab.pane)?.options ?? []));
+    }
+    if (!choices.length && sharedVariantMetadataField(markdown)) {
       const selectedFile = unwrap(await window.lekh.chooseVariantConfigFile(documentId));
       if (!selectedFile) return true;
-      const prepared = unwrap(await window.lekh.prepareVariantConfiguration(documentId, markdown));
-      if (prepared === markdown) throw new Error('The selected shared file does not contain this article’s selector group.');
       if (activeTab) {
-        setProjectVariantLabels(activeTab.pane, prepared);
-        refreshPublishingVariants(activeTab.pane);
+        if (!await loadProjectVariantLabels(activeTab)) throw new Error('The selected shared file does not contain this article’s selector group.');
         choices.push(...(projectVariantOptions(activeTab.pane)?.options ?? []));
       }
     }
@@ -3052,10 +3081,7 @@ window.addEventListener('lekh-shared-variant-file', event => {
     if (!chosen) return;
     const tab = tabs.find(item => item.id === id);
     if (!tab) throw new Error('This document is no longer open.');
-    const prepared = unwrap(await window.lekh.prepareVariantConfiguration(id, tab.markdown));
-    if (prepared === tab.markdown) throw new Error('The selected shared file does not contain this article’s selector group.');
-    setProjectVariantLabels(tab.pane, prepared);
-    refreshPublishingVariants(tab.pane);
+    if (!await loadProjectVariantLabels(tab)) throw new Error('The selected shared file does not contain this article’s selector group.');
     tab.previewMarkdown = undefined;
     refreshPreview(tab);
     notify(`Loaded selector choices from ${chosen.label}.`);

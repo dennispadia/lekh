@@ -40,7 +40,7 @@
 
 | | |
 | --- | --- |
-| **Visual, Markdown and Split** | Choose an editable view, or open an interactive reader preview with optional editable Markdown on the right. Return to your previous view with **Back to editing**. |
+| **Visual, Markdown and Split** | Choose an editable view, or open an interactive reader preview with optional editable Markdown on the right. Drag the divider to resize side-by-side views. Return to your previous view with **Back to editing**. |
 | **Rich Markdown** | Headings, emphasis, lists, task lists, quotes, links, tables, images, rules and syntax-highlighted code. |
 | **Mermaid diagrams** | Insert and edit diagrams that render offline, right where your cursor is. |
 | **Find and replace** | Match case, whole word and regex, with live match counts and one-step Replace all. |
@@ -63,7 +63,7 @@
 | --- | --- |
 | **Alerts** | Note, Tip, Important, Caution and Warning, each with its own icon and Light/Dark colors. Type and format inside them directly. |
 | **Tabbed examples** | Start with empty example bodies and click-away writing hints, not sample text to delete. Rename tabs in place; **+** adds one and **×** removes one. Names become `# [Name](#tab/name)` headings in Markdown. |
-| **Variants** | Give the selector a title, rename choices in place, and use **+** or **×** to add or remove them. Choose **Interactive > Add variant content** wherever it belongs. |
+| **Variants** | Create a selector locally or in an existing shared file; its labels and selected variant stay available when switching views. Choose **Interactive > Add variant content** wherever it belongs. |
 | **Include** | Insert a title and path with **Structure > Include** to show shared local Markdown in Visual, Preview and exports without rewriting the source. |
 | **Metadata** | One YAML box for any front-matter keys, kept out of the article body. |
 

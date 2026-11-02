@@ -2,7 +2,7 @@ import { open, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import type Token from 'markdown-it/lib/token.mjs';
 import { decodeMarkdown } from './files.js';
-import { parser } from './markdown.js';
+import { parser, previewParser } from './markdown.js';
 import { parseIncludeDirective, type PublishingMeta } from './publishing.js';
 
 const maxFileBytes = 10 * 1024 * 1024;
@@ -45,6 +45,7 @@ function rebaseTokens(tokens: Token[], from: string, document: string): void {
 
 type ResolveOptions = {
   displayErrors?: boolean;
+  preview?: boolean;
   onAccessRequired?: (document: string, candidate: string) => void;
 };
 
@@ -99,7 +100,8 @@ export class IncludeAccessPrompts {
 export async function resolveIncludes(
   markdown: string, documentPath: string | null, authorizedRoot?: string | null, options: ResolveOptions = {},
 ): Promise<Token[]> {
-  const initial = parser.parse(markdown, {});
+  const markdownParser = options.preview ? previewParser : parser;
+  const initial = markdownParser.parse(markdown, {});
   if (!initial.some(token => token.type === 'publishing_unsupported' && (token.meta as PublishingMeta).kind === 'include')) return initial;
 
   let document: string | undefined;
@@ -186,7 +188,7 @@ export async function resolveIncludes(
           totalBytes += bytes;
           content = decodeMarkdown(Buffer.concat(chunks));
         } finally { await handle.close(); }
-        const included = parser.parse(content.replace(/^\uFEFF/, ''), {});
+        const included = markdownParser.parse(content.replace(/^\uFEFF/, ''), {});
         if (included[0]?.type === 'publishing_metadata' && included[0].map?.[0] === 0) included.shift();
         else if (included[0]?.type === 'publishing_unsupported' && (included[0].meta as PublishingMeta).reason?.startsWith('Unclosed document metadata')) {
           throw new Error(`Close the document metadata in ${directive.source} before including it.`);

@@ -1,14 +1,54 @@
 import MarkdownIt from 'markdown-it';
 import { hasInteractivePublishing, registerPublishing } from './publishing.js';
 
-export const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
-registerPublishing(parser);
-parser.block.ruler.before('paragraph', 'lekh_toc_marker', (state, startLine, _endLine, silent) => {
-  const line = state.src.slice(state.bMarks[startLine] + state.tShift[startLine], state.eMarks[startLine]);
-  if (!/^<!-- \/?lekh:toc -->$/.test(line)) return false;
-  if (!silent) state.line = startLine + 1;
+function markdownParser(): MarkdownIt {
+  const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
+  registerPublishing(parser);
+  parser.block.ruler.before('paragraph', 'lekh_toc_marker', (state, startLine, _endLine, silent) => {
+    const line = state.src.slice(state.bMarks[startLine] + state.tShift[startLine], state.eMarks[startLine]);
+    if (!/^<!-- \/?lekh:toc -->$/.test(line)) return false;
+    if (!silent) state.line = startLine + 1;
+    return true;
+  }, { alt: ['paragraph', 'list', 'blockquote'] });
+  return parser;
+}
+
+export const parser = markdownParser();
+export const previewParser = markdownParser();
+previewParser.block.ruler.before('publishing', 'preview_comment', (state, start, end, silent) => {
+  if (state.sCount[start] - state.blkIndent >= 4) return false;
+  const first = state.bMarks[start] + state.tShift[start];
+  if (!state.src.startsWith('<!--', first)) return false;
+  if (silent) return true;
+  let line = start;
+  let tail = '';
+  for (; line < end; line++) {
+    if (line > start && state.sCount[line] < state.blkIndent && !state.isEmpty(line)) break;
+    const text = state.src.slice(state.bMarks[line] + state.tShift[line], state.eMarks[line]);
+    const close = text.indexOf('-->', line === start ? 4 : 0);
+    if (close < 0) continue;
+    tail = text.slice(close + 3).trimStart();
+    line++;
+    break;
+  }
+  state.line = line;
+  if (tail) {
+    state.push('paragraph_open', 'p', 1).map = [line - 1, line];
+    const inline = state.push('inline', '', 0);
+    inline.content = tail;
+    inline.children = [];
+    inline.map = [line - 1, line];
+    state.push('paragraph_close', 'p', -1);
+  }
   return true;
 }, { alt: ['paragraph', 'list', 'blockquote'] });
+previewParser.inline.ruler.before('html_inline', 'preview_comment', (state) => {
+  if (!state.src.startsWith('<!--', state.pos)) return false;
+  const close = state.src.indexOf('-->', state.pos + 4);
+  if (close < 0 || close + 3 > state.posMax) return false;
+  state.pos = close + 3;
+  return true;
+});
 
 export function requiresInteractiveExport(markdown: string): boolean {
   return hasInteractivePublishing(parser.parse(markdown, {}));
@@ -57,7 +97,7 @@ export function imageDisplayURL(source: string, documentId = ''): string {
 }
 
 export function documentPreviewHTML(markdown: string, documentId: string): string {
-  return documentPreviewTokensHTML(parser.parse(markdown, {}), documentId);
+  return documentPreviewTokensHTML(previewParser.parse(markdown, {}), documentId);
 }
 
 export function documentPreviewTokensHTML(tokens: ReturnType<typeof parser.parse>, documentId: string): string {
