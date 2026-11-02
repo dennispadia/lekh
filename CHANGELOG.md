@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.6
+
+- Hide Markdown comments in reader Preview, including included content, while keeping source and code examples unchanged.
+- Remove the extra variant-label loading control and align shared selectors with the document body.
+- Remember a document's chosen shared file, labels and selected variant across Visual, Markdown, Split and Preview.
+- Resize Visual and Markdown in Split, or Preview and Markdown, by dragging the divider or using the keyboard.
+- Guard the genuine 0.9.5 -> 0.9.6 hosted upgrade matrix.
+
 ## 0.9.5
 
 - Create shared variant groups in a user-selected existing file, review the group and article metadata before writing, and remember that file for the article.

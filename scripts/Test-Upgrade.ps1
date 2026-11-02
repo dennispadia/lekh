@@ -14,15 +14,15 @@ if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or -not [Enviro
 }
 
 # Deliberately bounded to this published lineage; neither asset nor identity is caller-selectable.
-$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.4/Lekh-Markdown-editor-Setup-0.9.4-x64.exe'
-$oldSetupHash = 'c7f0637f9af823fba53516a3d19e0e4b008364fc4a7a0c5b0e596df754fe838c'
-$oldSetupBytes = 197606912L
+$oldSetupUrl = 'https://github.com/dennispadia/lekh/releases/download/v0.9.5/Lekh-Markdown-editor-Setup-0.9.5-x64.exe'
+$oldSetupHash = '21642c28c1187bb7b8c14975a09df3817ace265d5c0198b3eee6845eac423ed6'
+$oldSetupBytes = 197619200L
 $upgradeCode = '{DCBCF7FA-11DA-4F35-8D27-D066EEC6C582}'
 $root = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $manifest = Get-Content -LiteralPath (Join-Path $root 'package.json') -Raw | ConvertFrom-Json
-if ($manifest.version -cne '0.9.5' -or $manifest.build.productName -cne 'Lekh - Markdown editor' -or
+if ($manifest.version -cne '0.9.6' -or $manifest.build.productName -cne 'Lekh - Markdown editor' -or
     $manifest.build.msi.upgradeCode -cne $upgradeCode.Trim('{}')) {
-    throw 'This check supports only the genuine published 0.9.4 -> 0.9.5 Lekh upgrade.'
+    throw 'This check supports only the genuine published 0.9.5 -> 0.9.6 Lekh upgrade.'
 }
 if (-not $SetupPath) { $SetupPath = Join-Path $root "release\Lekh-Markdown-editor-Setup-$($manifest.version)-x64.exe" }
 $SetupPath = (Resolve-Path -LiteralPath $SetupPath).Path
@@ -658,7 +658,7 @@ function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
                 $status = Wait-UpgradeSetup $setup 'open' $states 30
                 $window = $status.Window
                 if ($status.Description -notlike '*Save your work and close Lekh*' -or
-                    $status.Description -notlike '*0.9.4*' -or $null -eq $status.Primary -or
+                    $status.Description -notlike '*0.9.5*' -or $null -eq $status.Primary -or
                     $status.Primary.Current.Name -cne 'Check again') { throw 'Running editor did not produce the save/close and recheck prompt.' }
                 Assert-Installed $old
                 Assert-Absent $new.ProductCode
@@ -725,18 +725,18 @@ function Invoke-SetupScenario([switch]$OpenEditor, [switch]$AlreadyInstalled) {
 New-Item -ItemType Directory -Path $sources -Force | Out-Null
 Start-Transcript -Path (Join-Path $work 'verification.log') | Out-Null
 try {
-    Write-Host 'Scope: pinned public 0.9.4 -> manifest 0.9.5, rollback, idle auto-upgrade, same-version rejection, running-app close/recheck upgrade, repair and exact-product uninstall. No other lineage is covered.'
-    $oldSetup = Join-Path $sources 'Lekh-Markdown-editor-Setup-0.9.4-x64.exe'
+    Write-Host 'Scope: pinned public 0.9.5 -> manifest 0.9.6, rollback, idle auto-upgrade, same-version rejection, running-app close/recheck upgrade, repair and exact-product uninstall. No other lineage is covered.'
+    $oldSetup = Join-Path $sources 'Lekh-Markdown-editor-Setup-0.9.5-x64.exe'
     Invoke-WebRequest -UseBasicParsing -Uri $oldSetupUrl -OutFile $oldSetup -TimeoutSec 180 -UseDefaultCredentials:$false
     if ((Get-Item -LiteralPath $oldSetup).Length -ne $oldSetupBytes -or
         (Get-FileHash -LiteralPath $oldSetup -Algorithm SHA256).Hash.ToLowerInvariant() -cne $oldSetupHash) {
-        throw 'Published 0.9.4 setup length or pinned SHA-256 mismatch; refusing extraction.'
+        throw 'Published 0.9.5 setup length or pinned SHA-256 mismatch; refusing extraction.'
     }
-    $oldMsi = Join-Path $sources 'old-0.9.4.msi'
-    $newMsi = Join-Path $sources 'new-0.9.5.msi'
+    $oldMsi = Join-Path $sources 'old-0.9.5.msi'
+    $newMsi = Join-Path $sources 'new-0.9.6.msi'
     Expand-EmbeddedMsi $oldSetup $oldMsi
     Expand-EmbeddedMsi $SetupPath $newMsi
-    $old = Read-ValidatedMsi $oldMsi '0.9.4'
+    $old = Read-ValidatedMsi $oldMsi '0.9.5'
     $new = Read-ValidatedMsi $newMsi $manifest.version
     if ($old.ProductCode -ieq $new.ProductCode) { throw 'Major upgrade must have different old and new ProductCodes.' }
     $builtMsi = Join-Path $root "release\Lekh-Markdown-editor-$($manifest.version)-x64.msi"
@@ -758,14 +758,14 @@ try {
     New-Item -ItemType Directory -Path $profileDirectory -Force | Out-Null
     $sentinel = Join-Path $profileDirectory ('upgrade-profile-sentinel-' + [guid]::NewGuid().ToString('N') + '.txt')
     [IO.File]::WriteAllText($sentinel, ('Preserve upgrade profile: ' + [guid]::NewGuid().ToString('N')), [Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText($settings, '{"theme":"light","fontSize":18,"upgradeValidation":"0.9.4-to-0.9.5"}', [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($settings, '{"theme":"light","fontSize":18,"upgradeValidation":"0.9.5-to-0.9.6"}', [Text.UTF8Encoding]::new($false))
     foreach ($path in @($sentinel, $settings)) { $profileHashes[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
     [void]$attemptedProducts.Add($old.ProductCode)
     Invoke-UpgradeMsi 'Install' $old 'old-install'
     Assert-Installed $old
     Assert-Absent $new.ProductCode
     Assert-ProfilePreserved
-    Write-Host "PASS: genuine published 0.9.4 installed and registered as $($old.ProductCode)."
+    Write-Host "PASS: genuine published 0.9.5 installed and registered as $($old.ProductCode)."
 
     $oldPayloadHashes = Get-PayloadHashes
     [void]$attemptedProducts.Add($new.ProductCode)
@@ -799,7 +799,7 @@ try {
             throw "Upgraded $relative differs from the current packaged application."
         }
     }
-    Write-Host "PASS: 0.9.5 exact registration and current executable/app.asar bytes; old registration removed before the new payload stage."
+    Write-Host "PASS: 0.9.6 exact registration and current executable/app.asar bytes; old registration removed before the new payload stage."
     Assert-AppNotRunning
     # Remove only a validated installed application file so repair must actually restore missing payload.
     Remove-Item -LiteralPath (Join-Path $installDirectory 'resources\app.asar') -Force
@@ -847,4 +847,4 @@ if ($null -ne $failure) {
     throw $failure
 }
 if ($cleanupErrors.Count -gt 0) { throw ($cleanupErrors -join "`n") }
-Write-Host 'PASS: bounded genuine 0.9.4 -> 0.9.5 auto-upgrade, same-version rejection, owned running-app close/recheck, removal-before-new, rollback, repair and exact-product cleanup. No application was forcibly closed.'
+Write-Host 'PASS: bounded genuine 0.9.5 -> 0.9.6 auto-upgrade, same-version rejection, owned running-app close/recheck, removal-before-new, rollback, repair and exact-product cleanup. No application was forcibly closed.'

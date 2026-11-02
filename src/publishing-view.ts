@@ -1,4 +1,4 @@
-import { documentPreviewHTML, headingAnchor, headings, parser } from '../lib/markdown.js';
+import { documentPreviewHTML, headingAnchor, headings, parser, previewParser } from '../lib/markdown.js';
 import { codeLanguages, highlightedHTML, resolveCodeLanguage } from '../lib/highlight.js';
 import type { PublishingMeta } from '../lib/publishing.js';
 
@@ -40,7 +40,7 @@ export async function publishingHTML(markdown: string, documentId: string): Prom
   }
   const template = document.createElement('template');
   template.innerHTML = documentPreviewHTML(markdown, documentId);
-  const outline = headings(markdown);
+  const outline = headings(markdown, previewParser.parse(markdown, {}));
   const used = new Map<string, number>();
   template.content.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6').forEach((heading, index) => {
     if (outline[index]) heading.id = headingAnchor(outline[index].text, used);
@@ -171,7 +171,7 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       if (!choices.has(id)) choices.set(id, id.replace(/[-_]/g, ' '));
     }
   }
-  const configured = !selectors.some(selector => primary?.contains(selector)) ? configuredLabels : undefined;
+  const configured = configuredLabels;
   if (configured) {
     const additional = [...choices].filter(([id]) => !configured.options.some(option => option.id === id));
     choices.clear();
@@ -223,19 +223,6 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
         controls.append(button);
       }
       bar.append(heading, controls);
-      const note = document.createElement('small');
-      note.textContent = configured ? 'Showing variant labels from the project configuration.'
-        : hasConfiguration ? 'Showing variant IDs. Project configuration can provide more descriptive labels.'
-          : 'Showing variant IDs from the document.';
-      bar.append(note);
-      if (hasConfiguration && !configured) {
-        const load = document.createElement('button');
-        load.type = 'button';
-        load.className = 'publishing-load-labels';
-        load.textContent = 'Load variant labels...';
-        load.addEventListener('click', () => window.dispatchEvent(new CustomEvent('lekh-project-assets', { detail: documentId })));
-        bar.append(load);
-      }
       if (hasSharedMetadata && !configured) {
         const choose = document.createElement('button');
         choose.type = 'button';

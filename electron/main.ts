@@ -362,7 +362,7 @@ interface PreparedDocument {
   assertAccess: () => void;
 }
 
-async function prepareDocument(id: unknown, content: string, displayErrors = false): Promise<PreparedDocument> {
+async function prepareDocument(id: unknown, content: string, preview = false): Promise<PreparedDocument> {
   const document = documentFor(id);
   const currentPath = document.path;
   const imageGrant = imageRoots.get(String(id));
@@ -384,6 +384,7 @@ async function prepareDocument(id: unknown, content: string, displayErrors = fal
   const candidates: string[] = [];
   let tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root, {
     displayErrors: true,
+    preview,
     onAccessRequired: (file, candidate) => { resolvedDocument = file; candidates.push(candidate); },
   });
   assertAccess();
@@ -406,11 +407,11 @@ async function prepareDocument(id: unknown, content: string, displayErrors = fal
         window.webContents.send('includes:access-changed', String(id));
         return true;
       });
-      if (allowed) return prepareDocument(id, content, displayErrors);
+      if (allowed) return prepareDocument(id, content, preview);
       assertAccess();
     }
   }
-  if (!displayErrors && tokens.some(token =>
+  if (!preview && tokens.some(token =>
     token.type === 'publishing_unsupported' && (token.meta as PublishingMeta).kind === 'include')) {
     tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root);
     assertAccess();

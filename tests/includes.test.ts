@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
-import { parser } from '../lib/markdown.js';
+import { documentPreviewTokensHTML, parser } from '../lib/markdown.js';
 import { hasInteractivePublishing, includeMarkdown } from '../lib/publishing.js';
 
 async function fixture() {
@@ -15,6 +15,24 @@ async function fixture() {
   await writeFile(article, '# Parent');
   return { root, article, includes: path.join(root, 'includes') };
 }
+
+test('reader Preview hides parent and nested Include comments but retains code and source', async () => {
+  const { root, article, includes } = await fixture();
+  try {
+    const shared = '<!-- Shared private note -->\n\nIncluded prose <!-- inline private note --> stays.\n\n[!INCLUDE [Child](child.md)]\n\n```html\n<!-- literal code -->\n```\n';
+    await writeFile(path.join(includes, 'shared.md'), shared);
+    await writeFile(path.join(includes, 'child.md'), '> [!NOTE]\n> <!-- Nested private note -->\n> Visible nested prose.\n');
+    const markdown = '<!-- Parent private note -->\n\n[!INCLUDE [Shared](../includes/shared.md)]\n';
+    const tokens = await resolveIncludes(markdown, article, root, { preview: true, displayErrors: true });
+    const html = documentPreviewTokensHTML(tokens, 'tab');
+    assert.doesNotMatch(html, /private note|\[!INCLUDE/);
+    assert.match(html, /Included prose  stays/);
+    assert.match(html, /Visible nested prose/);
+    assert.match(html, /&lt;!-- literal code --&gt;/);
+    const ordinary = await resolveIncludes(markdown, article, root);
+    assert.match(parser.renderer.render(ordinary, parser.options, {}), /Shared private note/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test('includes expand without changing source, omit only front matter, and resolve local references', async () => {
   const { root, article, includes } = await fixture();

@@ -178,3 +178,11 @@ test('image-folder permission commands are absent from menus while contextual ac
   assert.match(electron, /imageRoots\.set\(String\(id\), \{ root \}\)/);
   assert.match(electron, /imageRoots\.delete\(String\(id\)\)/);
 });
+
+test('shared selectors have one file chooser and retain configured headings across surfaces', async () => {
+  const source = await readFile(new URL('../src/publishing-view.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /Load variant labels|publishing-load-labels|Showing variant IDs|lekh-project-assets/);
+  assert.match(source, /const configured = configuredLabels;/);
+  assert.match(source, /Choose shared file\.\.\./);
+  assert.match(source, /projectVariantLabels\.get\(documentId\)/);
+});

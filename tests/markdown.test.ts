@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, replaceAllLiteral, wordCount } from '../lib/markdown.js';
+import { documentPreviewHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, previewParser, replaceAllLiteral, wordCount } from '../lib/markdown.js';
 
 test('outline handles ATX and Setext headings and excludes code blocks', () => {
   assert.deepEqual(headings('# Title\n\n```\n# not a heading\n```\n\nSubtitle\n---\n\n### Details'), [
@@ -106,4 +106,47 @@ test('preview images use document-scoped local URLs, including nested and remote
 test('preview rendering preserves embedded images even when their data exceeds a thumbnail text budget', () => {
   const image = `data:image/png;base64,${'a'.repeat(16000)}`;
   assert.ok(documentPreviewHTML(`![Embedded](${image})`, 'tab').includes(`src="${image}"`));
+});
+
+test('Preview hides block, multiline and inline comments without changing ordinary parsing', () => {
+  const markdown = [
+    '<!-- Fencing Option Deployment -->', '', '# Visible',
+    'Before <!-- hidden *formatting* and [link](https://example.com) --> after.',
+    '', '<!--', '# Hidden heading', '', 'Hidden paragraph', '--> Visible tail.',
+    '', '<!-- another --> <!-- last -->', '', 'Last paragraph.',
+  ].join('\n');
+  const html = documentPreviewHTML(markdown, 'tab');
+  assert.doesNotMatch(html, /Fencing|hidden|Hidden|another|last|&lt;!--/);
+  assert.match(html, /Before  after\./);
+  assert.match(html, /Visible tail\./);
+  assert.match(html, /Last paragraph\./);
+  assert.deepEqual(headings(markdown, previewParser.parse(markdown, {})).map(heading => heading.text), ['Visible']);
+  assert.match(parser.render(markdown), /Fencing Option Deployment|Hidden heading/);
+  assert.equal(previewParser.options.html, false);
+});
+
+test('Preview retains comment literals in code and escapes and never enables raw HTML', () => {
+  const markdown = [
+    '`<!-- inline code -->`', '', '```html', '<!-- fenced code -->', '```',
+    '', '    <!-- indented code -->', '', '\\<!-- escaped -->', '', '&lt;!-- entity -->',
+    '', '<!-- hidden --><script>alert(1)</script>', '', '<img src=x onerror=alert(1)>',
+    '', '<!-- unfinished', '', 'Hidden to the end.',
+  ].join('\n');
+  const html = documentPreviewHTML(markdown, 'tab');
+  for (const label of ['inline code', 'fenced code', 'indented code', 'escaped', 'entity']) assert.match(html, new RegExp(label));
+  assert.match(html, /&lt;script&gt;/);
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<script|<img|unfinished|Hidden to the end|hidden/);
+});
+
+test('Preview hides comments inside nested publishing blocks, lists and quotes', () => {
+  const markdown = [
+    '> [!NOTE]', '> <!-- alert comment', '>', '> hidden alert text -->', '> Visible alert.', '',
+    ':::zone pivot="example"', '<!-- zone comment -->', 'Visible zone.', ':::zone-end', '',
+    '- Item', '  <!-- list comment -->', '  Visible item.', '',
+    '> <!-- quoted comment -->', '> Visible quote.',
+  ].join('\n');
+  const html = documentPreviewHTML(markdown, 'tab');
+  assert.doesNotMatch(html, /comment|hidden alert|&lt;!--/);
+  for (const label of ['Visible alert', 'Visible zone', 'Visible item', 'Visible quote']) assert.match(html, new RegExp(label));
 });
