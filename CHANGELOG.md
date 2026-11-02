@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.5
+
+- Create shared variant groups in a user-selected existing file, review the group and article metadata before writing, and remember that file for the article.
+- Suggest a project folder for relative Includes outside the document folder, with per-document consent and contextual recovery when access is declined.
+- Remove the global Include folder access commands from the More, View and right-click menus.
+
 ## 0.9.4
 
 - Restore **Structure > Include** with title and file path, read-only local content in Visual and Preview, and expansion in HTML, Word and PDF exports. Include files keep their source unchanged and their opening YAML stays out of article content.

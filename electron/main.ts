@@ -5,19 +5,19 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type Token from 'markdown-it/lib/token.mjs';
-import { atomicWrite, readMarkdown } from '../lib/files.js';
+import { atomicWrite, atomicWriteIfUnchanged, readMarkdown } from '../lib/files.js';
 import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES, type AuthorizedImageRoots } from '../lib/images.js';
 import { documentPreviewTokensHTML, headingAnchor, isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
-import { resolveIncludes } from '../lib/includes.js';
+import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
 import { toDocx, toOfflineHTML, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
 import { diagramLimits, isMermaidLanguage, prepareMermaid } from '../lib/diagrams.js';
 import { themes } from '../lib/themes.js';
 import { formattingShortcuts } from '../lib/shortcuts.js';
 import { fileArguments } from '../lib/launch.js';
 import { productName, productTitle, userDataDirectory } from '../lib/branding.js';
-import { prepareVariantConfiguration } from '../lib/variant-config.js';
+import { addVariantMetadata, appendVariantGroupEntry, prepareVariantConfiguration, prepareVariantConfigurationFromFile, variantGroupIds, type SharedVariantGroup } from '../lib/variant-config.js';
 import { publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
-import { hasInteractivePublishing, interactiveExportMessage } from '../lib/publishing.js';
+import { hasInteractivePublishing, interactiveExportMessage, type PublishingMeta } from '../lib/publishing.js';
 import type { ContextMenuItem, EditorContext, OpenedFile, Result } from '../src/bridge.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'lekh-image', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -36,6 +36,9 @@ const documents = new Map<string, NativeDocument>();
 // Grant identity changes even when the same folder is authorized again.
 const imageRoots = new Map<string, { root: string }>();
 const includeRoots = new Map<string, { root: string }>();
+const includePrompts = new IncludeAccessPrompts();
+const pendingVariantFiles = new Map<string, { id: string; document: NativeDocument; documentPath: string | null; file: string; content: string; label: string }>();
+const sharedVariantFiles = new Map<string, string>();
 let dirty = false;
 let allowClose = false;
 let recentFiles: string[] = [];
@@ -44,7 +47,23 @@ let editorContext: EditorContext = { mode: 'visual', active: [], heading: 0, inT
 let contextMenu: { id: string; native: Menu; x: number; y: number; commands: Map<string, () => void> } | null = null;
 const entryURL = pathToFileURL(path.join(app.getAppPath(), 'dist', 'index.html')).href;
 const recentPath = () => path.join(app.getPath('userData'), 'recent-files.json');
+const variantAssociationsPath = () => path.join(app.getPath('userData'), 'shared-variant-files.json');
 const samePath = (left: string, right: string) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+const variantAssociationKey = (file: string) => path.resolve(file).toLowerCase();
+const sharedVariantAssociations = new Map<string, string>();
+
+async function rememberVariantAssociation(documentPath: string, configPath: string): Promise<void> {
+  const key = variantAssociationKey(documentPath);
+  const previous = sharedVariantAssociations.get(key);
+  sharedVariantAssociations.set(key, configPath);
+  try {
+    await atomicWrite(variantAssociationsPath(), JSON.stringify([...sharedVariantAssociations]));
+  } catch (error) {
+    if (previous === undefined) sharedVariantAssociations.delete(key);
+    else sharedVariantAssociations.set(key, previous);
+    throw error;
+  }
+}
 
 function documentFor(id: unknown): NativeDocument {
   const document = typeof id === 'string' ? documents.get(id) : undefined;
@@ -60,6 +79,14 @@ function contentArgument(value: unknown): asserts value is string {
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > 10 * 1024 * 1024) {
     throw new Error('Documents must be UTF-8 text and no larger than 10 MB.');
   }
+}
+
+function isSharedVariantGroup(value: unknown): value is SharedVariantGroup {
+  if (!value || typeof value !== 'object' || !('owner' in value) || typeof value.owner !== 'string' ||
+      !('id' in value) || typeof value.id !== 'string' || !('title' in value) || typeof value.title !== 'string' ||
+      !('prompt' in value) || typeof value.prompt !== 'string' || !('pivots' in value) || !Array.isArray(value.pivots)) return false;
+  return value.pivots.every((pivot: unknown) => pivot !== null && typeof pivot === 'object' && 'id' in pivot &&
+    typeof pivot.id === 'string' && 'title' in pivot && typeof pivot.title === 'string');
 }
 
 function handle<T, Args extends unknown[]>(channel: string, callback: (...args: Args) => Promise<T>): void {
@@ -111,6 +138,8 @@ async function openDocument(file: string, preloadedContent?: string): Promise<Op
   const content = preloadedContent ?? await readMarkdown(file);
   const id = randomUUID();
   documents.set(id, { path: file, diskContent: content });
+  const sharedFile = sharedVariantAssociations.get(variantAssociationKey(file));
+  if (sharedFile) sharedVariantFiles.set(id, sharedFile);
   await remember(file);
   return { id, path: file, content };
 }
@@ -315,7 +344,25 @@ async function exportWithDiagrams(content: string, currentPath: string | null, f
   } finally { if (renderer && !renderer.isDestroyed()) renderer.destroy(); }
 }
 
-async function prepareDocument(id: unknown, content: string, displayErrors = false) {
+async function validateIncludeRoot(folder: string, documentPath: string): Promise<string> {
+  const root = await realpath(folder);
+  const file = await realpath(documentPath);
+  const relative = path.relative(root, file);
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Choose a project folder that contains both this saved document and its include files.');
+  }
+  return root;
+}
+
+interface PreparedDocument {
+  prepared: string;
+  tokens: Token[];
+  currentPath: string | null;
+  imageAccess: string[];
+  assertAccess: () => void;
+}
+
+async function prepareDocument(id: unknown, content: string, displayErrors = false): Promise<PreparedDocument> {
   const document = documentFor(id);
   const currentPath = document.path;
   const imageGrant = imageRoots.get(String(id));
@@ -326,12 +373,48 @@ async function prepareDocument(id: unknown, content: string, displayErrors = fal
       throw new Error('The document or its local folder access changed. Try again.');
     }
   };
+  const selectedVariantFile = sharedVariantFiles.get(String(id));
   const prepared = /^zone_pivot_groups\s*:/m.test(content)
-    ? await prepareVariantConfiguration(content, currentPath, imageGrant?.root ?? null)
+    ? selectedVariantFile
+      ? await prepareVariantConfigurationFromFile(content, selectedVariantFile)
+      : await prepareVariantConfiguration(content, currentPath, imageGrant?.root ?? null)
     : content;
   assertAccess();
-  const tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root, { displayErrors });
+  let resolvedDocument: string | undefined;
+  const candidates: string[] = [];
+  let tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root, {
+    displayErrors: true,
+    onAccessRequired: (file, candidate) => { resolvedDocument = file; candidates.push(candidate); },
+  });
   assertAccess();
+  if (currentPath && resolvedDocument && candidates.length) {
+    const suggested = suggestedIncludeFolder(resolvedDocument, includeGrant ? [...candidates, includeGrant.root] : candidates);
+    if (suggested) {
+      const allowed = await includePrompts.request(String(id), suggested, async () => {
+        const answer = await dialog.showMessageBox(window, {
+          type: 'question',
+          message: 'Allow this document to load shared files?',
+          detail: `This document refers to Markdown includes outside its folder, including:\n${candidates[0]}\n\nAllow local Markdown includes and their images within:\n${suggested}\n\nAccess applies only to this document and ends when it is closed or saved in another folder.`,
+          buttons: ['Allow folder', 'Not now'], defaultId: 1, cancelId: 1, noLink: true,
+        });
+        assertAccess();
+        if (answer.response !== 0) return false;
+        const root = await validateIncludeRoot(suggested, currentPath);
+        assertAccess();
+        if (!samePath(root, suggested)) throw new Error('The suggested project folder changed. Choose the folder again.');
+        includeRoots.set(String(id), { root });
+        window.webContents.send('includes:access-changed', String(id));
+        return true;
+      });
+      if (allowed) return prepareDocument(id, content, displayErrors);
+      assertAccess();
+    }
+  }
+  if (!displayErrors && tokens.some(token =>
+    token.type === 'publishing_unsupported' && (token.meta as PublishingMeta).kind === 'include')) {
+    tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root);
+    assertAccess();
+  }
   const imageAccess = [imageGrant?.root, includeGrant?.root].filter((root): root is string => Boolean(root));
   return { prepared, tokens, currentPath, imageAccess, assertAccess };
 }
@@ -481,6 +564,9 @@ function installIPC(): void {
     documents.delete(String(id));
     imageRoots.delete(String(id));
     includeRoots.delete(String(id));
+    includePrompts.forget(String(id));
+    sharedVariantFiles.delete(String(id));
+    for (const [token, pending] of pendingVariantFiles) if (pending.id === String(id)) pendingVariantFiles.delete(token);
   });
   handle('images:allow-folder', async (id: unknown) => {
     const document = documentFor(id);
@@ -503,9 +589,61 @@ function installIPC(): void {
     const document = documentFor(id);
     contentArgument(content);
     const grant = imageRoots.get(String(id));
-    const prepared = await prepareVariantConfiguration(content, document.path, grant?.root ?? null);
+    const selectedFile = sharedVariantFiles.get(String(id));
+    const prepared = selectedFile
+      ? await prepareVariantConfigurationFromFile(content, selectedFile)
+      : await prepareVariantConfiguration(content, document.path, grant?.root ?? null);
     if (imageRoots.get(String(id)) !== grant) throw new Error('Local asset access changed. Refresh the preview.');
     return prepared;
+  });
+  handle('variant-config:choose-file', async (id: unknown) => {
+    const document = documentFor(id);
+    const documentPath = document.path;
+    const selected = await dialog.showOpenDialog(window, {
+      title: 'Choose an existing shared selector file',
+      properties: ['openFile'],
+      filters: [{ name: 'Shared selector files', extensions: ['yml', 'yaml'] }],
+    });
+    if (selected.canceled) return null;
+    if (documentFor(id) !== document || document.path !== documentPath) throw new Error('The active document changed. Choose the shared file again.');
+    const file = await realpath(selected.filePaths[0]);
+    const info = await stat(file);
+    if (!info.isFile() || info.size > 1024 * 1024) throw new Error('Choose an existing configuration file no larger than 1 MB.');
+    if (!/\.ya?ml$/i.test(file)) throw new Error('Choose an existing .yml or .yaml configuration file.');
+    const content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(file));
+    if (Buffer.byteLength(content, 'utf8') > 1024 * 1024) throw new Error('The shared configuration file exceeds the 1 MB limit.');
+    const after = await stat(file);
+    if (after.dev !== info.dev || after.ino !== info.ino || after.size !== info.size || after.mtimeMs !== info.mtimeMs) {
+      throw new Error('The shared configuration changed while it was being read. Choose it again.');
+    }
+    variantGroupIds(content);
+    for (const [token, pending] of pendingVariantFiles) if (pending.id === String(id)) pendingVariantFiles.delete(token);
+    const token = randomUUID();
+    const relative = documentPath ? path.relative(path.dirname(documentPath), file) : '';
+    const label = relative && !path.isAbsolute(relative) ? relative : file;
+    pendingVariantFiles.set(token, { id: String(id), document, documentPath, file, content, label });
+    sharedVariantFiles.set(String(id), file);
+    if (documentPath) await rememberVariantAssociation(documentPath, file);
+    return { token, label };
+  });
+  handle('variant-config:create-group', async (id: unknown, token: unknown, value: unknown, content: unknown) => {
+    const document = documentFor(id);
+    contentArgument(content);
+    if (typeof token !== 'string' || !isSharedVariantGroup(value)) throw new Error('Choose a shared file and enter a valid group.');
+    const pending = pendingVariantFiles.get(token);
+    if (!pending || pending.id !== String(id) || pending.document !== document || pending.documentPath !== document.path) {
+      throw new Error('The selected shared file is no longer available. Choose it again.');
+    }
+    const file = await realpath(pending.file);
+    if (!samePath(file, pending.file)) throw new Error('The selected shared file changed. Choose it again.');
+    const latest = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(await readFile(file));
+    if (latest !== pending.content) throw new Error('The shared file changed after you selected it. Choose it again to review the latest contents.');
+    const updatedFile = appendVariantGroupEntry(latest, value);
+    const updatedContent = addVariantMetadata(content, value.id);
+    await atomicWriteIfUnchanged(file, latest, updatedFile);
+    sharedVariantFiles.set(String(id), file);
+    pendingVariantFiles.delete(token);
+    return { content: updatedContent, file: pending.label };
   });
   handle('images:revoke-folder', async (id: unknown) => {
     documentFor(id);
@@ -521,18 +659,18 @@ function installIPC(): void {
     });
     if (selected.canceled) return false;
     if (documentFor(id) !== document || document.path !== currentPath) throw new Error('The document changed. Choose the folder again.');
-    const root = await realpath(selected.filePaths[0]);
-    const file = await realpath(currentPath);
-    const relative = path.relative(root, file);
-    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      throw new Error('Choose a project folder that contains both this saved document and its include files.');
-    }
+    const root = await validateIncludeRoot(selected.filePaths[0], currentPath);
+    if (documentFor(id) !== document || document.path !== currentPath) throw new Error('The document changed. Choose the folder again.');
     includeRoots.set(String(id), { root });
+    window.webContents.send('includes:access-changed', String(id));
     return true;
   });
   handle('includes:revoke-folder', async (id: unknown) => {
     documentFor(id);
+    const grant = includeRoots.get(String(id));
+    if (grant) includePrompts.deny(String(id), grant.root);
     includeRoots.delete(String(id));
+    window.webContents.send('includes:access-changed', String(id));
   });
   handle('includes:preview', async (id: unknown, content: unknown) => {
     contentArgument(content);
@@ -592,9 +730,24 @@ function installIPC(): void {
       }
     }
     await atomicWrite(file, content);
-    if (currentPath && !samePath(path.dirname(file), path.dirname(currentPath))) includeRoots.delete(String(id));
+    if (currentPath && !samePath(path.dirname(file), path.dirname(currentPath))) {
+      includeRoots.delete(String(id));
+      includePrompts.forget(String(id));
+    }
     document.path = file;
     document.diskContent = content;
+    const sharedVariantFile = sharedVariantFiles.get(String(id));
+    if (sharedVariantFile) {
+      try { await rememberVariantAssociation(file, sharedVariantFile); }
+      catch (error) {
+        console.error('Could not remember the shared selector file for this document:', error);
+        await dialog.showMessageBox(window, {
+          type: 'warning',
+          message: 'The article was saved, but its shared selector file could not be remembered.',
+          detail: 'Choose the shared file again after reopening this article.\n\n' + String(error),
+        });
+      }
+    }
     await remember(file);
     return { path: file };
   });
@@ -672,8 +825,6 @@ function viewAndToolsItems(): MenuItemConstructorOptions[] {
     { label: 'Split / Unsplit files', click: () => action('split') },
     { type: 'separator' },
     { label: 'Writing assistance', click: () => action('writing-assistance') },
-    { label: 'Allow local include folder...', click: () => action('allow-include-folder') },
-    { label: 'Stop local include folder access', click: () => action('revoke-include-folder') },
     { label: 'Getting started', click: () => action('help') },
   ];
 }
@@ -814,8 +965,6 @@ function createWindow(): void {
       { id: 'view-preview', label: 'Preview', click: send('preview') },
       { id: 'view-preview-source', label: 'Show Markdown beside preview', type: 'checkbox', enabled: false, click: send('preview-source') },
       { label: 'Writing assistance', click: send('writing-assistance') },
-      { label: 'Allow local include folder...', click: send('allow-include-folder') },
-      { label: 'Stop local include folder access', click: send('revoke-include-folder') },
       { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+Shift+B', click: send('sidebar') },
       { label: 'Focus mode', accelerator: 'F9', click: send('focus') },
       { label: 'Split with...', click: send('split') },
@@ -850,6 +999,22 @@ if (primaryInstance) void app.whenReady().then(async () => {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.error('Could not load recent files:', error);
       dialog.showErrorBox('Recent files could not be loaded', String(error));
+    }
+  }
+  try {
+    const saved: unknown = JSON.parse(await readFile(variantAssociationsPath(), 'utf8'));
+    if (!Array.isArray(saved) || !saved.every(item => Array.isArray(item) && item.length === 2 &&
+      typeof item[0] === 'string' && path.isAbsolute(item[0]) &&
+      typeof item[1] === 'string' && path.isAbsolute(item[1]) && /\.ya?ml$/i.test(item[1]))) {
+      throw new Error('Invalid shared selector file associations.');
+    }
+    for (const [documentPath, configPath] of saved as [string, string][]) {
+      sharedVariantAssociations.set(variantAssociationKey(documentPath), configPath);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.error('Could not load shared selector file associations:', error);
+      dialog.showErrorBox('Shared selector files could not be remembered', String(error));
     }
   }
   protocol.handle('lekh-image', async request => {

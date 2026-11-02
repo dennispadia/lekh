@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { atomicWrite, readMarkdown } from '../lib/files.js';
+import { atomicWrite, atomicWriteIfUnchanged, readMarkdown } from '../lib/files.js';
 import { readImage } from '../lib/images.js';
 
 test('atomic writes replace content and leave no temporary files', async () => {
@@ -18,6 +18,20 @@ test('atomic writes replace content and leave no temporary files', async () => {
     assert.deepEqual(await readdir(root), ['test.md']);
     await assert.rejects(() => atomicWrite(path.join(root, 'missing', 'test.md'), 'data'), /ENOENT/);
     assert.deepEqual(await readdir(root), ['test.md']);
+  } finally { await rm(root, { recursive: true }); }
+});
+
+test('conditional atomic writes preserve concurrent changes', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-unit-'));
+  try {
+    const file = path.join(root, 'shared.yml');
+    await writeFile(file, 'version: one\n');
+    await assert.rejects(() => atomicWriteIfUnchanged(file, 'version: original\n', 'version: replaced\n'), /file changed/);
+    assert.equal(await readFile(file, 'utf8'), 'version: one\n');
+    assert.deepEqual(await readdir(root), ['shared.yml']);
+    await atomicWriteIfUnchanged(file, 'version: one\n', 'version: two\n');
+    assert.equal(await readFile(file, 'utf8'), 'version: two\n');
+    assert.deepEqual(await readdir(root), ['shared.yml']);
   } finally { await rm(root, { recursive: true }); }
 });
 

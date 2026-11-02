@@ -332,6 +332,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-variant-placeholder { padding: 5px 10px; border: 1px dashed var(--line); color: var(--muted); font-size: 11px; }
 .publishing-error { color: #b10e1c; border: 1px solid currentColor; padding: 10px; white-space: normal; }
 :root[data-theme="dark"] .publishing-error { color: #fde7e9; }
+.publishing-include-access { padding: 5px 10px; border: 1px solid currentColor; }
 .publishing-insert-menu { max-height: min(520px, calc(100vh - 24px)); overflow: auto; }
 .publishing-insert-menu button { display: flex; align-items: center; gap: 10px; }
 .publishing-menu-group + .publishing-menu-group { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
@@ -450,6 +451,15 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-include-preview > :last-child { margin-bottom: 0; }
 #publishing-include-preview { padding: 10px 12px; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
 #variant-content-dialog { width: min(460px, calc(100vw - 32px)); }
+#variant-storage-dialog, #shared-variant-details-dialog, #shared-variant-review-dialog { width: min(560px, calc(100vw - 32px)); }
+.variant-storage-actions { display: grid; grid-template-columns: 1fr; }
+#shared-variant-details-form > label { display: block; margin: 12px 0; }
+#shared-variant-details-form > label > input { display: block; width: 100%; margin-top: 5px; }
+#shared-variant-pivots { display: grid; gap: 8px; margin: 16px 0 8px; padding: 12px; max-height: 38vh; overflow: auto; }
+.shared-variant-choice { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(120px, 1.5fr) auto; gap: 8px; align-items: end; padding: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.shared-variant-choice label { min-width: 0; margin: 0; }
+.shared-variant-choice input { display: block; width: 100%; margin-top: 4px; }
+#shared-variant-review-entry { max-height: 45vh; overflow: auto; padding: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; }
 #variant-content-options { display: grid; gap: 4px; margin: 16px 0; border: 1px solid var(--line); padding: 12px; max-height: 45vh; overflow: auto; min-width: 0; }
 #variant-content-options label { display: flex; gap: 10px; align-items: flex-start; margin: 0; padding: 10px; border-radius: 5px; cursor: pointer; font-size: 13px; line-height: 1.55; }
 #variant-content-options label:hover, #variant-content-options label:has(input:checked) { background: var(--soft); }
@@ -462,7 +472,7 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 .publishing-document-selector { box-sizing: border-box; width: min(100%, 840px); margin: 0 auto 20px; font-size: 13px; }
 .publishing-document-selector > strong { display: block; margin-bottom: 10px; }
 .publishing-document-selector small { display: block; color: var(--muted); margin-top: 8px; }
-.publishing-load-labels { margin-top: 6px; padding: 4px 0; color: var(--accent); font-size: 11px; text-decoration: underline; }
+.publishing-load-labels, .publishing-choose-shared-file { margin-top: 6px; padding: 4px 0; color: var(--accent); font-size: 11px; text-decoration: underline; }
 [data-publishing-zone][hidden] { display: none; }
 .pane-content.reader-preview { overflow: hidden; padding: 0; }
 .pane-content.has-preview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

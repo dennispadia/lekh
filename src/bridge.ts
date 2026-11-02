@@ -1,5 +1,14 @@
 export type Result<T> = { ok: true; value: T } | { ok: false; error: string };
 export interface OpenedFile { id: string; path: string; content: string }
+export interface SharedVariantChoice { id: string; title: string }
+export interface SharedVariantGroup {
+  owner: string;
+  id: string;
+  title: string;
+  prompt: string;
+  pivots: SharedVariantChoice[];
+}
+export interface ChosenVariantConfigFile { token: string; label: string }
 export interface EditorContext {
   mode: 'visual' | 'source';
   active: string[];
@@ -41,7 +50,10 @@ export interface LekhAPI {
   revokeIncludeFolder: (id: string) => Promise<Result<void>>;
   previewIncludes: (id: string, content: string) => Promise<Result<string>>;
   includesRequireInteractiveExport: (id: string, content: string) => Promise<Result<boolean>>;
+  onIncludeAccessChanged: (listener: (id: string) => void) => void;
   prepareVariantConfiguration: (id: string, content: string) => Promise<Result<string>>;
+  chooseVariantConfigFile: (id: string) => Promise<Result<ChosenVariantConfigFile | null>>;
+  createVariantGroup: (id: string, token: string, group: SharedVariantGroup, content: string) => Promise<Result<{ content: string; file: string }>>;
   exportDocument: (id: string, content: string, format: 'pdf' | 'docx' | 'html') => Promise<Result<string | null>>;
   insertImage: () => Promise<Result<string | null>>;
   storeImage: (id: string, source: string, storage: 'embedded' | 'assets') => Promise<Result<string>>;

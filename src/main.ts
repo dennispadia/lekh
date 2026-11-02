@@ -9,7 +9,7 @@ import { Markdown } from '@tiptap/markdown';
 import { documentPreviewHTML, escapeHTML, headingAnchor, headings, imageDisplayURL, isSafeLink, parser, requiresInteractiveExport, topLevelBlocks, wordCount } from '../lib/markdown.js';
 import { replaceSearchMatches, type SearchMatch, type SearchResult } from '../lib/search.js';
 import { hasMarkedTableOfContents, tableOfContents, updateTableOfContents } from '../lib/contents.js';
-import type { Result } from './bridge.js';
+import type { Result, SharedVariantGroup } from './bridge.js';
 import { isTheme, restoreTheme, themes, type Theme } from '../lib/themes.js';
 import { createPair, DEFAULT_SIDEBAR_WIDTH, groupTabs, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, pairFor, sidebarWidth, splitRatio, type SplitPair } from '../lib/workspace.js';
 import { formattingShortcuts } from '../lib/shortcuts.js';
@@ -29,7 +29,7 @@ import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
 import { prepareVariantInsertion, selectInsertedVariant, validateSourceVariantInsertion, variantInsertionPosition } from './publishing-insert.js';
-import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
+import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, projectVariantOptions, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
 import { editablePublishingBlockAtStart, hasInteractivePublishing, includeMarkdown, interactiveExportMessage, publishingBlockRanges, publishingCSS } from '../lib/publishing.js';
 import { publishingTemplateMarkdown, publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
@@ -180,7 +180,7 @@ app.innerHTML = `
   ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
   <div id="structure-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Structure" hidden>${structureMenuHTML}</div>
   <div id="interactive-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Interactive" hidden>${interactiveMenuHTML}</div>
-  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('allow-include-folder', 'Allow local include folder...')}${button('revoke-include-folder', 'Stop local include folder access')}${button('help', 'Getting started', 'help')}</div>
+  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-include-dialog" aria-labelledby="publishing-include-title"><form method="dialog">
     <h2 id="publishing-include-title">Insert include</h2>
@@ -201,6 +201,33 @@ app.innerHTML = `
     <p>Choose which existing options this content applies to. It can be placed anywhere in the document, separately from its selector.</p>
     <fieldset id="variant-content-options"><legend>Applies to</legend></fieldset>
     <div class="dialog-actions"><button value="insert" class="primary">Insert content</button><button value="cancel">Cancel</button></div>
+  </form></dialog>
+  <dialog id="variant-storage-dialog" aria-labelledby="variant-storage-title"><form method="dialog">
+    <h2 id="variant-storage-title">Add a variant selector</h2>
+    <p>Choose where the selector choices are stored.</p>
+    <div class="dialog-actions variant-storage-actions">
+      <button value="local" class="primary">Locally in the document</button>
+      <button value="shared">In a shared file</button>
+      <button value="cancel" formnovalidate>Cancel</button>
+    </div>
+  </form></dialog>
+  <dialog id="shared-variant-details-dialog" aria-labelledby="shared-variant-details-title"><form method="dialog" id="shared-variant-details-form">
+    <h2 id="shared-variant-details-title">Create the entry</h2>
+    <p id="shared-variant-file-label"></p>
+    <label>Owner<input id="shared-variant-owner" required maxlength="39" pattern="[A-Za-z0-9-]{1,39}" title="Use 1–39 letters, numbers, or hyphens." /></label>
+    <label>Group ID<input id="shared-variant-id" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}" title="Start with a letter or number; use letters, numbers, hyphens, or underscores." /></label>
+    <label>Group name<input id="shared-variant-title" required maxlength="512" /></label>
+    <label>Selection title<input id="shared-variant-prompt" required maxlength="512" /></label>
+    <fieldset id="shared-variant-pivots"><legend>Choices</legend></fieldset>
+    <button id="shared-variant-add-choice" type="button">+ Add choice</button>
+    <div class="dialog-actions"><button value="review" class="primary">Review changes</button><button value="cancel" formnovalidate>Cancel</button></div>
+  </form></dialog>
+  <dialog id="shared-variant-review-dialog" aria-labelledby="shared-variant-review-title"><form method="dialog">
+    <h2 id="shared-variant-review-title">Review changes</h2>
+    <p id="shared-variant-review-file"></p>
+    <pre id="shared-variant-review-entry"></pre>
+    <p id="shared-variant-review-metadata"></p>
+    <div class="dialog-actions"><button value="confirm" class="primary">Create entry and add selector</button><button value="cancel" formnovalidate>Cancel</button></div>
   </form></dialog>
   <dialog id="image-storage-dialog" aria-labelledby="image-storage-title"><form method="dialog">
     <h2 id="image-storage-title">Store this image</h2>
@@ -272,7 +299,7 @@ app.innerHTML = `
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
-    <p><b>Structure and Interactive:</b> Structure has table of contents, diagrams, horizontal rules, image descriptions, YAML metadata and include directives. Interactive has editable tabs and variant selectors. Select an example and type/format directly in its body. Click the selected tab or variant choice again, double-click it, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, removing the last one removes the whole block, and undo restores it. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then put the caret where content belongs and choose <b>Add variant content</b> from Interactive. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Save the document to preview and export included content without its document metadata; allow a local include folder if the file is outside the document's folder. The original directives stay in your document. Use interactive HTML export for documents with tabs or variants, including those in included files; Word and PDF do not support them.</p>
+    <p><b>Structure and Interactive:</b> Structure has table of contents, diagrams, horizontal rules, image descriptions, YAML metadata and include directives. Interactive has editable tabs and variant selectors. Select an example and type/format directly in its body. Click the selected tab or variant choice again, double-click it, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, removing the last one removes the whole block, and undo restores it. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then put the caret where content belongs and choose <b>Add variant content</b> from Interactive. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Save the document to preview and export included content without its document metadata. If an include is outside the document folder, Lekh asks before allowing a suggested project folder; access ends when the document is closed or saved in another folder. The original directives stay in your document. Use interactive HTML export for documents with tabs or variants, including those in included files; Word and PDF do not support them.</p>
     <p><b>Editing views:</b> choose <b>Visual</b>, <b>Markdown</b>, or <b>Split</b> for both side by side. Split scrolling is synchronized in both directions using document anchors and wrapped source lines. Paired documents remain independent.</p>
     <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the sidebar button or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
     <p><b>Find</b>: click Find or press Ctrl+F to open or close the find bar. Close and Escape also dismiss it; the search and replacement text are retained.</p>
@@ -512,7 +539,7 @@ function refreshPreview(tab: DocumentTab): void {
   void publishingHTML(snapshot, tab.id).then(async html => {
     if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tabs.includes(tab)) return;
     content.innerHTML = html;
-    initializePublishing(content, message => notify(message, true));
+    initializePublishing(content, message => notify(message, true), tab.id);
     await renderMermaidBlocks(content);
   }).catch(error => {
     if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tabs.includes(tab)) return;
@@ -540,15 +567,22 @@ function refreshLocalImages(id: string): void {
   }
 }
 
+function sharedVariantMetadataField(content: string): string | undefined {
+  const frontmatter = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
+  if (!frontmatter) return;
+  const fields = frontmatter[1].split(/\r?\n/).filter(line => /^zone_pivot_groups\s*:\s*\S/.test(line));
+  return fields.length === 1 ? fields[0] : undefined;
+}
+
 function refreshProjectVariantLabels(tab: DocumentTab, force = false): void {
-  const field = /^zone_pivot_groups\s*:.*$/m.exec(tab.markdown)?.[0];
+  const field = sharedVariantMetadataField(tab.markdown);
   const key = JSON.stringify([tab.path, field]);
   if (!force && tab.variantConfigKey === key) return;
   tab.variantConfigKey = key;
   const revision = (tab.variantConfigRevision ?? 0) + 1;
   tab.variantConfigRevision = revision;
   setProjectVariantLabels(tab.pane, null);
-  if (!field || !tab.path) return;
+  if (!field) return;
   const snapshot = tab.markdown;
   void window.lekh.prepareVariantConfiguration(tab.id, snapshot).then(result => {
     if (!tabs.includes(tab) || tab.variantConfigRevision !== revision) return;
@@ -754,7 +788,6 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
     EditablePublishing.configure({
       schema: () => created.schema, documentId: id,
       reportError: message => notify(message, true),
-      allowIncludeFolder: () => { void run(async () => { activateTab(id); await dispatch('allow-include-folder'); }); },
       refreshIncludeContent: () => { refreshPublishingFiles(); invalidateExportCheck(); },
     }),
     PublishingNode.configure({
@@ -1205,7 +1238,7 @@ function openSplit(): void {
     void publishingHTML(snapshot, tab.id).then(html => {
       if (!card.isConnected || tab.markdown !== snapshot) return;
       page.innerHTML = html;
-      initializePublishing(page);
+      initializePublishing(page, undefined, tab.id);
     }).catch(error => {
       if (!card.isConnected) return;
       page.textContent = `Preview unavailable: ${String(error)}`;
@@ -1397,6 +1430,125 @@ function editPublishingSource(id: string, raw: string, position: number): void {
   source.scrollTop = Math.max(0, text.slice(0, block.from).split('\n').length * 24 - 50);
 }
 
+function dialogResult(dialog: HTMLDialogElement): Promise<string> {
+  return new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
+}
+
+function sharedVariantReviewEntry(group: SharedVariantGroup): string {
+  const quote = (value: string) => JSON.stringify(value.trim());
+  return [
+    `# Owner: ${group.owner}`,
+    `- id: ${group.id}`,
+    `  title: ${quote(group.title)}`,
+    `  prompt: ${quote(group.prompt)}`,
+    '  pivots:',
+    ...group.pivots.flatMap(pivot => [`    - id: ${pivot.id}`, `      title: ${quote(pivot.title)}`]),
+  ].join('\n');
+}
+
+function addSharedVariantChoice(container: HTMLElement, id = '', title = ''): void {
+  if (container.querySelectorAll('.shared-variant-choice').length >= 32) return;
+  const row = document.createElement('div');
+  row.className = 'shared-variant-choice';
+  const idLabel = document.createElement('label');
+  idLabel.textContent = 'Choice ID';
+  const idInput = document.createElement('input');
+  idInput.required = true;
+  idInput.maxLength = 64;
+  idInput.pattern = '[A-Za-z0-9][A-Za-z0-9_-]{0,63}';
+  idInput.value = id;
+  idInput.setAttribute('aria-label', 'Choice ID');
+  idLabel.append(idInput);
+  const titleLabel = document.createElement('label');
+  titleLabel.textContent = 'Choice title';
+  const titleInput = document.createElement('input');
+  titleInput.required = true;
+  titleInput.maxLength = 512;
+  titleInput.value = title;
+  titleInput.setAttribute('aria-label', 'Choice title');
+  titleLabel.append(titleInput);
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.textContent = 'Remove';
+  remove.setAttribute('aria-label', 'Remove choice');
+  remove.addEventListener('click', () => {
+    row.remove();
+    const rows = [...container.querySelectorAll<HTMLButtonElement>('.shared-variant-choice button')];
+    rows.forEach(button => { button.disabled = rows.length <= 2; });
+    element<HTMLButtonElement>('shared-variant-add-choice').disabled = container.querySelectorAll('.shared-variant-choice').length >= 32;
+  });
+  row.append(idLabel, titleLabel, remove);
+  container.append(row);
+  const rows = [...container.querySelectorAll<HTMLButtonElement>('.shared-variant-choice button')];
+  rows.forEach(button => { button.disabled = rows.length <= 2; });
+  element<HTMLButtonElement>('shared-variant-add-choice').disabled = container.querySelectorAll('.shared-variant-choice').length >= 32;
+}
+
+async function createSharedVariantSelector(): Promise<'local' | 'cancel' | 'created'> {
+  const modeDialog = element<HTMLDialogElement>('variant-storage-dialog');
+  modeDialog.returnValue = 'cancel';
+  const modeResult = dialogResult(modeDialog);
+  modeDialog.showModal();
+  const storage = await modeResult;
+  if (storage !== 'local' && storage !== 'shared') return 'cancel';
+  if (storage === 'local') return 'local';
+
+  const targetId = documentId;
+  const originalMarkdown = markdown;
+  const selectedFile = unwrap(await window.lekh.chooseVariantConfigFile(targetId));
+  if (!selectedFile) return 'cancel';
+  if (documentId !== targetId || markdown !== originalMarkdown) throw new Error('The active document changed. Start the shared selector workflow again.');
+
+  const detailsDialog = element<HTMLDialogElement>('shared-variant-details-dialog');
+  const detailsForm = element<HTMLFormElement>('shared-variant-details-form');
+  const pivots = element('shared-variant-pivots');
+  pivots.replaceChildren(Object.assign(document.createElement('legend'), { textContent: 'Choices' }));
+  element<HTMLParagraphElement>('shared-variant-file-label').textContent = `Shared file: ${selectedFile.label}`;
+  element<HTMLInputElement>('shared-variant-owner').value = '';
+  element<HTMLInputElement>('shared-variant-id').value = '';
+  element<HTMLInputElement>('shared-variant-title').value = '';
+  element<HTMLInputElement>('shared-variant-prompt').value = '';
+  addSharedVariantChoice(pivots, 'option-1', 'Option 1');
+  addSharedVariantChoice(pivots, 'option-2', 'Option 2');
+  element<HTMLButtonElement>('shared-variant-add-choice').onclick = () => {
+    const next = pivots.querySelectorAll('.shared-variant-choice').length + 1;
+    addSharedVariantChoice(pivots, `option-${next}`, `Option ${next}`);
+  };
+  detailsDialog.returnValue = 'cancel';
+  const detailsResult = dialogResult(detailsDialog);
+  detailsDialog.showModal();
+  if (await detailsResult !== 'review') return 'cancel';
+  if (!detailsForm.reportValidity()) return 'cancel';
+  if (documentId !== targetId || markdown !== originalMarkdown) throw new Error('The active document changed. Start the shared selector workflow again.');
+  const group: SharedVariantGroup = {
+    owner: element<HTMLInputElement>('shared-variant-owner').value.trim(),
+    id: element<HTMLInputElement>('shared-variant-id').value.trim(),
+    title: element<HTMLInputElement>('shared-variant-title').value.trim(),
+    prompt: element<HTMLInputElement>('shared-variant-prompt').value.trim(),
+    pivots: [...pivots.querySelectorAll<HTMLElement>('.shared-variant-choice')].map(row => ({
+      id: row.querySelector<HTMLInputElement>('input[aria-label="Choice ID"]')!.value.trim(),
+      title: row.querySelector<HTMLInputElement>('input[aria-label="Choice title"]')!.value.trim(),
+    })),
+  };
+
+  const reviewDialog = element<HTMLDialogElement>('shared-variant-review-dialog');
+  element<HTMLParagraphElement>('shared-variant-review-file').textContent = `Add this entry to ${selectedFile.label}:`;
+  element<HTMLPreElement>('shared-variant-review-entry').textContent = sharedVariantReviewEntry(group);
+  element<HTMLParagraphElement>('shared-variant-review-metadata').textContent =
+    `Add zone_pivot_groups: ${group.id} to this article's metadata.`;
+  reviewDialog.returnValue = 'cancel';
+  const reviewResult = dialogResult(reviewDialog);
+  reviewDialog.showModal();
+  if (await reviewResult !== 'confirm') return 'cancel';
+  if (documentId !== targetId || markdown !== originalMarkdown) throw new Error('The active document changed. Review the shared selector again before applying it.');
+  const result = unwrap(await window.lekh.createVariantGroup(targetId, selectedFile.token, group, originalMarkdown));
+  applyDocumentEdit(result.content);
+  const tab = tabs.find(item => item.id === targetId);
+  if (tab) refreshProjectVariantLabels(tab, true);
+  notify(`Created the shared selector in ${result.file}. Save the article to keep its metadata change.`);
+  return 'created';
+}
+
 async function insertPublishingBlock(kind: string): Promise<boolean> {
   const template = publishingTemplates.find(item => item.id === kind);
   if (!template) return false;
@@ -1408,9 +1560,12 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
     editor.view.dispatch(closeHistory(editor.state.tr));
     return true;
   }
-  if (kind === 'publishing-selector' && (mode === 'visual' ? documentVariantOptions(editor).length :
-    publishingBlockRanges(markdown).some(block => block.kind === 'selector'))) {
+  if (kind === 'publishing-selector' && documentHasSelector()) {
     return insertPublishingBlock('publishing-zone');
+  }
+  if (kind === 'publishing-selector') {
+    const choice = await createSharedVariantSelector();
+    if (choice === 'cancel' || choice === 'created') return true;
   }
   const insertionPosition = kind === 'publishing-zone' && mode === 'visual'
     ? variantInsertionPosition(editor.state.selection) : undefined;
@@ -1438,7 +1593,21 @@ async function insertPublishingBlock(kind: string): Promise<boolean> {
   if (kind === 'publishing-zone') {
     const choices = mode === 'visual' ? documentVariantOptions(editor) : publishingBlockRanges(markdown)
       .flatMap(block => block.kind === 'selector' ? editablePublishingBlockAtStart(block.raw)?.options ?? [] : []);
-    if (!choices.length) throw new Error('Add a Variant selector first, then place its content anywhere in the document.');
+    if (!choices.length && activeTab) choices.push(...(projectVariantOptions(activeTab.pane)?.options ?? []));
+    if (!choices.length && sharedVariantMetadataField(markdown)) {
+      const selectedFile = unwrap(await window.lekh.chooseVariantConfigFile(documentId));
+      if (!selectedFile) return true;
+      const prepared = unwrap(await window.lekh.prepareVariantConfiguration(documentId, markdown));
+      if (prepared === markdown) throw new Error('The selected shared file does not contain this article’s selector group.');
+      if (activeTab) {
+        setProjectVariantLabels(activeTab.pane, prepared);
+        refreshPublishingVariants(activeTab.pane);
+        choices.push(...(projectVariantOptions(activeTab.pane)?.options ?? []));
+      }
+    }
+    if (!choices.length) throw new Error(sharedVariantMetadataField(markdown)
+      ? 'Load this article’s shared selector file before adding variant content.'
+      : 'Add a Variant selector first, then place its content anywhere in the document.');
     const dialog = element<HTMLDialogElement>('variant-content-dialog');
     const options = element('variant-content-options');
     options.replaceChildren();
@@ -1532,7 +1701,7 @@ function update(): void {
   renderTabs();
   updatePaneHeaders();
   for (const tab of tabs) {
-    tab.pane.dataset.variantConfig = String(/^zone_pivot_groups\s*:/m.test(tab.markdown));
+    tab.pane.dataset.variantConfig = String(Boolean(sharedVariantMetadataField(tab.markdown)));
     refreshProjectVariantLabels(tab);
     if (tab.pane.isConnected) refreshPublishingVariants(tab.pane);
   }
@@ -1941,8 +2110,8 @@ function focusOutlineLine(line: number): void {
 }
 
 function documentHasSelector(): boolean {
-  return mode === 'visual' ? documentVariantOptions(editor).length > 0 :
-    publishingBlockRanges(markdown).some(block => block.kind === 'selector');
+  return Boolean(sharedVariantMetadataField(markdown)) || (mode === 'visual' ? documentVariantOptions(editor).length > 0 :
+    publishingBlockRanges(markdown).some(block => block.kind === 'selector'));
 }
 
 function updateCursorPosition(): void {
@@ -2116,15 +2285,16 @@ async function save(saveAs = false): Promise<boolean> {
   return true;
 }
 
-function refreshPublishingFiles(): void {
+function refreshPublishingFiles(id?: string): void {
   for (const tab of tabs) {
-    if (!/\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(tab.markdown)) continue;
-    if (/^zone_pivot_groups\s*:/m.test(tab.markdown)) refreshProjectVariantLabels(tab, true);
+    if (id && tab.id !== id) continue;
+    if (!/\[!INCLUDE\b/i.test(tab.markdown) && !sharedVariantMetadataField(tab.markdown)) continue;
+    if (sharedVariantMetadataField(tab.markdown)) refreshProjectVariantLabels(tab, true);
     tab.previewMarkdown = undefined;
     refreshPreview(tab);
     window.dispatchEvent(new CustomEvent('lekh-publishing-refresh', { detail: tab.id }));
   }
-  if (/\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(markdown)) invalidateExportCheck();
+  if ((!id || id === documentId) && (/\[!INCLUDE\b/i.test(markdown) || sharedVariantMetadataField(markdown))) invalidateExportCheck();
 }
 
 let zoomRevision = 0;
@@ -2376,23 +2546,6 @@ async function dispatch(action: string): Promise<void> {
   }
   switch (action) {
     case 'command-palette': commandPalette.open(); break;
-    case 'revoke-include-folder': {
-      unwrap(await window.lekh.revokeIncludeFolder(documentId));
-      refreshPublishingFiles();
-      refreshLocalImages(documentId);
-      invalidateExportCheck();
-      notify('Project-folder include access has been stopped for this document.');
-      break;
-    }
-    case 'allow-include-folder': {
-      if (unwrap(await window.lekh.allowIncludeFolder(documentId))) {
-        refreshPublishingFiles();
-        refreshLocalImages(documentId);
-        invalidateExportCheck();
-        notify('Local includes and their images are allowed within the selected folder for this document and session.');
-      }
-      break;
-    }
     case 'revoke-image-folder': {
       unwrap(await window.lekh.revokeImageFolder(documentId));
       invalidateExportCheck();
@@ -2890,6 +3043,24 @@ window.addEventListener('lekh-project-assets', event => {
   if (typeof id !== 'string' || !tabs.some(tab => tab.id === id)) return;
   void run(async () => { activateTab(id); await dispatch('allow-image-folder'); });
 });
+window.addEventListener('lekh-shared-variant-file', event => {
+  const id: unknown = (event as CustomEvent<unknown>).detail;
+  if (typeof id !== 'string' || !tabs.some(tab => tab.id === id)) return;
+  void run(async () => {
+    activateTab(id);
+    const chosen = unwrap(await window.lekh.chooseVariantConfigFile(id));
+    if (!chosen) return;
+    const tab = tabs.find(item => item.id === id);
+    if (!tab) throw new Error('This document is no longer open.');
+    const prepared = unwrap(await window.lekh.prepareVariantConfiguration(id, tab.markdown));
+    if (prepared === tab.markdown) throw new Error('The selected shared file does not contain this article’s selector group.');
+    setProjectVariantLabels(tab.pane, prepared);
+    refreshPublishingVariants(tab.pane);
+    tab.previewMarkdown = undefined;
+    refreshPreview(tab);
+    notify(`Loaded selector choices from ${chosen.label}.`);
+  });
+});
 element('canvas').addEventListener('contextmenu', event => {
   contextImageSource = event.target instanceof HTMLImageElement ? event.target.getAttribute('data-lekh-source') : null;
   const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.tiptap a') : null;
@@ -3159,6 +3330,10 @@ element('canvas').addEventListener('keydown', event => {
     void runAction(event.key === 'ArrowUp' ? 'block:up' : 'block:down');
   }
 }, true);
+window.lekh.onIncludeAccessChanged(id => {
+  refreshPublishingFiles(id);
+  refreshLocalImages(id);
+});
 window.lekh.onAction(action => {
   if (action === 'open-pending') {
     pendingExternalOpen = true;

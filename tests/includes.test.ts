@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveIncludes } from '../lib/includes.js';
+import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
 import { parser } from '../lib/markdown.js';
 import { hasInteractivePublishing, includeMarkdown } from '../lib/publishing.js';
 
@@ -160,6 +160,112 @@ test('include access is independent of images and restricted to the document fol
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('three-level relative includes suggest the project without reading their content before permission', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-project-'));
+  try {
+    const article = path.join(root, 'articles', 'sap', 'workloads', 'article.md');
+    const includes = path.join(root, 'includes');
+    await mkdir(path.dirname(article), { recursive: true });
+    await mkdir(includes);
+    await writeFile(article, '# Parent');
+    await writeFile(path.join(includes, 'shared.md'), 'Private shared content.\n\n![Diagram](images/diagram.png)\n\n[!INCLUDE [Nested](nested.md)]\n');
+    await writeFile(path.join(includes, 'nested.md'), 'Nested shared content.\n');
+    const realArticle = await realpath(article);
+    const realRoot = await realpath(root);
+    const source = [
+      '# Parent', '', '[!INCLUDE [Shared](../../../includes/shared.md)]', '',
+      '# [Example one](#tab/one)', '', '[!INCLUDE [Shared](../../../includes/shared.md)]', '',
+      '# [Example two](#tab/two)', '', 'Other content.', '', '---', '',
+    ].join('\n');
+    const candidates: { document: string; candidate: string }[] = [];
+    const blocked = await resolveIncludes(source, article, null, {
+      displayErrors: true,
+      onAccessRequired: (document, candidate) => candidates.push({ document, candidate }),
+    });
+    const blockedHTML = parser.renderer.render(blocked, parser.options, {});
+    assert.equal(candidates.length, 2);
+    assert.ok(candidates.every(item => item.document === realArticle && item.candidate === path.join(realRoot, 'includes', 'shared.md')));
+    assert.equal(suggestedIncludeFolder(realArticle, candidates.map(item => item.candidate)), realRoot);
+    assert.doesNotMatch(blockedHTML, /Private shared content|Nested shared content/);
+    assert.equal((blockedHTML.match(/Choose project folder/g) ?? []).length, 2);
+    assert.doesNotMatch(parser.renderer.render(blocked, parser.options, { publishingExport: true }), /Choose project folder/);
+
+    const allowed = await resolveIncludes(source, article, root);
+    const html = parser.renderer.render(allowed, parser.options, {});
+    assert.equal((html.match(/Private shared content/g) ?? []).length, 2);
+    assert.equal((html.match(/Nested shared content/g) ?? []).length, 2);
+    assert.match(html, /src="\.\.\/\.\.\/\.\.\/includes\/images\/diagram\.png"/);
+    assert.equal(hasInteractivePublishing(allowed), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('suggested include roots include existing grants and never suggest a filesystem root', () => {
+  const root = path.join(os.tmpdir(), 'lekh-suggestion');
+  const article = path.join(root, 'articles', 'sap', 'workloads', 'article.md');
+  const shared = path.join(root, 'includes', 'shared.md');
+  assert.equal(suggestedIncludeFolder(article, [shared]), root);
+  assert.equal(suggestedIncludeFolder(article, [shared, path.join(root, 'another-folder')]), root);
+  assert.equal(suggestedIncludeFolder(article, []), null);
+  assert.equal(suggestedIncludeFolder(article, ['relative.md']), null);
+  assert.equal(suggestedIncludeFolder(article, [path.join(path.parse(root).root, 'elsewhere', 'shared.md')]), null);
+});
+
+test('out-of-folder includes nested in an allowed file use the containing file path for the suggestion', async () => {
+  const { root, article, includes } = await fixture();
+  try {
+    await writeFile(path.join(path.dirname(article), 'local.md'), '[!INCLUDE [Nested](../includes/shared.md)]\n');
+    await writeFile(path.join(includes, 'shared.md'), 'Nested content after consent.');
+    const source = '[!INCLUDE [Local](local.md)]\n';
+    const candidates: string[] = [];
+    const blocked = await resolveIncludes(source, article, null, {
+      displayErrors: true,
+      onAccessRequired: (_document, candidate) => candidates.push(candidate),
+    });
+    assert.equal(candidates.length, 1);
+    assert.equal(suggestedIncludeFolder(await realpath(article), candidates), await realpath(root));
+    assert.doesNotMatch(parser.renderer.render(blocked, parser.options, {}), /Nested content after consent/);
+    const allowed = await resolveIncludes(source, article, root);
+    assert.match(parser.renderer.render(allowed, parser.options, {}), /Nested content after consent/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('concurrent include prompts are deduplicated and declined folders are not repeatedly requested', async () => {
+  const prompts = new IncludeAccessPrompts();
+  const root = path.join(os.tmpdir(), 'lekh-project');
+  let answer!: (allowed: boolean) => void;
+  const pending = new Promise<boolean>(resolve => { answer = resolve; });
+  let questions = 0;
+  const first = prompts.request('document', root, () => { questions++; return pending; });
+  const second = prompts.request('document', root, async () => { questions++; return true; });
+  assert.equal(questions, 1);
+  answer(false);
+  assert.deepEqual(await Promise.all([first, second]), [false, false]);
+  assert.equal(await prompts.request('document', path.join(root, 'nested'), async () => { questions++; return true; }), false);
+  assert.equal(questions, 1);
+  assert.equal(await prompts.request('other-document', root, async () => { questions++; return true; }), true);
+  assert.equal(questions, 2);
+  prompts.forget('document');
+  assert.equal(await prompts.request('document', root, async () => { questions++; return true; }), true);
+  assert.equal(questions, 3);
+  prompts.deny('revoked', root);
+  assert.equal(await prompts.request('revoked', root, async () => { questions++; return true; }), false);
+  assert.equal(questions, 3);
+});
+
+test('closed documents and failed prompts do not poison a later permission request', async () => {
+  const prompts = new IncludeAccessPrompts();
+  const root = path.join(os.tmpdir(), 'lekh-project');
+  let answer!: (allowed: boolean) => void;
+  const pending = new Promise<boolean>(resolve => { answer = resolve; });
+  const stale = prompts.request('document', root, () => pending);
+  prompts.forget('document');
+  assert.equal(await prompts.request('document', root, async () => true), true);
+  answer(false);
+  assert.equal(await stale, false);
+  await assert.rejects(prompts.request('document', root, async () => { throw new Error('dialog failed'); }), /dialog failed/);
+  assert.equal(await prompts.request('document', root, async () => true), true);
+});
+
 test('includes resolve relative to the real document when opened through a directory link', async t => {
   const { root, article, includes } = await fixture();
   const links = await mkdtemp(path.join(os.tmpdir(), 'lekh-includes-links-'));
@@ -212,6 +318,16 @@ test('directory junctions cannot escape the allowed include folder', async t => 
       throw error;
     }
     await assert.rejects(resolveIncludes('[!INCLUDE [Escape](../includes/outside/secret.md)]\n', article, root), /outside the allowed folder/);
+    const suggestions: string[] = [];
+    const blocked = await resolveIncludes('[!INCLUDE [Escape](../includes/outside/secret.md)]\n', article, root, {
+      displayErrors: true,
+      onAccessRequired: (_document, candidate) => suggestions.push(candidate),
+    });
+    const html = parser.renderer.render(blocked, parser.options, {});
+    assert.deepEqual(suggestions, []);
+    assert.match(html, /symlink or junction escape/);
+    assert.match(html, /Choose project folder/);
+    assert.doesNotMatch(html, /Private/);
   } finally {
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
@@ -224,6 +340,7 @@ test('missing files, invalid metadata, cycles and depth or count limits are expl
     await assert.rejects(resolveIncludes('[!INCLUDE [Missing](missing.md)]\n', article, root), /not found/);
     const display = await resolveIncludes('[!INCLUDE [Missing](missing.md)]\n', article, root, { displayErrors: true });
     assert.match(parser.renderer.render(display, parser.options, {}), /Could not load include.*not found/);
+    assert.doesNotMatch(parser.renderer.render(display, parser.options, {}), /Choose project folder/);
     await writeFile(path.join(includes, 'invalid.md'), '---\ntitle: Secret metadata\nNo closing delimiter\n');
     await assert.rejects(resolveIncludes('[!INCLUDE [Invalid](../includes/invalid.md)]\n', article, root), /Close the document metadata/);
     await writeFile(path.join(includes, 'cycle.md'), '[!INCLUDE [Again](cycle.md)]\n');
