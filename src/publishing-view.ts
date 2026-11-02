@@ -1,8 +1,20 @@
-import { documentPreviewHTML, headingAnchor, headings } from '../lib/markdown.js';
+import { documentPreviewHTML, headingAnchor, headings, parser } from '../lib/markdown.js';
 import { codeLanguages, highlightedHTML, resolveCodeLanguage } from '../lib/highlight.js';
+import type { PublishingMeta } from '../lib/publishing.js';
 
 let nextGroup = 0;
 const selectedVariants = new Map<string, string>();
+const projectVariantLabels = new Map<string, { title: string; options: { id: string; label: string }[] }>();
+
+export function setProjectVariantLabels(pane: HTMLElement, prepared: string | null): void {
+  const documentId = pane.dataset.documentId;
+  if (!documentId) return;
+  const selector = prepared ? parser.parse(prepared, {}).find(token => token.type === 'publishing_selector') : undefined;
+  const meta = selector?.meta as PublishingMeta | undefined;
+  if (meta?.options?.length) projectVariantLabels.set(documentId, { title: meta.title || 'Choose a variant', options: meta.options });
+  else projectVariantLabels.delete(documentId);
+  refreshPublishingVariants(pane);
+}
 
 export function choosePublishingVariant(pane: HTMLElement, id: string): void {
   if (!pane.dataset.documentId) return;
@@ -11,6 +23,11 @@ export function choosePublishingVariant(pane: HTMLElement, id: string): void {
 }
 
 export async function publishingHTML(markdown: string, documentId: string): Promise<string> {
+  if (/\[!INCLUDE\b/i.test(markdown) && documentId) {
+    const result = await window.lekh.previewIncludes(documentId, markdown);
+    if (!result.ok) throw new Error(result.error);
+    return result.value;
+  }
   if (/^zone_pivot_groups\s*:/m.test(markdown) && documentId) {
     const result = await window.lekh.prepareVariantConfiguration(documentId, markdown);
     if (!result.ok) throw new Error(result.error);
@@ -123,6 +140,13 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       if (!choices.has(id)) choices.set(id, id.replace(/[-_]/g, ' '));
     }
   }
+  const configured = !selectors.some(selector => primary?.contains(selector)) ? projectVariantLabels.get(documentId) : undefined;
+  if (choices.size && configured) {
+    const additional = [...choices].filter(([id]) => !configured.options.some(option => option.id === id));
+    choices.clear();
+    for (const option of configured.options) choices.set(option.id, option.label);
+    for (const [id, label] of additional) choices.set(id, label);
+  }
   for (const selector of selectors) {
     for (const control of selector.querySelectorAll<HTMLElement>('[data-publishing-variant]')) {
       control.dataset.publishingChoice = control.dataset.publishingVariant;
@@ -140,7 +164,8 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
     let bar = surface.querySelector<HTMLElement>(':scope > .publishing-document-selector');
     const explicit = selectors.some(selector => surface.contains(selector));
     if (!choices.size || explicit || !surface.querySelector('[data-publishing-zone]')) { bar?.remove(); continue; }
-    const signature = JSON.stringify([...choices]);
+    const hasConfiguration = pane.dataset.variantConfig === 'true';
+    const signature = JSON.stringify({ choices: [...choices], hasConfiguration, title: configured?.title });
     if (!bar || bar.dataset.signature !== signature) {
       bar?.remove();
       bar = document.createElement('section');
@@ -149,9 +174,9 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       bar.dataset.signature = signature;
       bar.setAttribute('role', 'group');
       bar.setAttribute('aria-label', 'Choose a variant');
-      bar.title = 'Selection changes rendered content only. Source and interactive HTML export keep every alternative.';
+      bar.title = 'Selection changes rendered content only. Markdown and interactive HTML export keep every alternative.';
       const heading = document.createElement('strong');
-      heading.textContent = 'Choose a variant';
+      heading.textContent = configured?.title ?? 'Choose a variant';
       const controls = document.createElement('div');
       controls.className = 'publishing-variant-options';
       for (const [id, label] of choices) {
@@ -167,8 +192,18 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
       }
       bar.append(heading, controls);
       const note = document.createElement('small');
-      note.textContent = 'Using variant IDs. Allow the local project folder to load available publishing labels.';
+      note.textContent = configured ? 'Showing variant labels from the project configuration.'
+        : hasConfiguration ? 'Showing variant IDs. Project configuration can provide more descriptive labels.'
+          : 'Showing variant IDs from the document.';
       bar.append(note);
+      if (hasConfiguration && !configured) {
+        const load = document.createElement('button');
+        load.type = 'button';
+        load.className = 'publishing-load-labels';
+        load.textContent = 'Load variant labels...';
+        load.addEventListener('click', () => window.dispatchEvent(new CustomEvent('lekh-project-assets', { detail: documentId })));
+        bar.append(load);
+      }
       surface.prepend(bar);
     }
   }
@@ -215,7 +250,10 @@ export function refreshPublishingVariants(pane: HTMLElement): void {
   }
 }
 
-export function forgetPublishingDocument(id: string): void { selectedVariants.delete(id); }
+export function forgetPublishingDocument(id: string): void {
+  selectedVariants.delete(id);
+  projectVariantLabels.delete(id);
+}
 
 export function revealPublishingElement(element: HTMLElement): void {
   const pane = element.closest<HTMLElement>('.document-pane');

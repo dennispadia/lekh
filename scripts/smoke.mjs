@@ -75,7 +75,7 @@ class CDP {
         const request = this.pending.get(message.id);
         if (request) {
           this.pending.delete(message.id);
-          if (message.error) request.reject(new Error(JSON.stringify(message.error)));
+          if (message.error) request.reject(new Error(`${request.method}: ${JSON.stringify(message.error)}`));
           else request.resolve(message.result);
         }
       }
@@ -94,7 +94,7 @@ class CDP {
   call(method, params = {}, sessionId) {
     const id = ++this.counter;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      this.pending.set(id, { resolve, reject, method });
       this.socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
       setTimeout(() => {
         if (this.pending.delete(id)) reject(new Error(`CDP timeout: ${method}${method === 'Runtime.evaluate' ? ` (${params.expression.slice(0, 160)})` : ''}`));
@@ -110,13 +110,27 @@ class CDP {
 
 try {
   const mainURL = await waitFor(() => /Debugger listening on (ws:\/\/[^\s]+)/.exec(log)?.[1], 'main inspector');
-  const browserURL = await waitFor(() => /DevTools listening on (ws:\/\/[^\s]+)/.exec(log)?.[1], 'desktop renderer');
+  const browserURL = await waitFor(() => /DevTools listening on (ws:\/\/[^\s]+)/.exec(log)?.[1], 'desktop renderer', 90000);
   const main = await CDP.connect(mainURL);
   const browser = await CDP.connect(browserURL);
   const target = await waitFor(async () => (await browser.call('Target.getTargets')).targetInfos.find(item => item.type === 'page' && item.url.endsWith('index.html')), 'application page');
   const { sessionId } = await browser.call('Target.attachToTarget', { targetId: target.targetId, flatten: true });
   const ui = expression => browser.evaluate(expression, sessionId);
-  await waitFor(async () => ui("Boolean(document.querySelector('.tiptap h1')) && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'rendered editor', 90000);
+  const waitForReload = (check, description) => waitFor(async () => {
+    try { return await check(); }
+    catch (error) {
+      if (error instanceof Error && /Inspected target navigated or closed|Execution context was destroyed|Cannot find context with specified id/.test(error.message)) return false;
+      throw error;
+    }
+  }, description);
+  try {
+    await waitFor(async () => ui("Boolean(document.querySelector('.tiptap h1')) && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'rendered editor', 90000);
+  } catch (error) {
+    let state;
+    try { state = await ui("({ready:document.readyState,title:document.title,filename:document.querySelector('#filename')?.textContent,busy:document.querySelector('#app')?.getAttribute('aria-busy'),editor:Boolean(document.querySelector('.tiptap')),heading:document.querySelector('.tiptap h1')?.textContent,notification:document.querySelector('#notification')?.textContent})"); }
+    catch (diagnostic) { state = { unavailable: String(diagnostic) }; }
+    throw new Error(`Startup editor state: ${JSON.stringify(state)}`, { cause: error });
+  }
   const electron = "process.getBuiltinModule('module').createRequire(process.cwd() + '\\\\package.json')('electron')";
   await main.evaluate(`globalThis.smokeElectron = ${electron}`);
   await waitFor(async () => ui(`document.querySelector('#filename').textContent === ${JSON.stringify(path.basename(startupFile))}`), 'cold-launch file opens after renderer initialization');
@@ -128,11 +142,11 @@ try {
   console.log('PASS: cold launch opens the requested file, including spaces and Unicode, after editor initialization');
   await ui("globalThis.smokeBeforeBlankReload = true");
   await browser.call('Page.reload', {}, sessionId);
-  await waitFor(async () => ui("!globalThis.smokeBeforeBlankReload && document.querySelector('#filename')?.textContent === 'Untitled.md' && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'blank startup without pending files');
+  await waitForReload(async () => ui("!globalThis.smokeBeforeBlankReload && document.querySelector('#filename')?.textContent === 'Untitled.md' && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'blank startup without pending files');
   assert.equal(await ui("document.querySelectorAll('.document-tab').length"), 1);
   assert.equal(await ui("document.querySelector('.tiptap').textContent"), '');
   assert.equal(await ui("document.querySelector('#source-editor').value"), '');
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'false');
+  assert.equal(await ui("document.querySelector('#view-visual').getAttribute('aria-pressed')"), 'true');
   await waitFor(async () => ui("document.querySelector('#tabs .tab-select')?.clientWidth > 0"), 'blank tab layout');
   const blankTab = await ui(`(() => {
     const button = document.querySelector('#tabs .tab-select');
@@ -331,7 +345,7 @@ try {
   await sourceEdit('one');
   await sourceEdit('one two');
   await ui("document.querySelector('#source-editor').focus()");
-  await action('side-by-side');
+  await action('edit-split');
   assert.equal(await ui("document.activeElement === document.querySelector('#source-editor')"), true, 'Enabling dual view retains Source focus');
   await nativeShortcut('Z', ['control'], false);
   assert.equal(await ui("document.querySelector('#source-editor').value"), 'one', 'Undo after enabling dual view uses the still-focused Source history');
@@ -339,7 +353,7 @@ try {
   await nativeShortcut('Z', ['control','shift'], false);
   assert.equal(await ui("document.querySelector('#source-editor').value"), 'one two');
   await sourceEdit('');
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true');
+  assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'true');
   assert.equal(await ui("document.querySelector('#source-editor').hidden || document.querySelector('#visual-editor').hidden"), false);
   const dualLayout = await ui("(() => {const visual=document.querySelector('.visual-surface').getBoundingClientRect();const source=document.querySelector('.source-surface').getBoundingClientRect();return {left:visual.left,right:visual.right,sourceLeft:source.left,sourceWidth:source.width};})()");
   assert.ok(dualLayout.right <= dualLayout.sourceLeft && dualLayout.sourceWidth > 200, JSON.stringify(dualLayout));
@@ -354,7 +368,7 @@ try {
   await ui("(() => {const editor=document.querySelector('.tiptap');editor.focus();const text=editor.querySelector('p').firstChild;const range=document.createRange();range.setStart(text,0);range.setEnd(text,7);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);})()");
   await ui("document.querySelector('.toolbar [data-command=bold]').click()");
   await waitFor(async () => ui("document.querySelector('#source-editor').value.includes('**Unusual**')"), 'Visual toolbar edits synchronize Source');
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true', 'Formatting leaves both panes visible');
+  assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'true', 'Formatting leaves both panes visible');
   await ui("document.querySelector('.tiptap').focus()");
   await browser.call('Input.insertText', {text:'Typed visually '}, sessionId);
   await waitFor(async () => ui("document.querySelector('#source-editor').value.includes('Typed visually')"), 'Visual typing synchronizes Source');
@@ -371,12 +385,13 @@ try {
     await action('sidebar');
     await menuAction('theme:light');
   }
-  await ui("document.querySelector('#view-switch').focus()");
+  await ui("document.querySelector('#view-visual').focus()");
   await nativeShortcut('Space', [], false);
-  await waitFor(async () => ui("document.querySelector('#view-switch').getAttribute('aria-checked') === 'false'"), 'keyboard switch disables Source');
+  await waitFor(async () => ui("document.querySelector('#view-visual').getAttribute('aria-pressed') === 'true'"), 'keyboard selects Visual');
   assert.equal(await ui("document.querySelector('#source-editor').hidden"), true);
+  await ui("document.querySelector('#view-split').focus()");
   await nativeShortcut('Space', [], false);
-  await waitFor(async () => ui("document.querySelector('#view-switch').getAttribute('aria-checked') === 'true'"), 'keyboard switch enables Source');
+  await waitFor(async () => ui("document.querySelector('#view-split').getAttribute('aria-pressed') === 'true'"), 'keyboard selects Split');
   const longDual = Array.from({length:60}, (_, index) => `## Section ${index}\n\nParagraph ${index} with enough content for scrolling.`).join('\n\n');
   await sourceEdit(longDual);
   await ui("document.querySelector('#source-editor').focus();document.querySelector('.visual-surface').scrollTop=1500");
@@ -389,10 +404,10 @@ try {
   await delay(100);
   const dualVisualBefore = await ui("document.querySelector('.visual-surface').scrollTop");
   const dualSourceBefore = await ui("document.querySelector('#source-editor').scrollTop");
-  await action('side-by-side');
+  await action('visual');
   assert.equal(await ui("document.activeElement === document.querySelector('.tiptap')"), true, 'Hiding focused Source transfers focus to Visual');
   assert.ok(await ui("document.querySelector('.pane-content').scrollTop") > 1000, 'Disabling Source retains the Visual scroll position');
-  await action('side-by-side');
+  await action('edit-split');
   assert.ok(await ui("document.querySelector('.visual-surface').scrollTop") > 1000, 'Enabling Source retains the Visual scroll position');
   assert.ok(Math.abs(await ui("document.querySelector('#source-editor').scrollTop") - dualSourceBefore) < 3);
   assert.ok(Math.abs(await ui("document.querySelector('.visual-surface').scrollTop") - dualVisualBefore) < 3);
@@ -401,7 +416,8 @@ try {
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1280,900)");
   await delay(150);
   assert.ok(await ui("document.querySelector('.toolbar').scrollWidth <= document.querySelector('.toolbar').clientWidth"), 'Every editing command fits on one row at 1280px');
-  assert.equal(await ui("document.querySelector('.toolbar [data-action=split]').textContent"), 'Split', 'Split is directly visible beside the editable dual-view switch');
+  assert.equal(await ui("document.querySelector('.toolbar [data-action=edit-split]').textContent"), 'Split', 'Split edits both views of the active file');
+  assert.ok(await ui("Boolean(document.querySelector('#format-menu [data-action=split]'))"), 'Pairing files remains available separately');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,600)");
   await delay(200);
   assert.equal(await ui("getComputedStyle(document.querySelector('.toolbar')).flexWrap"), 'nowrap', 'Editable dual-view toolbar stays on one row at minimum width');
@@ -413,12 +429,12 @@ try {
   await nativeShortcut('Escape', [], false);
   assert.ok(await ui("document.querySelector('.source-surface').getBoundingClientRect().right <= innerWidth"), 'Source remains beside Visual at minimum window width');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320,900)");
-  await menuAction('side-by-side');
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'false');
-  await menuAction('side-by-side');
+  await menuAction('visual');
+  assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'false');
+  await menuAction('edit-split');
   await action('new');
   await selectTab(await ui("Array.from(document.querySelectorAll('.document-tab')).at(-2).dataset.documentId"));
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true', 'Dual view survives tab activation');
+  assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'true', 'Dual view survives tab activation');
   await main.evaluate('smokeChoice=1');
   await menuAction('close-tab');
   await menuAction('close-tab');
@@ -536,6 +552,52 @@ try {
   await action('preview');
   await waitFor(async () => ui("document.querySelector('.live-preview:not([hidden]) h1')?.textContent === 'Preview test'"), 'same-document live preview');
   assert.equal(await ui("document.querySelector('.live-preview [contenteditable=true]') === null"), true);
+  assert.equal(await ui("document.querySelector('#preview-toggle').textContent"), 'Back to editing');
+  assert.equal(await ui("document.querySelector('#preview-source').checked"), true);
+  assert.ok(await ui("(() => {const preview=document.querySelector('.live-preview').getBoundingClientRect(), source=document.querySelector('.source-surface').getBoundingClientRect();return preview.right <= source.left + 1 && source.width > 0})()"), 'Reader Preview is left of editable Markdown');
+  await ui("document.querySelector('#preview-source').click()");
+  assert.equal(await ui("document.querySelector('#source-editor').hidden"), true, 'Markdown beside Preview is optional');
+  assert.equal(await ui("document.querySelector('[data-command=bold]').disabled"), true, 'Reader-only Preview cannot edit hidden content');
+  const readerSnapshot = await ui("document.querySelector('#source-editor').value");
+  await menuAction('format:bold');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), readerSnapshot, 'Native editing commands cannot modify the reader-only view');
+  const rejectPreviewImage = async type => {
+    const prevented = await ui(`(() => {
+      const bytes = Uint8Array.from(atob(${JSON.stringify(testPNG(2,2).toString('base64'))}), c => c.charCodeAt(0));
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([bytes], 'preview.png', {type:'image/png'}));
+      const event = ${type === 'paste'
+        ? "new ClipboardEvent('paste', {clipboardData:transfer,bubbles:true,cancelable:true})"
+        : "new DragEvent('drop', {dataTransfer:transfer,bubbles:true,cancelable:true})"};
+      document.querySelector('.live-preview:not([hidden])').dispatchEvent(event);
+      return event.defaultPrevented;
+    })()`);
+    assert.equal(prevented, true);
+    assert.equal(await ui("document.querySelector('#app').getAttribute('aria-busy')"), 'false');
+    assert.equal(await ui("document.querySelector('#image-storage-dialog').open"), false);
+    assert.equal(await ui("document.querySelector('#source-editor').value"), readerSnapshot, `${type} cannot edit Preview`);
+    assert.match(await ui("document.querySelector('#notification').textContent"), /Preview is read-only/);
+  };
+  await rejectPreviewImage('paste');
+  await rejectPreviewImage('drop');
+  await ui("document.querySelector('#preview-source').click()");
+  assert.equal(await ui("document.querySelector('#source-editor').hidden"), false);
+  await rejectPreviewImage('paste');
+  await rejectPreviewImage('drop');
+  await ui(`(() => {
+    const bytes = Uint8Array.from(atob(${JSON.stringify(testPNG(2,2).toString('base64'))}), c => c.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], 'editable.png', {type:'image/png'}));
+    const source = document.querySelector('#source-editor');
+    source.setSelectionRange(source.value.length, source.value.length);
+    source.dispatchEvent(new DragEvent('drop', {dataTransfer:transfer,bubbles:true,cancelable:true}));
+  })()`);
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false' && document.querySelector('#source-editor').value.includes('data:image/png;base64,')"), 'Markdown beside Preview accepts image drops');
+  await action('undo');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), readerSnapshot, 'Undo removes an image dropped into Markdown beside Preview');
+  await action('preview');
+  assert.equal(await ui("document.querySelector('#view-markdown').getAttribute('aria-pressed')"), 'true', 'Back to editing restores the previous Markdown view');
+  await action('preview');
   await sourceEdit('# Preview changed\n\nCat cat scatter cat_\n\n## Same\n\n## Same\n');
   await waitFor(async () => ui("document.querySelector('.live-preview:not([hidden]) h1')?.textContent === 'Preview changed'"), 'live preview follows source edits');
   await action('undo');
@@ -668,13 +730,21 @@ try {
   await action('source');
   assert.equal(await ui("document.querySelector('#source-editor').value"), assetMarkdown);
   await ui("window.smokeImageStorage='assets'");
+  await ui("(() => {const source=document.querySelector('#source-editor');source.focus();source.setSelectionRange(source.value.length,source.value.length)})()");
+  const beforeDrop = await ui("(() => {const source=document.querySelector('#source-editor');return {start:source.selectionStart,end:source.selectionEnd,assets:(source.value.match(/assets\\//g)||[]).length,context:source.value.slice(source.selectionStart-40,source.selectionEnd+80)}})()");
   await ui(`(() => {
     const bytes = Uint8Array.from(atob(${JSON.stringify(testPNG(2,2).toString('base64'))}), c => c.charCodeAt(0));
     const transfer = new DataTransfer();
     transfer.items.add(new File([bytes], 'dropped.png', {type:'image/png'}));
     document.querySelector('#source-editor').dispatchEvent(new DragEvent('drop', {dataTransfer:transfer,bubbles:true,cancelable:true}));
   })()`);
-  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false' && (document.querySelector('#source-editor').value.match(/assets\\//g)||[]).length === 2"), 'dropped image uses assets storage');
+  try {
+    await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false' && (document.querySelector('#source-editor').value.match(/assets\\//g)||[]).length === 2"), 'dropped image uses assets storage');
+  } catch (error) {
+    const afterDrop = await ui("(() => {const source=document.querySelector('#source-editor');return {start:source.selectionStart,end:source.selectionEnd,assets:(source.value.match(/assets\\//g)||[]).length,context:source.value.slice(source.selectionStart-100,source.selectionEnd+80),notification:document.querySelector('#notification').textContent,dialog:document.querySelector('#image-storage-dialog').open,busy:document.querySelector('#app').getAttribute('aria-busy')}})()");
+    throw new Error(`Image drop state: ${JSON.stringify({ beforeDrop, afterDrop })}`, { cause: error });
+  }
+  assert.ok((await ui("document.querySelector('#source-editor').value")).startsWith(assetMarkdown), 'Dropping after the document preserves the existing image');
   await ui("window.smokeImageStorage='embedded'");
   const insertionFixture = '# Before diagram\n\nAlpha middle omega.\n\n## After diagram\n\nTail remains.\n';
   for (const width of [1320, 850]) {
@@ -682,13 +752,15 @@ try {
     await delay(150);
     await sourceEdit(insertionFixture);
     await action('visual');
+    await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].focus(); smokeElectron.BrowserWindow.getAllWindows()[0].webContents.focus()");
+    await waitFor(async () => ui("document.hasFocus()"), 'keyboard focus before setting the Visual caret');
     const diagramCaret = await ui(`(() => {
       const editor=document.querySelector('#visual-editor .tiptap');editor.focus();
       const text=editor.querySelector('p').firstChild,position=editor.editor.view.posAtDOM(text,6);
-      const range=document.createRange();range.setStart(text,6);range.collapse(true);window.getSelection().removeAllRanges();window.getSelection().addRange(range);
+      editor.editor.commands.setTextSelection(position);
       return position;
     })()`);
-    await waitFor(async () => ui(`document.querySelector('#visual-editor .tiptap').editor.state.selection.from === ${diagramCaret}`), 'synthetic middle caret synchronizes with the editor');
+    await waitFor(async () => ui(`(() => {const editor=document.querySelector('#visual-editor .tiptap').editor,selection=window.getSelection();return editor.state.selection.from === ${diagramCaret} && selection.anchorNode && editor.view.posAtDOM(selection.anchorNode,selection.anchorOffset) === ${diagramCaret}})()`), 'middle caret synchronizes with the editor and DOM');
     await clickMermaid();
     assert.equal(await ui("document.querySelector('#source-editor').hidden"), true, 'Visual Mermaid insertion keeps Visual mode');
     await waitFor(async () => ui("document.querySelector('#visual-editor .mermaid-preview img')?.naturalWidth > 0"), 'inserted Mermaid renders at caret');
@@ -999,7 +1071,7 @@ try {
   await waitFor(async () => ui("JSON.parse(localStorage.getItem('lekh-draft-v1'))?.documents.length === 2"), 'both recovery drafts persisted');
   await ui("localStorage.setItem('lekh-sidebar-width','invalid')");
   await browser.call('Page.reload', {}, sessionId);
-  await waitFor(async () => ui("document.querySelector('#recovery-banner') && !document.querySelector('#recovery-banner').hidden && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'draft recovery');
+  await waitForReload(async () => ui("document.querySelector('#recovery-banner') && !document.querySelector('#recovery-banner').hidden && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'draft recovery');
   assert.equal(await ui("document.body.classList.contains('sidebar-hidden')"), true, 'Sidebar preference survives reload');
   await action('sidebar');
   assert.equal(await ui("document.querySelector('#sidebar').getBoundingClientRect().width"), 220, 'Invalid sidebar width uses the default without blocking draft recovery');
@@ -1009,7 +1081,7 @@ try {
   await waitFor(async () => ui("localStorage.getItem('lekh-sidebar-width') === '230'"), 'valid sidebar width saved');
   await ui("globalThis.smokeBeforeWidthReload = true");
   await browser.call('Page.reload', {}, sessionId);
-  await waitFor(async () => ui("!globalThis.smokeBeforeWidthReload && document.querySelector('#sidebar-resizer') && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'sidebar width reload');
+  await waitForReload(async () => ui("!globalThis.smokeBeforeWidthReload && document.querySelector('#sidebar-resizer') && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'sidebar width reload');
   assert.equal(await ui("document.querySelector('#sidebar').getBoundingClientRect().width"), 230, 'Sidebar width survives reload');
   assert.equal(await ui("document.querySelector('#sidebar-resizer').getAttribute('aria-valuenow')"), '230');
   await ui(imageChoices);
@@ -1066,11 +1138,30 @@ try {
       const element = requested?.getClientRects().length ? requested : document.querySelector('.active-pane .tiptap > :first-child');
       element.scrollIntoView({block:'center'});
       const box = element.getBoundingClientRect();
-      return ${corner} ? {x:Math.min(box.right-12,innerWidth-24),y:Math.min(box.bottom-12,innerHeight-65)} : {x:box.x + 12,y:box.y + 12};
+      if (${corner}) return {x:Math.min(box.right-12,innerWidth-24),y:Math.min(box.bottom-12,innerHeight-65)};
+      const x = box.x + 12;
+      for (const y of [box.y + 12, Math.max(1, Math.min((box.top + box.bottom) / 2, innerHeight - 2)), Math.min(box.bottom - 12, innerHeight - 65)]) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit && (hit === element || element.contains(hit))) return {x,y};
+      }
+      throw new Error('The context-menu target is not visible at the selected point.');
     })()`);
     await browser.call('Input.dispatchMouseEvent', { type: 'mousePressed', ...point, button: 'right', buttons: 2, clickCount: 1 }, sessionId);
     await browser.call('Input.dispatchMouseEvent', { type: 'mouseReleased', ...point, button: 'right', buttons: 0, clickCount: 1 }, sessionId);
-    await waitFor(async () => ui("document.querySelector('#editor-context-menu').matches(':popover-open')"), 'compact right-click menu in the actual application');
+    try {
+      await waitFor(async () => ui("document.querySelector('#editor-context-menu').matches(':popover-open')"), 'compact right-click menu in the actual application');
+    } catch (error) {
+      const state = await ui(`(() => {
+        const element = document.querySelector(${JSON.stringify(selector)});
+        const hit = document.elementFromPoint(${point.x}, ${point.y});
+        const box = element?.getBoundingClientRect();
+        return {point:${JSON.stringify(point)},box:box && {left:box.left,top:box.top,right:box.right,bottom:box.bottom},
+          viewport:[innerWidth,innerHeight],hit:hit && {tag:hit.tagName,id:hit.id,className:hit.className},
+          active:document.activeElement?.id,notification:document.querySelector('#notification').textContent};
+      })()`);
+      const nativeMenu = await main.evaluate('Boolean(smokeContextMenu)');
+      throw new Error(`Context-menu state: ${JSON.stringify({ state, nativeMenu })}`, { cause: error });
+    }
   };
   const contextAction = async labels => {
     if (!await ui("document.querySelector('#editor-context-menu').matches(':popover-open')")) await showContext();
@@ -1119,7 +1210,7 @@ try {
   assert.equal(await main.evaluate("smokeMenuItem(['Edit', 'Copy / Paste As', 'Copy selection as Markdown']).enabled"), true, 'Right-click preserves the selected text');
   assert.ok(await main.evaluate("smokeMenuItem(['Formatting']).submenu.items.length >= 9"));
   assert.equal(await main.evaluate("smokeMenuItem(['Paragraph']).submenu.items.filter(item => item.label.startsWith('Heading')).length"), 6);
-  for (const label of ['Footnote (Source)', 'Link reference (Source)', 'Math block (Source)', 'YAML front matter (Source)', 'Paragraph before', 'Paragraph after']) {
+  for (const label of ['Footnote (Markdown)', 'Link reference (Markdown)', 'Math block (Markdown)', 'YAML front matter (Markdown)', 'Paragraph before', 'Paragraph after']) {
     assert.ok(await main.evaluate(`Boolean(smokeMenuItem(['Insert', ${JSON.stringify(label)}]))`));
   }
   assert.ok(await main.evaluate("Boolean(smokeMenuItem(['Insert', 'Structure', 'Table of contents']))"));
@@ -1297,19 +1388,19 @@ try {
   await contextAction(['Edit', 'Copy / Paste As', 'Paste as Markdown']);
   assert.equal(await ui("document.querySelector('#source-editor').value"), 'New paragraph', 'Source paste replaces the selection');
   await ui("document.querySelector('#source-editor').setSelectionRange(0,3)");
-  await contextAction(['Insert', 'Footnote (Source)']);
+  await contextAction(['Insert', 'Footnote (Markdown)']);
   assert.match(await ui("document.querySelector('#source-editor').value"), /^New\[\^1\] paragraph/, 'Footnote insertion retains selected text');
-  await contextAction(['Insert', 'Footnote (Source)']);
+  await contextAction(['Insert', 'Footnote (Markdown)']);
   assert.match(await ui("document.querySelector('#source-editor').value"), /\[\^1\]: Footnote text/);
   assert.match(await ui("document.querySelector('#source-editor').value"), /\[\^2\]: Footnote text/);
-  await contextAction(['Insert', 'Link reference (Source)']);
-  await contextAction(['Insert', 'Math block (Source)']);
-  await contextAction(['Insert', 'YAML front matter (Source)']);
+  await contextAction(['Insert', 'Link reference (Markdown)']);
+  await contextAction(['Insert', 'Math block (Markdown)']);
+  await contextAction(['Insert', 'YAML front matter (Markdown)']);
   const advanced = await ui("document.querySelector('#source-editor').value");
   assert.match(advanced, /^---\ntitle:/);
   assert.match(advanced, /\[link-1\]: https:\/\/example.com/);
   assert.match(advanced, /\$\$\nx\^2 \+ y\^2 = z\^2\n\$\$/);
-  await contextAction(['Insert', 'YAML front matter (Source)']);
+  await contextAction(['Insert', 'YAML front matter (Markdown)']);
   assert.equal(await ui("document.querySelector('#source-editor').value"), advanced);
   assert.match(await ui("document.querySelector('#notification').textContent"), /already starts with/);
   console.log('PASS: source-mode menu headings and advanced inserts preserve Markdown, use unique references, and guard existing YAML');
@@ -1677,7 +1768,7 @@ try {
 
   await ui("localStorage.setItem('lekh-theme', 'invalid-theme'); window.addEventListener('beforeunload', () => localStorage.setItem('lekh-draft-v1', JSON.stringify({content:'# Single draft recovery',name:'single-draft.md'})), {once:true})");
   await browser.call('Page.reload', {}, sessionId);
-  await waitFor(async () => ui("document.querySelector('#recovery-banner') && !document.querySelector('#recovery-banner').hidden && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'single draft recovery banner');
+  await waitForReload(async () => ui("document.querySelector('#recovery-banner') && !document.querySelector('#recovery-banner').hidden && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'single draft recovery banner');
   assert.equal(await ui("document.documentElement.dataset.theme"), 'light');
   assert.equal(await ui("document.querySelector('#theme-toggle span').textContent"), 'Light');
   assert.equal(await ui("document.querySelector('#recent-toggle').getAttribute('aria-expanded')"), 'true', 'Recent Files preference survives reload');
@@ -1713,9 +1804,7 @@ try {
   const paneSource = async id => ui(`document.querySelector(${JSON.stringify(pane(id) + ' .document-source')}).value`);
   const paneMode = async (id, mode) => {
     await ui(`(() => {const pane=document.querySelector(${JSON.stringify(pane(id))});(pane.querySelector('.document-source:not([hidden])') ?? pane.querySelector('.tiptap')).focus()})()`);
-    await action('format-menu');
-    await ui(`document.querySelector('#format-menu [data-action="${mode}"]').click()`);
-    await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'pane mode');
+    await action(mode);
   };
   const confirmSplit = async (right, keyboard = false) => {
     const selector = `#split-documents button[data-document-id="${right}"]`;
@@ -1769,8 +1858,8 @@ try {
   await waitFor(async () => ui("!document.querySelector('#split-dialog').open"), 'Escape cancels the preview picker');
   assert.equal(await tabCount(), 4);
   await selectTab(splitIds[0]);
-  assert.equal(await ui("document.querySelector('.global-modes').hidden"), false, 'Split mode retains the shared switch');
-  assert.equal(await ui("document.querySelectorAll('[role=switch]').length"), 1, 'Only one Visual + Source switch exists, including split mode');
+  assert.equal(await ui("document.querySelector('.global-modes').hidden"), false, 'Paired files retain the shared view controls');
+  assert.equal(await ui("document.querySelectorAll('.global-modes button').length"), 3, 'One shared set of editing view controls applies to the active file');
   assert.equal(await ui("document.querySelectorAll('.pane-header button').length"), 0, 'Pane headers do not duplicate view controls');
   if (process.env.LEKH_SCREENSHOT) {
     const screenshot = await browser.call('Page.captureScreenshot', {format:'png'}, sessionId);
@@ -1794,10 +1883,9 @@ try {
   const beforePairedDual = await Promise.all(splitIds.slice(0, 2).map(paneSource));
   for (const id of splitIds.slice(0, 2)) {
     await ui(`document.querySelector(${JSON.stringify(pane(id) + ' .tiptap')}).focus()`);
-    assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'false', 'Switch reflects the newly active pane');
-    await ui("document.querySelector('#view-switch').click()");
-    await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'shared switch toggles active pane');
-    assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true');
+    assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'false', 'Controls reflect the newly active pane');
+    await action('edit-split');
+    assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'true');
     assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(id) + ' .pane-content')}).classList.contains('side-by-side')`), true);
   }
   await ui(`document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .document-source')}).focus()`);
@@ -1813,7 +1901,7 @@ try {
   assert.equal(await paneSource(splitIds[0]), beforePairedDual[0]);
   await ui(`(() => {const source=document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .document-source')});source.focus();const caret=source.value.indexOf('right original paragraph.')+5;source.setSelectionRange(caret,caret)})()`);
   await clickMermaid();
-  assert.equal(await ui("document.querySelector('#view-switch').getAttribute('aria-checked')"), 'true', 'Source-side Mermaid insertion preserves editable dual view');
+  assert.equal(await ui("document.querySelector('#view-split').getAttribute('aria-pressed')"), 'true', 'Source-side Mermaid insertion preserves editable dual view');
   assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .pane-content')}).classList.contains('side-by-side')`), true);
   const dualDiagramSource = await paneSource(splitIds[1]);
   assert.ok(dualDiagramSource.indexOf('```mermaid') < dualDiagramSource.indexOf(' original paragraph.'));
@@ -1821,8 +1909,10 @@ try {
   await menuAction('undo');
   assert.equal(await paneSource(splitIds[1]), beforePairedDual[1], 'Source-side Mermaid insertion is undoable without leaving dual view');
   await paneMode(splitIds[1], 'preview');
-  assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .pane-content')}).classList.contains('side-by-side')`), false, 'Legacy Preview and editable dual view are mutually exclusive');
+  assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .pane-content')}).classList.contains('side-by-side')`), false, 'Reader Preview replaces the active editing layout');
   assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(splitIds[0]) + ' .pane-content')}).classList.contains('side-by-side')`), true, 'Other paired file keeps its editable dual view');
+  await action('preview');
+  assert.equal(await ui(`document.querySelector(${JSON.stringify(pane(splitIds[1]) + ' .pane-content')}).classList.contains('side-by-side')`), true, 'Back to editing restores Split for the active file');
   await paneMode(splitIds[1], 'visual');
   await paneMode(splitIds[0], 'visual');
   const leftBeforeDiagram = await ui(`document.querySelector(${JSON.stringify(pane(splitIds[0]) + ' .tiptap')}).innerHTML`);
@@ -2279,7 +2369,49 @@ try {
   const publishingRoot = path.join(temporary, 'publishing-project');
   for (const directory of ['docs', 'includes', 'assets']) await mkdir(path.join(publishingRoot, directory), { recursive: true });
   await writeFile(path.join(publishingRoot, 'assets', 'pixel.png'), testPNG(1, 1));
-  await writeFile(path.join(publishingRoot, 'includes', 'shared.md'), 'Shared included prose.\n\n![Shared pixel](../assets/pixel.png)\n');
+  await writeFile(path.join(publishingRoot, 'zone-pivot-groups.yml'), 'groups:\n- id: operating-system\n  title: Operating system\n  pivots:\n    - id: windows\n      title: Microsoft Windows\n    - id: linux\n      title: Linux distribution\n');
+  const variantLabelsFile = path.join(publishingRoot, 'docs', 'variant-labels.md');
+  await writeFile(path.join(publishingRoot, 'includes', 'labels-shared.md'), 'Shared content for label refresh.\n');
+  await writeFile(variantLabelsFile, '---\nzone_pivot_groups: operating-system\n---\n\n# Variant labels\n\n:::zone pivot="windows"\nWindows content.\n:::zone-end\n\n:::zone pivot="linux"\nLinux content.\n:::zone-end\n\n[!INCLUDE [Shared content](../includes/labels-shared.md)]\n');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(variantLabelsFile)}`);
+  await action('open');
+  await action('visual');
+  await waitFor(async () => ui("Boolean(document.querySelector('.visual-surface .publishing-load-labels'))"), 'Visual offers contextual variant-label access');
+  assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-choice=windows]').textContent"), 'windows');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await menuAction('allow-include-folder');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared content for label refresh.')"), 'include access for the label fixture');
+  assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-choice=windows]').textContent"), 'windows', 'An Include grant does not authorize project variant configuration');
+  await main.evaluate('smokeOpenPath=null');
+  await ui("document.querySelector('.visual-surface .publishing-load-labels').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'cancel project-folder access');
+  assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-choice=windows]').textContent"), 'windows', 'Cancel leaves the document-scoped grant unchanged');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await ui("document.querySelector('.visual-surface .publishing-load-labels').click()");
+  await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-choice=windows]')?.textContent === 'Microsoft Windows'"), 'project labels refresh in Visual');
+  assert.equal(await ui("document.querySelector('.visual-surface .publishing-document-selector > strong').textContent"), 'Operating system');
+  assert.equal(await ui("Boolean(document.querySelector('.visual-surface .publishing-load-labels'))"), false);
+  await writeFile(path.join(publishingRoot, 'zone-pivot-groups.yml'), 'groups:\n- id: operating-system\n  title: Operating system\n  pivots:\n    - id: windows\n      title: Updated Windows\n    - id: linux\n      title: Updated Linux\n');
+  await ui("[...document.querySelectorAll('[data-lekh-include] button')].find(button=>button.textContent==='Refresh content').click()");
+  await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-choice=windows]')?.textContent === 'Updated Windows'"), 'Refresh content reloads external Visual labels');
+  await action('preview');
+  await waitFor(async () => ui("document.querySelector('.document-preview [data-publishing-variant=linux]')?.textContent === 'Updated Linux'"), 'project labels refresh in Preview');
+  await action('preview');
+  await menuAction('close-tab');
+  const imageAccessFile = path.join(publishingRoot, 'docs', 'image-access.md');
+  await writeFile(imageAccessFile, '# Local image\n\n![Pixel](../assets/pixel.png)\n');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(imageAccessFile)}`);
+  await action('open');
+  await action('visual');
+  await waitFor(async () => ui("Boolean(document.querySelector('#notification .notification-action'))"), 'image failure offers contextual project-folder access');
+  assert.equal(await ui("document.querySelector('.tiptap img').naturalWidth"), 0, 'Another document does not inherit the previous grant');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await ui("document.querySelector('#notification .notification-action').click()");
+  await waitFor(async () => ui("document.querySelector('.tiptap img')?.naturalWidth === 1"), 'project image refreshes after its own explicit grant');
+  await menuAction('close-tab');
+  assert.equal(await ui("Boolean(document.querySelector('[data-action=allow-image-folder], [data-action=revoke-image-folder]'))"), false, 'Image permission commands are absent from toolbar menus');
+  const sharedPublishing = '---\ntitle: Include metadata is not article content\n---\n\nShared included prose.\n\n![Shared pixel](../assets/pixel.png)\n';
+  await writeFile(path.join(publishingRoot, 'includes', 'shared.md'), sharedPublishing);
   const publishingFixture = [
     '---', 'title: Publishing fixture', '---', '',
     '# Publishing fixture', '', 'Unrelated prose.', '',
@@ -2321,12 +2453,17 @@ try {
   await ui("document.querySelector('[data-publishing-tab=\"0\"]').click(); [...document.querySelectorAll('.code-block-controls button')].find(button=>button.textContent==='Copy').click()");
   await waitFor(async () => (await main.evaluate('smokeElectron.clipboard.readText()')) === 'printf "identity"', 'editable rich-block copy matches the current code text without fence syntax');
   await waitFor(async () => ui("document.querySelector('[data-lekh-selector]') && document.querySelectorAll('.visual-surface [data-publishing-selector]').length===1"), 'a single editable Visual selector');
-  assert.equal(await ui("document.querySelector('.tiptap').textContent.includes('Shared included prose.')"), false, 'Local include directives are preserved but never loaded');
-  assert.equal(await ui("document.querySelector('[data-action=\"allow-includes\"]')"), null, 'No local include permission control remains');
-  await action('side-by-side');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-unsupported')?.textContent.includes('outside the allowed folder')"), 'out-of-folder include requires permission');
+  assert.ok(await ui("document.querySelector('[data-action=\"allow-include-folder\"]')"), 'Include folder access is available');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await menuAction('allow-include-folder');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared included prose.')"), 'authorized include loads in Visual');
+  assert.equal(await ui("document.querySelector('[data-lekh-include] .publishing-include-preview').textContent.includes('Include metadata is not article content')"), false);
+  await waitFor(async () => ui("(() => {const image=document.querySelector('[data-lekh-include] img');return image?.complete&&image.naturalWidth===1})()"), 'included relative image loads');
+  await action('edit-split');
   assert.ok(await ui("(() => {const selector=document.querySelector('.visual-surface [data-publishing-selector]').getBoundingClientRect();const source=document.querySelector('.source-surface').getBoundingClientRect();return selector.right <= source.left+1 && selector.left >= document.querySelector('.visual-surface').getBoundingClientRect().left})()"), 'The selector belongs to Visual, never the Source column');
   assert.equal(await ui("document.querySelector('.document-pane > .publishing-document-selector')"), null);
-  await action('side-by-side');
+  await action('visual');
   await ui("document.querySelector('[data-publishing-choice=\"second\"]').click()");
   assert.equal(await ui("document.querySelector('[data-publishing-zone=\"first\"] > .publishing-editable-body').hidden"), true);
   assert.equal(await ui("document.querySelector('[data-publishing-zone=\"second\"]').hidden"), false);
@@ -2387,8 +2524,9 @@ try {
   await action('export-html');
   const exportedPublishing = await readFile(publishingHTML, 'utf8');
   for (const text of ['Managed identity', 'Service principal', 'First variant body.', 'Second variant body.']) assert.ok(exportedPublishing.includes(text), `HTML keeps ${text}`);
-  assert.doesNotMatch(exportedPublishing, /Shared included prose|Edit source|Copy failed/);
-  assert.equal(await ui('typeof window.lekh.allowPublishingIncludes'), 'undefined', 'The include permission bridge is removed');
+  assert.match(exportedPublishing, /Shared included prose/);
+  assert.doesNotMatch(exportedPublishing, /Include metadata is not article content|Edit source|Copy failed/);
+  assert.equal(await ui('typeof window.lekh.allowIncludeFolder'), 'function', 'The include permission bridge is available');
   await main.evaluate(`globalThis.smokeOfflineRequests=[]; globalThis.smokeReview=new smokeElectron.BrowserWindow({show:false,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,partition:'lekh-offline-review'}});
     smokeReview.webContents.session.webRequest.onBeforeRequest((request,callback)=>{smokeOfflineRequests.push(request.url);callback({cancel:!request.url.startsWith('file:')&&!request.url.startsWith('data:')})});
     smokeReview.webContents.setWindowOpenHandler(()=>({action:'deny'})); smokeReview.loadFile(${JSON.stringify(publishingHTML)});`);
@@ -2533,7 +2671,8 @@ try {
   for (const block of publishingBlockRanges(publishingFixture)) assert.ok(retainedPublishing.includes(block.raw.trimEnd()), `Visual editing preserves ${block.kind} source`);
   assert.equal(await readFile(publishingFile, 'utf8'), publishingFixture, 'Rendering and interaction never save or overwrite the source');
   await action('preview');
-  await waitFor(async () => ui("document.querySelector('.document-preview').textContent.includes('Publishing fixture') && !document.querySelector('.document-preview').textContent.includes('Shared included prose.')"), 'Preview never loads local includes');
+  await waitFor(async () => ui("document.querySelector('.document-preview').textContent.includes('Publishing fixture') && document.querySelector('.document-preview').textContent.includes('Shared included prose.')"), 'Preview resolves local includes');
+  assert.equal(await ui("document.querySelector('.document-preview').textContent.includes('Include metadata is not article content')"), false);
   await main.evaluate('smokeChoice=1');
   await menuAction('close-tab');
   const includeOnlyFile = path.join(publishingRoot, 'docs', 'include-only.md');
@@ -2541,8 +2680,10 @@ try {
   await writeFile(includeOnlyFile, '# Include-only article\n\n[!INCLUDE [Examples](../includes/interactive.md)]\n');
   await main.evaluate(`smokeOpenPath=${JSON.stringify(includeOnlyFile)}`);
   await action('open');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await menuAction('allow-include-folder');
   await action('export-menu');
-  await waitFor(async () => ui("document.querySelector('#export-restriction').hidden && !document.querySelector('[data-action=\"export-docx\"]').disabled"), 'unloaded include directives never restrict static exports');
+  await waitFor(async () => ui("!document.querySelector('#export-restriction').hidden && document.querySelector('[data-action=\"export-docx\"]').disabled && document.querySelector('[data-action=\"export-pdf\"]').disabled"), 'included tabs restrict static exports');
   await action('export-menu');
   await menuAction('close-tab');
   await action('new');
@@ -2720,11 +2861,11 @@ try {
   const longPublishingLabel = `A detailed option ${'UnbrokenTechnicalPublishingLabel'.repeat(7)}`;
   await sourceEdit(`:::selector title="Choose a narrow-window option"\n- [${longPublishingLabel}](#variant/first)\n- [Other option](#variant/second)\n:::selector-end\n\n:::zone pivot="first"\nFirst body.\n:::zone-end\n\n:::zone pivot="second"\nSecond body.\n:::zone-end\n\n# [${longPublishingLabel}](#tab/first)\n\nFirst example.\n\n# [Other example](#tab/second)\n\nSecond example.\n\n---\n`);
   await action('visual');
-  await action('side-by-side');
+  await action('edit-split');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(850,800)");
   await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-selector]') && document.querySelectorAll('[data-publishing-tab]').length===2"), 'narrow-window publishing content');
   assert.ok(await ui("(() => {const view=document.querySelector('.visual-surface').getBoundingClientRect();return [...document.querySelectorAll('.visual-surface .publishing-variant-options button,.visual-surface .publishing-tablist button')].every(button=>{const box=button.getBoundingClientRect();return box.left>=view.left-1&&box.right<=view.right+1&&button.scrollWidth<=button.clientWidth+1})})()"), 'Long selector and tab labels wrap without clipping or crossing into Source');
-  await action('side-by-side');
+  await action('visual');
   await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320,900)");
   await main.evaluate('smokeChoice=1');
   await menuAction('close-tab');
@@ -2781,15 +2922,55 @@ try {
   assert.ok(Math.min(Math.abs(flyout.left-flyout.parentRight-3),Math.abs(flyout.right-flyout.parentLeft+3))<3, 'Flyout attaches to its actual parent, not the root');
   assert.ok(Math.abs(flyout.top-Math.max(8,Math.min(flyout.rowTop,flyout.viewHeight-flyout.height-8)))<3);
   assert.ok(flyout.icons, 'Right-click publishing tools share toolbar icons and descriptions');
-  assert.equal(await ui("document.querySelector('[data-context-label=\"Local include\"]')===null"), true, 'Right-click does not offer a Local include insertion');
-  assert.equal(await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-include\"], #interactive-menu [data-action=\"insert:publishing-include\"]')===null"), true, 'Neither menu offers a Local include insertion');
-  assert.equal(await main.evaluate("Boolean(smokeElectron.Menu.getApplicationMenu().getMenuItemById('publishing-include'))"), false, 'The native Insert menu does not offer a Local include insertion');
+  assert.ok(await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-include\"]')"), 'Structure offers Include');
+  assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-include\"]')===null"), true, 'Include belongs to Structure, not Interactive');
+  assert.equal(await main.evaluate("smokeElectron.Menu.getApplicationMenu().getMenuItemById('publishing-include').label"), 'Include…', 'The native Insert menu offers Include');
   if (process.env.LEKH_PUBLIC_SCREENSHOTS === '1') {
     await ui("document.querySelector('#notification').hidden=true");
     const capture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
     await writeFile(path.join(root, 'docs', 'images', 'context-publishing-dark.png'), Buffer.from(capture.data, 'base64'));
   }
   await ui("document.querySelector('#editor-context-menu').hidePopover()");
+  const beforeCanceledInclude = await ui("JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())");
+  await showContext('.tiptap p');
+  await contextAction(['Insert', 'Structure']);
+  assert.ok(await ui("Boolean(document.querySelector('[data-context-label=\"Include…\"]'))"), 'Right-click Structure offers Include with the other Structure tools');
+  await ui("document.querySelector('[data-context-label=\"Include…\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#publishing-include-dialog').open"), 'Include dialog from right-click');
+  assert.deepEqual(await ui("[...document.querySelectorAll('#publishing-include-dialog label')].map(label=>label.childNodes[0].textContent)"), ['Title', 'File path'], 'Include asks for exactly the requested fields, in order');
+  await ui("document.querySelector('#publishing-include-dialog button[value=\"insert\"]').click()");
+  assert.equal(await ui("document.querySelector('#publishing-include-dialog').open"), true, 'Both fields are required');
+  await ui("document.querySelector('#publishing-include-dialog button[value=\"cancel\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Cancel Include');
+  assert.equal(await ui("JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())"), beforeCanceledInclude, 'Cancel leaves the document unchanged');
+  await caretIn('Place the first variant here.');
+  const beforeVisualInclude = await ui("JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())");
+  await publishingTool('publishing-include', true);
+  await waitFor(async () => ui("document.querySelector('#publishing-include-dialog').open"), 'Include dialog from Structure');
+  await inputText('#publishing-include-name', 'Deployment prerequisites');
+  await inputText('#publishing-include-path', '../includes/prerequisites.md');
+  const expectedVisualInclude = '[!INCLUDE [Deployment prerequisites](../includes/prerequisites.md)]';
+  assert.equal(await ui("document.querySelector('#publishing-include-preview').textContent"), expectedVisualInclude, 'The dialog previews the directive');
+  await ui("document.querySelector('#publishing-include-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Insert Include in Visual');
+  assert.ok(await ui(`document.querySelector('#visual-editor .tiptap').editor.markdown.serialize(document.querySelector('#visual-editor .tiptap').editor.getJSON()).includes(${JSON.stringify(expectedVisualInclude)})`), 'Visual inserts the exact title and file path');
+  assert.ok(await ui("(() => {const content=document.querySelector('#visual-editor .tiptap').editor.getJSON().content;const index=content.findIndex(node=>node.type==='lekhInclude'&&node.attrs.label==='Deployment prerequisites');return index>=0&&content[index+1]?.type==='paragraph'&&!content[index+1].content})()"), 'The inserted Include leaves a paragraph below it');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui(`JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())===${JSON.stringify(beforeVisualInclude)}`), 'Undo Include insertion');
+  await action('source');
+  const beforeSourceInclude = await ui("document.querySelector('#source-editor').value");
+  await ui("(() => {const source=document.querySelector('#source-editor');source.focus();source.setSelectionRange(source.value.length,source.value.length)})()");
+  await publishingTool('publishing-include', true);
+  await waitFor(async () => ui("document.querySelector('#publishing-include-dialog').open"), 'Include dialog in Source');
+  await inputText('#publishing-include-name', 'Source title');
+  await inputText('#publishing-include-path', 'includes/source.md');
+  await ui("document.querySelector('#publishing-include-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Insert Include in Source');
+  const withSourceInclude = await ui("document.querySelector('#source-editor').value");
+  assert.ok(withSourceInclude.startsWith(beforeSourceInclude), 'Source inserts at the original caret after opening the dialog');
+  assert.ok(withSourceInclude.includes('[!INCLUDE [Source title](includes/source.md)]'), 'Source inserts the exact directive');
+  await sourceEdit(beforeSourceInclude);
+  await action('visual');
   for (const theme of ['dark', 'light']) {
     for (const category of ['Alerts', 'Structure', 'Interactive']) {
       await showContext('.tiptap p');
@@ -2820,7 +3001,7 @@ try {
   await caretIn('Place the first variant here.');
   await publishingTool('publishing-selector');
   assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-selector\"] span').textContent"), 'Add variant content\u2026', 'After inserting a selector, the same tool adds its content instead of creating another selector');
-  assert.ok(await ui("Boolean(document.querySelector('[data-lekh-selector] .publishing-add-variant-content'))"), 'The selector provides its own next-step content action');
+  assert.equal(await ui("Boolean(document.querySelector('[data-lekh-selector] .publishing-add-variant-content'))"), false, 'The selector does not offer a location-specific insertion button');
   await waitFor(async () => main.evaluate("smokeElectron.Menu.getApplicationMenu().getMenuItemById('publishing-selector').label==='Add variant content\u2026'"), 'Native Insert menu follows the selector prerequisite');
   await showContext('.tiptap p');
   await contextAction(['Insert', 'Interactive']);
@@ -2830,26 +3011,40 @@ try {
   assert.equal(await ui("document.querySelectorAll('[data-lekh-container=\"lekhZone\"]').length"), 0, 'Selector inserts only choices, never bundled content');
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input').disabled"), false, 'Inserted selector fields unlock after the toolbar operation');
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input').value"), '', 'New selectors contain no prompt text to delete');
-  assert.match(await ui("document.querySelector('[data-lekh-selector] input').placeholder"), /Write a prompt/);
-  await inputText('[data-lekh-selector] input[aria-label="Selector prompt"]', 'Choose a deployment');
+  assert.equal(await ui("document.querySelector('[data-lekh-selector] input').placeholder"), 'Describe the title for the selection');
+  assert.equal(await ui("document.querySelector('[data-lekh-selector] .publishing-variant-guidance').textContent"), 'To add variant content for an option, choose Add variant content from Interactive.', 'The selector explains where variant content comes from');
+  assert.ok(await ui("document.querySelector('[data-lekh-selector] .publishing-variant-guidance').compareDocumentPosition(document.querySelector('[data-lekh-selector] .publishing-variant-options')) & Node.DOCUMENT_POSITION_PRECEDING"), 'The variant-content guidance follows the choices');
+  assert.equal(await ui("document.querySelectorAll('[data-lekh-selector] .publishing-write-after, [data-lekh-tabs] .publishing-write-after, [data-lekh-container=\"lekhZone\"] .publishing-write-after').length"), 0, 'Interactive blocks never show a write-after button');
+  assert.equal(await ui("(() => {const selector=document.querySelector('[data-lekh-selector]');const doc=selector.closest('.tiptap').editor.state.doc;let next;doc.forEach((node,offset,index)=>{if(node.type.name==='lekhSelector')next=doc.maybeChild(index+1)});return next?.type.name==='paragraph'&&next.content.size===0})()"), true, 'An empty line follows an inserted selector');
+  await inputText('[data-lekh-selector] input[aria-label="Selection title"]', 'Choose a deployment');
   assert.equal(await ui("document.querySelectorAll('[data-lekh-selector] .publishing-choice-fields').length"), 0, 'Selector choices have no duplicate option-name form');
   await renamePublishingChoice('[data-lekh-selector] [data-publishing-choice="first"]', '[data-lekh-selector] input[aria-label="Option name (first)"]', 'Availability Zones');
   await renamePublishingChoice('[data-lekh-selector] [data-publishing-choice="second"]', '[data-lekh-selector] input[aria-label="Option name (second)"]', 'Scale Set');
   assert.ok(await ui("document.querySelector('[data-lekh-selector] .publishing-variant-options').lastElementChild.getAttribute('aria-label')==='Add option'"), 'Add option follows the displayed choices');
   await ui("document.querySelector('[data-lekh-selector] [aria-label=\"Add option\"]').click()");
-  await renamePublishingChoice('[data-lekh-selector] [data-publishing-choice="option-1"]', '[data-lekh-selector] input[aria-label="Option name (option-1)"]', 'Temporary option');
-  await ui("document.querySelector('[data-publishing-choice=\"option-1\"]').parentElement.querySelector('[aria-label=\"Remove option\"]').click()");
+  assert.equal(await ui("document.querySelector('[data-publishing-choice=\"option-3\"]').textContent"), 'Option 3');
+  await renamePublishingChoice('[data-lekh-selector] [data-publishing-choice="option-3"]', '[data-lekh-selector] input[aria-label="Option name (option-3)"]', 'Temporary option');
+  await ui("document.querySelector('[data-publishing-choice=\"option-3\"]').parentElement.querySelector('[aria-label=\"Remove option\"]').click()");
   await nativeShortcut('Z', ['control'], false);
-  await waitFor(async () => ui("Boolean(document.querySelector('[data-publishing-choice=\"option-1\"]'))"), 'Native undo restores the removed choice');
-  assert.equal(await ui("document.querySelector('[data-publishing-choice=\"option-1\"]').textContent"), 'Temporary option', 'Undo restores an individually removed choice without changing its stable ID');
+  await waitFor(async () => ui("Boolean(document.querySelector('[data-publishing-choice=\"option-3\"]'))"), 'Native undo restores the removed choice');
+  assert.equal(await ui("document.querySelector('[data-publishing-choice=\"option-3\"]').textContent"), 'Temporary option', 'Undo restores an individually removed choice without changing its stable ID');
   await nativeShortcut('Z', ['control', 'shift'], false);
   await waitFor(async () => ui("document.querySelectorAll('[data-lekh-selector] [data-publishing-choice]').length===2"), 'Native redo removes only that choice');
   assert.equal(await ui("document.querySelectorAll('[data-lekh-selector] [data-publishing-choice]').length"), 2);
+  await ui("document.querySelector('[data-publishing-choice=\"first\"]').parentElement.querySelector('[aria-label=\"Remove option\"]').click()");
+  await waitFor(async () => ui("document.querySelectorAll('[data-lekh-selector] [data-publishing-choice]').length===1"), 'x removes a choice');
+  await ui("document.querySelector('[data-publishing-choice=\"second\"]').parentElement.querySelector('[aria-label=\"Remove option\"]').click()");
+  await waitFor(async () => ui("document.querySelectorAll('[data-lekh-selector]').length===0"), 'Removing the last choice removes the selector');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui("document.querySelectorAll('[data-lekh-selector] [data-publishing-choice]').length===1"), 'Undo restores the selector');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui("document.querySelectorAll('[data-lekh-selector] [data-publishing-choice]').length===2"), 'Undo restores both choices');
+  assert.equal(await ui("document.querySelector('[data-publishing-choice=\"first\"]').textContent"), 'Availability Zones');
   await ui("document.activeElement.blur()");
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input[aria-label=\"Option name (second)\"]').value"), 'Scale Set');
   assert.equal(await ui("document.querySelector('#source-editor').hidden"), true, 'Editing selector prompt and labels never opens Source');
   await caretIn('Place the first variant here.');
-  await ui("document.querySelector('[data-lekh-selector] .publishing-add-variant-content').click()");
+  await publishingTool('publishing-selector', true);
   await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Independent variant-content choice dialog');
   const variantRows = await ui(`Array.from(document.querySelectorAll('#variant-content-options label')).map(row => {
     const checkbox=row.querySelector('input'),text=row.querySelector('span');
@@ -2874,7 +3069,7 @@ try {
   }
   await ui("document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'First distributed variant content');
-  assert.ok(await ui("(() => {const selector=document.querySelector('[data-lekh-selector]');return selector.nextElementSibling?.matches('[data-lekh-container=\"lekhZone\"]')})()"), 'The selector action inserts its content immediately below the selector');
+  assert.ok(await ui("(() => {const doc=document.querySelector('[data-lekh-selector]').closest('.tiptap').editor.getJSON().content;const paragraph=doc.findIndex(node=>node.type==='paragraph' && node.content?.some(item=>item.text==='Place the first variant here.'));const zone=doc.findIndex(node=>node.type==='lekhZone');const selector=doc.findIndex(node=>node.type==='lekhSelector');return paragraph<zone&&zone<selector})()"), 'Interactive inserts content at the chosen caret, even before the selector');
   assert.equal(await ui("document.querySelectorAll('[data-lekh-selector]').length"), 1, 'Follow-on content actions never create duplicate selectors');
   await browser.call('Input.insertText', { text: ' Availability Zones edited directly.' }, sessionId);
   await caretIn('Place the second variant here.');
@@ -2887,6 +3082,13 @@ try {
   assert.equal(await ui("document.querySelector('[data-publishing-zone=\"second\"] .publishing-editable-body').hidden"), false, 'Inactive content opens for editing in Visual');
   await ui("(() => {const p=document.querySelector('[data-publishing-zone=\"second\"] .publishing-editable-body p');const range=document.createRange();range.selectNodeContents(p);range.collapse(false);window.getSelection().removeAllRanges();window.getSelection().addRange(range);p.closest('.tiptap').focus()})()");
   await browser.call('Input.insertText', { text: ' Scale Set edited at a different location.' }, sessionId);
+  await delay(600);
+  await ui("document.querySelector('[data-lekh-selector] [data-publishing-choice=\"second\"]').parentElement.querySelector('[aria-label=\"Remove option\"]').click()");
+  await waitFor(async () => ui("!document.querySelector('[data-lekh-selector] [data-publishing-choice=\"second\"]')"), 'Removing an option with existing variant content succeeds');
+  assert.ok(await ui("document.querySelector('[data-publishing-zone=\"second\"]').textContent.includes('Scale Set edited at a different location.')"), 'Removing a choice preserves its variant content for reassignment');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui("Boolean(document.querySelector('[data-lekh-selector] [data-publishing-choice=\"second\"]'))"), 'Undo restores the referenced selector choice');
+  assert.ok(await ui("document.querySelector('[data-publishing-zone=\"second\"]').textContent.includes('Scale Set edited at a different location.')"));
   await caretIn('Place the first variant here.');
   const beforeCanceledVariant = await ui("JSON.stringify(document.querySelector('[data-lekh-selector]').closest('.tiptap').editor.getJSON())");
   await publishingTool('publishing-selector', true);
@@ -2901,6 +3103,40 @@ try {
   assert.ok(await ui("(() => {const doc=document.querySelector('[data-lekh-selector]').closest('.tiptap').editor.getJSON().content;return doc.findIndex(node=>node.type==='lekhZone')<doc.findIndex(node=>node.type==='lekhSelector')})()"), 'Variant content can precede the selector as well as appear farther down the document');
   await nativeShortcut('Z', ['control'], false);
   await waitFor(async () => ui("document.querySelectorAll('[data-lekh-container=\"lekhZone\"]').length===2"), 'Undo only the variant created before its selector');
+  const wrappedText = 'Place the first variant here.';
+  const beforeVisualWrap = await ui("JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())");
+  await ui(`(() => {
+    const root=document.querySelector('#visual-editor .tiptap');
+    const paragraph=[...root.querySelectorAll('p')].find(item=>item.textContent===${JSON.stringify(wrappedText)});
+    const text=paragraph.firstChild;
+    root.editor.commands.setTextSelection({from:root.editor.view.posAtDOM(text,0),to:root.editor.view.posAtDOM(text,text.textContent.length)});
+    root.editor.view.focus();
+  })()`);
+  await publishingTool('publishing-selector', true);
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Wrap selected Visual text');
+  await ui("document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Insert selected Visual text');
+  const visualWrappedText = await ui("document.querySelector('#visual-editor .tiptap').editor.getMarkdown()");
+  assert.match(visualWrappedText, /:::zone pivot="first"\nPlace the first variant here\.\n:::zone-end/);
+  assert.equal(visualWrappedText.split(wrappedText).length - 1, 1, 'Wrapping Visual text never duplicates it');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui(`JSON.stringify(document.querySelector('#visual-editor .tiptap').editor.getJSON())===${JSON.stringify(beforeVisualWrap)}`), 'Undo wrapping Visual text');
+  await action('source');
+  const beforeSourceWrap = await ui("document.querySelector('#source-editor').value");
+  await ui(`(() => {
+    const source=document.querySelector('#source-editor'),start=source.value.indexOf(${JSON.stringify(wrappedText)});
+    source.focus();source.setSelectionRange(start,start+${wrappedText.length});
+  })()`);
+  await publishingTool('publishing-selector', true);
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Wrap selected Markdown text');
+  await ui("document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Insert selected Markdown text');
+  const sourceWrappedText = await ui("document.querySelector('#source-editor').value");
+  assert.match(sourceWrappedText, /:::zone pivot="first"\nPlace the first variant here\.\n:::zone-end/);
+  assert.equal(sourceWrappedText.split(wrappedText).length - 1, 1, 'Wrapping Markdown text never duplicates it');
+  await menuAction('undo');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), beforeSourceWrap, 'One undo restores selected Markdown');
+  await action('visual');
   const metadataYAML = '[data-lekh-metadata] textarea[aria-label="Metadata YAML"]';
   assert.equal(await ui("document.querySelectorAll('[data-lekh-metadata] input').length"), 0, 'Metadata is a single YAML box without separate title/description fields');
   assert.equal(await ui(`document.querySelector(${JSON.stringify(metadataYAML)}).value.trimEnd()`), 'title: Original title\ndescription: Original description\ncustom: [keep, these]');
@@ -2925,7 +3161,8 @@ try {
   await waitFor(async () => ui("document.activeElement.value==='Scale [Set] example'"), 'Redo refreshes the focused tab-name editor');
   assert.equal(await ui("document.activeElement.value"), 'Scale [Set] example');
   await ui("document.activeElement.blur()");
-  await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true}))");
+  await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').click()");
+  assert.ok(await ui("document.querySelector('[data-lekh-tabs] input[aria-label=\"Tab name (second)\"]').getClientRects().length>0"), 'Clicking the selected tab renames it directly on the tab');
   await inputText('[data-lekh-tabs] input[aria-label="Tab name (second)"]', 'Discard this rename');
   await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
   await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
@@ -2935,8 +3172,8 @@ try {
   await ui("document.querySelector('[data-lekh-tabs] button[aria-label=\"Add tab\"]').click()");
   await browser.call('Input.insertText', { text: 'Third example written immediately.' }, sessionId);
   assert.ok(await ui("document.querySelector('[data-publishing-panel-id=\"example-3\"]').textContent.includes('Third example written immediately.')"), 'Adding a tab places the caret directly in its content');
-  await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').click();document.querySelector('[data-remove-tab=\"example-3\"]').click()");
-  assert.equal(await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').getAttribute('aria-selected')"), 'true', 'Removing another tab preserves the active example');
+  await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"0\"]').click();document.querySelector('[data-remove-tab=\"example-3\"]').click()");
+  assert.equal(await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"0\"]').getAttribute('aria-selected')"), 'true', 'Removing another tab preserves the active example');
   await nativeShortcut('Z', ['control'], false);
   await waitFor(async () => ui("Boolean(document.querySelector('[data-publishing-panel-id=\"example-3\"]'))"), 'Undo restores the removed example');
   assert.ok(await ui("document.querySelector('[data-publishing-panel-id=\"example-3\"]').textContent.includes('Third example written immediately.')"), 'Undo restores a removed tab and all its content');
@@ -2950,7 +3187,8 @@ try {
   await ui("document.activeElement.blur()");
   await caretIn('Long image description.');
   await browser.call('Input.insertText', { text: ' Rich editable description.' }, sessionId);
-  await inputText('[data-lekh-include] input[aria-label="Include name"]', 'Edited shared name');
+  await ui("document.querySelector('[data-lekh-include] details').open=true");
+  await inputText('[data-lekh-include] input[aria-label="Include title"]', 'Edited shared name');
   await ui("document.activeElement.blur()");
   assert.equal(await ui("document.querySelector('#source-editor').hidden"), true, 'Every supported block was edited without Source');
   assert.equal(await ui("document.querySelectorAll('.tiptap button').length && [...document.querySelectorAll('.tiptap button')].some(button=>button.textContent==='Edit source')"), false);
@@ -2959,7 +3197,9 @@ try {
   await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
   await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
   await menuAction('allow-image-folder');
-  await waitFor(async () => ui("(document.querySelector('#notification')?.textContent || '').includes('Project-folder images are allowed')"), 'project image folder granted before Visual publishing export');
+  await waitFor(async () => ui("(document.querySelector('#notification')?.textContent || '').includes('Project images and variant labels are allowed')"), 'project image folder granted before Visual publishing export');
+  await menuAction('allow-include-folder');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-include] .publishing-include-preview')?.textContent.includes('Shared included prose.')"), 'include access granted for Visual publishing export');
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'idle before Visual publishing export');
   await ui("document.querySelector('#notification').hidden=true;document.querySelector('#notification').textContent=''");
   await menuAction('export-html');
@@ -2978,24 +3218,28 @@ try {
   assert.equal(await ui("document.querySelector('[data-lekh-selector] input[aria-label=\"Option name (second)\"]').value"), 'Scale Set');
   assert.equal(await ui("document.querySelector('[data-lekh-tabs] [data-publishing-tab=\"1\"]').textContent"), 'Scale [Set] example');
   assert.equal(await activeTab(), visualPublishingId);
-  assert.equal(await ui("document.querySelector('[data-lekh-include]').textContent.includes('Shared included prose.')"), false, 'Include directives are never loaded in Visual');
+  await waitFor(async () => ui("document.querySelector('[data-lekh-include]').textContent.includes('Shared included prose.')"), 'Include content is loaded in Visual after save');
   assert.equal(await ui("[...document.querySelectorAll('[data-lekh-include] button')].some(button=>button.textContent==='Open shared file in Visual')"), false);
   await menuAction('close-tab');
-  console.log('PASS: direct publishing bodies, in-place tab/choice names, inline add/remove icons, immediate new-example typing, rename undo/redo/Escape, single YAML metadata box, unloaded include directives and image descriptions preserve source, actual saves and every alternative');
+  console.log('PASS: direct publishing bodies, in-place tab/choice names, inline add/remove icons, immediate new-example typing, rename undo/redo/Escape, YAML metadata, included content and image descriptions preserve source, actual saves and every alternative');
 
   await action('new'); await action('source');
   await sourceEdit(':::selector title="Choose a variant"\n- [First](#variant/first)\n- [Second](#variant/second)\n:::selector-end\n');
   await action('visual');
-  await ui("document.querySelector('.document-pane.active-pane [data-publishing-choice=\"first\"]').click();document.querySelector('.document-pane.active-pane .publishing-add-variant-content').click()");
+  await ui("document.querySelector('.document-pane.active-pane [data-publishing-choice=\"first\"]').click();document.querySelector('.document-pane.active-pane .tiptap').editor.commands.focus('end')");
+  await publishingTool('publishing-selector', true);
   await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Insert content for an inactive variant');
   await ui("document.querySelectorAll('#variant-content-options input').forEach(input=>input.checked=input.value==='second');document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false' && Boolean(document.querySelector('.document-pane.active-pane [data-publishing-zone=\"second\"]'))"), 'Activate newly inserted variant content');
   assert.equal(await ui("document.querySelector('.document-pane.active-pane [data-publishing-choice=\"second\"]').getAttribute('aria-pressed')"), 'true');
+  assert.equal(await ui("document.querySelector('.document-pane.active-pane .tiptap').editor.getJSON().content[0].type"), 'lekhSelector', 'Adding content after a selector does not wrap or replace it');
+  assert.equal(await ui("Boolean(document.querySelector('.document-pane.active-pane [data-publishing-zone=\"second\"] [data-lekh-selector]'))"), false);
   assert.equal(await ui("document.querySelector('.document-pane.active-pane [data-publishing-zone=\"second\"] > .publishing-editable-body').hidden"), false);
   assert.equal(await ui("Boolean(window.getSelection().anchorNode?.parentElement?.closest('[data-publishing-zone=\"second\"] .publishing-editable-body'))"), true, 'Caret is inside the newly revealed content');
   await browser.call('Input.insertText', { text: 'Typed immediately. ' }, sessionId);
   assert.ok(await ui("document.querySelector('.document-pane.active-pane [data-publishing-zone=\"second\"] .publishing-editable-body').textContent.includes('Typed immediately.')"), 'Typing immediately edits the selected variant');
-  await ui("document.querySelector('.document-pane.active-pane .publishing-add-variant-content').click()");
+  await ui("document.querySelector('.document-pane.active-pane .tiptap').editor.commands.focus('end')");
+  await publishingTool('publishing-selector', true);
   await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Insert content shared by both variants');
   await ui("document.querySelectorAll('#variant-content-options input').forEach(input=>input.checked=true);document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
   await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false' && Boolean(document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"]'))"), 'Insert shared variant content');
@@ -3006,6 +3250,40 @@ try {
   assert.ok(await ui("document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"] .publishing-editable-body').textContent.includes('Shared text.')"));
   await action('source');
   assert.match(await ui("document.querySelector('#source-editor').value"), /Typed immediately\./);
+
+  const nestedVariantSource = ':::selector title="Choose"\n- [First](#variant/first)\n- [Third](#variant/third)\n- [Second](#variant/second)\n:::selector-end\n\n:::zone pivot="first,second"\nParent body.\n:::zone-end\n';
+  await sourceEdit(nestedVariantSource);
+  await action('visual');
+  await ui("document.querySelector('.document-pane.active-pane [data-publishing-choice=\"first\"]').click()");
+  await caretIn('Parent body.');
+  await publishingTool('publishing-selector', true);
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Nested variant choices');
+  await ui("document.querySelectorAll('#variant-content-options input').forEach(input=>input.checked=['third','second'].includes(input.value));document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false' && Boolean(document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"] [data-publishing-zone=\"third,second\"]'))"), 'Insert a reachable nested variant');
+  assert.equal(await ui("document.querySelector('.document-pane.active-pane [data-publishing-choice=\"second\"]').getAttribute('aria-pressed')"), 'true', 'The shared choice keeps the parent and new content visible');
+  assert.equal(await ui("document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"] > .publishing-editable-body').hidden"), false);
+  assert.equal(await ui("document.querySelector('.document-pane.active-pane [data-publishing-zone=\"third,second\"] > .publishing-editable-body').hidden"), false);
+  await browser.call('Input.insertText', { text: 'Nested body.' }, sessionId);
+  await ui("(() => {document.querySelector('#notification').textContent='';const parent=document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"]');[...parent.querySelectorAll(':scope > .publishing-edit-header details label')].find(label=>label.textContent==='Second').querySelector('input').click()})()");
+  assert.match(await ui("document.querySelector('#notification').textContent"), /share at least one option/i);
+  assert.equal(await ui("(() => {const parent=document.querySelector('.document-pane.active-pane [data-publishing-zone=\"first,second\"]');return [...parent.querySelectorAll(':scope > .publishing-edit-header details label')].find(label=>label.textContent==='Second').querySelector('input').checked})()"), true, 'An assignment cannot hide a nested alternative permanently');
+
+  await caretIn('Nested body.');
+  const beforeUnreachable = await ui("JSON.stringify(document.querySelector('.document-pane.active-pane .tiptap').editor.getJSON())");
+  await ui("document.querySelector('#notification').textContent=''");
+  await publishingTool('publishing-selector', true);
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Unreachable nested variant choices');
+  await ui("document.querySelectorAll('#variant-content-options input').forEach(input=>input.checked=input.value==='first');document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false' && document.querySelector('#notification').textContent.includes('share at least one option')"), 'Reject unreachable nested content');
+  assert.equal(await ui("JSON.stringify(document.querySelector('.document-pane.active-pane .tiptap').editor.getJSON())"), beforeUnreachable, 'A rejected Visual insertion does not change content');
+  await action('source');
+  const beforeUnreachableSource = await ui("document.querySelector('#source-editor').value");
+  await ui("(() => {const source=document.querySelector('#source-editor'),start=source.value.indexOf('Parent body.')+'Parent body.'.length;source.focus();source.setSelectionRange(start,start);document.querySelector('#notification').textContent=''})()");
+  await publishingTool('publishing-selector', true);
+  await waitFor(async () => ui("document.querySelector('#variant-content-dialog').open"), 'Unreachable Markdown variant choices');
+  await ui("document.querySelectorAll('#variant-content-options input').forEach(input=>input.checked=input.value==='third');document.querySelector('#variant-content-dialog button[value=\"insert\"]').click()");
+  await waitFor(async () => ui("document.querySelector('#app').getAttribute('aria-busy')==='false' && document.querySelector('#notification').textContent.includes('share at least one option')"), 'Reject unreachable Markdown content');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), beforeUnreachableSource, 'A rejected Markdown insertion does not change content');
 
   await sourceEdit('# [First duplicate](#tab/shared)\n\nFirst duplicate body.\n\n# [Second duplicate](#tab/shared)\n\nSecond duplicate body.\n\n# [Independent](#tab/independent)\n\nIndependent body.\n\n---\n');
   await action('visual');
@@ -3026,6 +3304,14 @@ try {
   await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===3"), 'Undo removing a duplicate tab');
   await nativeShortcut('Z', ['control', 'shift'], false);
   await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===2"), 'Redo removing the first duplicate');
+  await ui("document.querySelector('.document-pane.active-pane .publishing-tab-item:nth-child(1) [data-remove-tab]').click()");
+  await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===1"), 'Remove the second-to-last tab');
+  await ui("document.querySelector('.document-pane.active-pane .publishing-tab-item:nth-child(1) [data-remove-tab]').click()");
+  await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-lekh-tabs]').length===0"), 'Removing the last tab removes the tabbed example');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===1"), 'Undo restores the tabbed example');
+  await nativeShortcut('Z', ['control'], false);
+  await waitFor(async () => ui("document.querySelectorAll('.document-pane.active-pane [data-publishing-tab]').length===2"), 'Undo restores the removed tab');
   await action('source');
   const duplicateSource = await ui("document.querySelector('#source-editor').value");
   assert.ok(duplicateSource.includes('# [Second duplicate](#tab/secondduplicate)') && duplicateSource.includes('Second duplicate body.'), 'Tab IDs are derived from the visible tab names');
@@ -3088,7 +3374,7 @@ try {
     await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingDemo)}; smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1360,1000)`);
     await action('open');
     await action('visual');
-    await action('side-by-side');
+    await action('edit-split');
     await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-selector]') && document.querySelectorAll('[data-publishing-tab]').length===2"), 'publishing documentation screenshot');
     await ui("document.querySelector('#notification').hidden=true; document.activeElement?.blur()");
     const splitCapture = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
@@ -3143,7 +3429,7 @@ try {
   await sourceEdit(visualGrammarFixture);
   await action('visual');
   await waitFor(async () => ui("document.querySelectorAll('#writing-suggestions li').length === 1 && document.querySelectorAll('.tiptap .grammar-mark').length === 1"), 'Visual grammar and tab-scoped ignores', 90000);
-  await action('side-by-side');
+  await action('edit-split');
   await ui("document.querySelector('#source-editor').focus()");
   await waitFor(async () => ui("document.querySelectorAll('.grammar-highlights .grammar-mark').length === 1 && document.querySelectorAll('.tiptap .grammar-mark').length === 0"), 'focus-only transition to Source grammar', 90000);
   await ui("document.querySelector('.tiptap').focus()");
@@ -3197,8 +3483,10 @@ try {
     await pressKey('Escape', 27);
     assert.equal(await ui(`document.querySelector('#${menu}-menu').hidden`), true);
   }
-  assert.equal(await ui("document.querySelectorAll('#structure-menu button').length"), 5);
-  assert.equal(await ui("document.querySelectorAll('#interactive-menu button').length"), 2);
+  assert.deepEqual(await ui("[...document.querySelectorAll('#structure-menu button')].map(button => button.dataset.action || `command:${button.dataset.command}`)"),
+    ['insert:toc', 'insert:mermaid', 'command:rule', 'insert:publishing-metadata', 'insert:publishing-image', 'insert:publishing-include']);
+  assert.deepEqual(await ui("[...document.querySelectorAll('#interactive-menu button')].map(button => button.dataset.action)"),
+    ['insert:publishing-tabs', 'insert:publishing-selector']);
   assert.equal(await ui("document.querySelector('#structure-menu [data-action=\"insert:publishing-tabs\"]')"), null);
   assert.equal(await ui("document.querySelector('#interactive-menu [data-action=\"insert:publishing-metadata\"]')"), null);
   for (const theme of ['light', 'dark']) {
@@ -3492,7 +3780,7 @@ try {
         const visible=[...toolbar.querySelectorAll('button, select')].filter(control => !control.closest('#toolbar-overflow, .dropdown') && control.getClientRects().length).map(control => control.getBoundingClientRect());
         return visible.some((a, i) => visible.some((b, j) => i !== j && a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1));
       })(),
-      label: (() => {const s=document.querySelector('.toolbar .view-switch');return !s || s.closest('#toolbar-overflow') || s.scrollWidth <= s.clientWidth + 1;})(),
+      label: [...document.querySelectorAll('.toolbar .global-modes button, .toolbar #preview-toggle')].every(button => button.scrollWidth <= button.clientWidth + 1),
       fonts: new Set([...document.querySelectorAll('#toolbar-overflow .toolbar-group button')].map(b => getComputedStyle(b).fontSize)).size,
     };
   })()`);

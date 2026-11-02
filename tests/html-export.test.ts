@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { imageDimensions, toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
+import { readImage } from '../lib/images.js';
+import { resolveIncludes } from '../lib/includes.js';
 import { requiresInteractiveExport } from '../lib/markdown.js';
 import { unzipEntries } from './zip.js';
 
@@ -101,12 +105,47 @@ test('metadata alone remains exportable to every format and is excluded from art
   assert.match(word.get('word/document.xml')!.toString(), /Public article/);
 });
 
-test('local include directives stay inert and never affect export restrictions', async () => {
-  const source = '# Article\n\n[!INCLUDE [Shared](shared.md)]\n';
-  assert.equal(requiresInteractiveExport(source), false);
-  const html = await toOfflineHTML(source, null);
-  assert.match(html, /\[!INCLUDE/);
-  assert.doesNotMatch(html, /Second body|Included variant/);
-  await assert.doesNotReject(() => toPrintHTML(source, null));
-  await assert.doesNotReject(() => toDocx(source, async () => { throw new Error('No image expected'); }));
+test('all export formats include local content and images without include metadata', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-export-includes-'));
+  try {
+    const article = path.join(root, 'articles', 'article.md');
+    const includes = path.join(root, 'includes');
+    await mkdir(path.dirname(article)); await mkdir(includes); await mkdir(path.join(includes, 'images'));
+    await writeFile(article, '# Parent');
+    await writeFile(path.join(includes, 'images', 'pixel.png'), png);
+    await writeFile(path.join(includes, 'shared.md'), '---\ntitle: Secret metadata\n---\n\n# Included heading\n\nIncluded body.\n\n![Pixel](images/pixel.png)\n');
+    const source = '# Article\n\n[!INCLUDE [Shared](../includes/shared.md)]\n';
+    const tokens = () => resolveIncludes(source, article, root);
+    const html = await toOfflineHTML(source, article, undefined, root, undefined, await tokens());
+    const print = await toPrintHTML(source, article, undefined, root, await tokens());
+    const word = unzipEntries(await toDocx(source, value => readImage(value, article, root), undefined, await tokens()));
+    const xml = word.get('word/document.xml')!.toString();
+    for (const output of [html.split('<body>')[1], print.split('<body>')[1], xml]) {
+      assert.match(output, /Included heading/);
+      assert.match(output, /Included body/);
+      assert.doesNotMatch(output, /Secret metadata|\[!INCLUDE/);
+    }
+    assert.match(html, /data:image\/png;base64,/);
+    assert.match(print, /data:image\/png;base64,/);
+    assert.ok([...word.keys()].some(name => name.startsWith('word/media/')));
+    assert.match(source, /\[!INCLUDE/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('interactive include content requires HTML and remains interactive after export', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-interactive-includes-'));
+  try {
+    const article = path.join(root, 'article.md');
+    await writeFile(article, '# Parent');
+    await writeFile(path.join(root, 'shared.md'), `---\ntitle: Hidden metadata\n---\n\n${tabs}`);
+    const source = '# Article\n\n[!INCLUDE [Shared](shared.md)]\n';
+    const tokens = () => resolveIncludes(source, article);
+    const html = await toOfflineHTML(source, article, undefined, undefined, undefined, await tokens());
+    assert.match(html, /First body/);
+    assert.match(html, /Second body/);
+    assert.match(html, /data-publishing-tab=/);
+    assert.doesNotMatch(html, /Hidden metadata|\[!INCLUDE/);
+    await assert.rejects(toPrintHTML(source, article, undefined, undefined, await tokens()), /Word and PDF export.*HTML/);
+    await assert.rejects(toDocx(source, async () => { throw new Error('Unexpected image'); }, undefined, await tokens()), /Word and PDF export.*HTML/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

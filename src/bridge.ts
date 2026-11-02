@@ -8,6 +8,9 @@ export interface EditorContext {
   hasVariantSelector?: boolean;
   hasInteractivePublishing?: boolean;
   formField?: boolean;
+  view?: 'visual' | 'source' | 'split';
+  preview?: boolean;
+  previewSource?: boolean;
 }
 export interface ContextMenuItem {
   id: string;
@@ -34,6 +37,10 @@ export interface LekhAPI {
   closeDocument: (id: string) => Promise<Result<void>>;
   allowImageFolder: (id: string) => Promise<Result<boolean>>;
   revokeImageFolder: (id: string) => Promise<Result<void>>;
+  allowIncludeFolder: (id: string) => Promise<Result<boolean>>;
+  revokeIncludeFolder: (id: string) => Promise<Result<void>>;
+  previewIncludes: (id: string, content: string) => Promise<Result<string>>;
+  includesRequireInteractiveExport: (id: string, content: string) => Promise<Result<boolean>>;
   prepareVariantConfiguration: (id: string, content: string) => Promise<Result<string>>;
   exportDocument: (id: string, content: string, format: 'pdf' | 'docx' | 'html') => Promise<Result<string | null>>;
   insertImage: () => Promise<Result<string | null>>;

@@ -44,7 +44,7 @@ Export uses the **active tab's** current text, including unsaved edits. Exportin
 
 - If Lekh is your Windows default for `.md` files, double-clicking a file in Explorer opens that document. Further files open as tabs in the existing window, which is restored if minimized. Reopening the same file focuses its tab without replacing unsaved edits.
 - **Open file** and **New document** each open a new tab without replacing your other documents.
-- Click a tab to switch documents. Each tab keeps its text, undo/redo history, Visual/Source mode, scroll position, and selection.
+- Click a tab to switch documents. Each tab keeps its text, undo/redo history, editing view, scroll position, and selection.
 - A dot beside a tab's name means it has unsaved changes. Hover over the tab to see its full path.
 - Tabs shrink and shorten their labels as the window narrows, like browser tabs. The **Open documents** arrow at the left lists every tab by name; when even compact tabs cannot fit, use that list to select a hidden tab. The selected tab stays visible. Neither tabs nor the editing toolbar require horizontal scrolling.
 - Opening an already-open file focuses its existing tab, preserving any unsaved edits.
@@ -56,11 +56,11 @@ Export uses the **active tab's** current text, including unsaved edits. Exportin
 
 ### Paired split tabs
 
-- Click **Split** beside the **Visual + Source** switch, choose **View > Split with...**, or right-click a tab and choose **Split with...**. Split pairs two different documents; Visual + Source shows two editable views of the same document. An Edge-style grid shows thumbnail previews, filenames, and paths for the other unpaired open documents. Click a card to create the pair, or use Tab and Enter/Space. Cancel or Escape leaves your tabs unchanged.
-- Previews show the beginning of each document rendered as Markdown, including current unsaved edits and supported local/embedded images, even for files in Source mode. A dot marks unsaved changes. Remote images are not downloaded. Previews do not change editing modes, undo history, or selections.
+- Choose **More (...) > Split with another file...**, **View > Split with...**, or right-click a tab and choose **Split with...**. This pairs two different documents; the toolbar's **Split** view shows Visual and Markdown for one document. An Edge-style grid shows thumbnail previews, filenames, and paths for the other unpaired open documents. Click a card to create the pair, or use Tab and Enter/Space. Cancel or Escape leaves your tabs unchanged.
+- Previews show the beginning of each document rendered as Markdown, including current unsaved edits and supported local/embedded images, even for files in Markdown view. A dot marks unsaved changes. Remote images are not downloaded. Previews do not change editing modes, undo history, or selections.
 - The two files become **one paired tab** in the shared tab strip. For example, five open files become one pair plus three individual tabs.
 - Click a normal tab to display that file alone. Click the paired tab to restore both documents, their editing modes, scroll positions, and divider size.
-- Each side keeps its own editing mode, editor, selection, and undo/redo history. There is only **one Visual + Source switch**, in the shared toolbar. Click a side to make it active; the switch reflects and changes only that side. The additional views in **More (...)** also apply only to the active side, as do the outline, formatting, Find, Save, and Export. **Save all** includes both sides and all other tabs.
+- Each side keeps its own editing view, preview, editor, selection, and undo/redo history. The shared Visual, Markdown, Split and Preview controls apply only to the active side, as do the outline, formatting, Find, Save, and Export. Click a side to make it active. **Save all** includes both sides and all other tabs.
 - Drag the divider to resize. For keyboard resizing, focus the divider and use Left/Right; Home/End set the 25%/75% limits.
 - **Unsplit**, also available from the pair's right-click menu and View menu, restores individual tabs in their original order without closing documents or losing edits.
 - The pair's **x** closes both documents, checking unsaved changes in each before closing either. Cancel leaves both open. **Ctrl+W** or **Close active file** closes only that side and restores the remaining file as a normal tab.
@@ -72,7 +72,7 @@ Choose **Writing assistance** in the status bar and enable **offline English gra
 The setting is remembered; it starts off until you enable it. Harper runs on this device in a background worker,
 without an account, server, download, or network request. Existing spelling suggestions remain separate.
 
-- Grammar and punctuation suggestions are underlined in Visual and Source modes. Click an underline or use the suggestion list.
+- Grammar and punctuation suggestions are underlined in Visual and Markdown views. Click an underline or use the suggestion list.
 - Choose a proposed replacement to apply it, **Ignore** for that occurrence, or **Ignore throughout document** for the same rule and text in that tab.
 - Applied changes use the editor's undo history. Merely checking, browsing or ignoring suggestions never changes saved or unsaved Markdown.
 - Code and technical syntax are excluded; suggestions crossing protected formatting boundaries are omitted instead of risking damage to your document.
@@ -84,24 +84,24 @@ Close the panel to keep writing with underlines, or disable checking to stop the
 
 ### Publishing blocks and reader-friendly documents
 
-The toolbar has one **Insert** section: **Image**, **Table** and **Code** buttons, plus **Alerts**, **Structure**, and **Interactive** menus with icons and labels. **Structure** contains table of contents, Mermaid diagrams, horizontal rules, image descriptions and document metadata. **Interactive** contains tabbed examples and variant selectors, with a reminder that these require HTML export. There is no separate Blocks insertion category.
+The toolbar has one **Insert** section: **Image**, **Table** and **Code** buttons, plus **Alerts**, **Structure**, and **Interactive** menus with icons and labels. **Structure** contains table of contents, Mermaid diagrams, horizontal rules, image descriptions, document metadata and Include. **Interactive** contains tabbed examples and variant selectors, with a reminder that these require HTML export. There is no separate Blocks insertion category.
 The same commands are available from the native Insert menu and right-click **Insert > Alerts / Structure / Interactive**. At narrow widths, Structure and Interactive stay visible while lower-priority groups move into **More tools**.
 
-A blank Visual document shows **Start writing, or press / for commands**, with a reminder about right-click tools. The hint disappears when you focus the empty paragraph and returns when you leave it empty. Source mode instead points to **Ctrl+Shift+P** for command search. Hints are UI guidance, not document content, and never appear in saved or exported files.
+A blank Visual document shows **Start writing, or press / for commands**, with a reminder about right-click tools. The hint disappears when you focus the empty paragraph and returns when you leave it empty. Markdown view instead points to **Ctrl+Shift+P** for command search. Hints are UI guidance, not document content, and never appear in saved or exported files.
 The **+** for a new document sits immediately after the rightmost visible document tab. It remains accessible when additional documents move into the open-documents menu.
 
 #### Alerts: write directly in Visual
 
 1. Put the caret in a paragraph, or select the paragraphs you want to format.
 2. Choose **Alerts > Note, Tip, Important, Caution, or Warning**.
-3. Type directly inside the alert. Use the normal toolbar for rich text, lists, links and code; there is no need to open Source to write its body.
+3. Type directly inside the alert. Use the normal toolbar for rich text, lists, links and code; there is no need to open Markdown to write its body.
 4. With the caret inside an alert, choose another type to change it without replacing the content.
 5. Press Enter to add a paragraph. Enter again on an empty final paragraph returns to normal writing outside the alert.
 
 Each alert has a semantic icon, text label and colored leading border. Meaning does not depend on color alone.
 Undo/redo includes alert insertion, body edits and type changes. Unchanged non-reference alerts retain their source syntax; edited alerts save as ordinary `> [!TYPE]` Markdown.
-During Visual edits, reference links and images may be written with resolved inline destinations to keep dependencies valid across blocks. Manage shared reference definitions in Source when removing a block that owns them.
-Supported containers, including tabs and variant bodies around an alert, are editable too. Local include directives stay visible but are not loaded.
+During Visual edits, reference links and images may be written with resolved inline destinations to keep dependencies valid across blocks. Manage shared reference definitions in Markdown when removing a block that owns them.
+Supported containers, including tabs and variant bodies around an alert, are editable too. Local include content is read-only in the parent document and can be edited in its own file.
 
 ![Directly editable alerts in Light](images/alerts-light.png)
 
@@ -109,28 +109,28 @@ Supported containers, including tabs and variant bodies around an alert, are edi
 
 #### Tabs and variant selectors
 
-**Interactive** includes **Tabbed examples** and **Variant selector**. Image descriptions and document metadata are in **Structure**. Variant content is a follow-on action after creating a selector, not a separate starting option. Inline hints explain how to select, rename and add choices. New example and variant bodies are empty, with placeholders that disappear when clicked; there is no sample text to delete. Variant cards identify their assigned options and keep assignment controls in the header. Existing document text is never cleared when you focus it.
+**Interactive** includes **Tabbed examples** and **Variant selector**. Image descriptions, document metadata and Include are in **Structure**. Variant content is a follow-on action after creating a selector, not a separate starting option. Inline hints explain how to select, rename and add choices. New example and variant bodies are empty, with placeholders that disappear when clicked; there is no sample text to delete. Variant cards identify their assigned options and keep assignment controls in the header. Existing document text is never cleared when you focus it.
 Select existing content before choosing tabs or variant content to retain it inside the new body. A selector inserts only choices, retaining selected prose separately rather than bundling variant bodies.
 
-**Tabbed examples:** select a tab and type/format directly in its body, with no separate tab-name form above the content. Double-click the name on the tab, or focus it and press **F2**, to rename it in place. **Enter** finishes renaming; **Escape** restores the previous name. The Source heading's `#tab/` identifier follows the tab label (for example, **Service Principal** becomes `#tab/serviceprincipal`). The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Keep at least one tab or delete the entire group. **Write after block** places a normal paragraph after the group.
+**Tabbed examples:** select a tab and type/format directly in its body, with no separate tab-name form above the content. Click the selected tab name again (or double-click it, or press **F2**) to rename it directly on the tab. **Enter** finishes renaming; **Escape** restores the previous name. The Markdown heading's `#tab/` identifier follows the tab label (for example, **Service Principal** becomes `#tab/serviceprincipal`). The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Removing the last tab removes the whole tabbed example. Inserting a block always leaves an empty line below it so you can keep writing.
 
 **Variant selector and distributed content:**
 
-1. Insert **Interactive > Variant selector** once. Its labeled **Selector prompt** field starts empty: click the bordered box and type your own prompt, or leave it blank. Its placeholder is guidance, not saved text. Double-click a choice, or focus it and press **F2**, to rename it in place rather than using a duplicate option-name form. **+** adds a choice; **×** removes it once its content has been reassigned. Renaming a label keeps its stable ID and all matching content.
-2. Click **Add variant content…** on the selector and select one or more existing options. Insert their content directly below the selector.
-3. To place content elsewhere, put the caret there or select text to wrap, then choose **Interactive > Add variant content…**: the original selector menu entry changes to this action once a selector exists. The native Insert and right-click menus follow the same workflow.
-4. Write and format directly in the new body. Repeat at other locations; content does not have to sit beside the selector.
-5. Inactive content retains a compact card with **Show and edit**. **Applies to...** changes its option assignments; at least one assignment is required.
-6. **Add option** adds a stable new ID. Removing an option is blocked while any variant content still uses it; reassign or remove that content first.
+1. Insert **Interactive > Variant selector** once. Its title field starts empty with the hint **Describe the title for the selection**; the hint is not saved text. Below it, Lekh reminds you to choose **Add variant content** from the Interactive menu for each option. Click the selected choice again (or double-click it, or press **F2**) to rename it in place. **+** after the last choice adds one; **×** removes a choice, and removing the last choice removes the selector. Renaming a label keeps its stable ID and all matching content.
+2. Put the caret wherever the content belongs or select text to wrap, then choose **Interactive > Add variant content…** and select one or more existing options. The original selector menu entry changes to this action once a selector exists. The native Insert and right-click menus follow the same workflow.
+3. Write and format directly in the new body. Repeat at other locations; content does not have to sit beside the selector.
+4. Inactive content retains a compact card with **Show and edit**. **Applies to...** changes its option assignments; at least one assignment is required. **×** removes the content block, and undo restores it.
+5. **Add option** adds a stable new ID. Removing an option keeps its variant content. Use **Applies to...** to assign that content to a remaining option before removing its old assignment; undo can also restore the removed option.
 
 Tabs switch examples within one block. Variant selectors switch matching content throughout the current document; they are independent of tabs.
 The selector must exist before creating its content, but its position imposes no restriction: variant content may appear before it, after it, or under other headings.
+Nested variant content must share at least one choice with every enclosing variant so it can be displayed. Lekh prevents insertions or assignment changes that would make nested content unreachable. If an existing document has incompatible nested choices, use **Applies to...** on the inner card to add a shared choice.
 
 ![Choose existing options when inserting variant content at the current position](images/variant-content-light.png)
 
-Selectors stay inside Visual or the rendered Preview. In Visual + Source, they never span or displace the Source column.
-Source always retains every alternative. In Visual, inactive cards make hidden content visible and directly reachable for editing.
-Read-only previews hide inactive content. Interactive HTML export retains all alternatives and lets the reviewer choose which to display.
+Selectors stay inside Visual or the rendered Preview. In Split, they never span or displace the Markdown column.
+Markdown source always retains every alternative. In Visual, inactive cards make hidden content visible and directly reachable for editing.
+Click tabs and choices in Visual to try them while editing; inactive variant content remains available in compact editing cards. For a reader-style view, choose **Preview** and click the tabs and choices there. It hides inactive content, while **Export > Interactive HTML** retains every alternative in a standalone file that readers can open and switch in a browser.
 
 ![Variant selector and content in Visual beside the Markdown source](images/publishing-split-dark.png)
 
@@ -146,32 +146,35 @@ Read-only previews hide inactive content. Interactive HTML export retains all al
 **Document metadata** is a single YAML field outside article content. Edit every field, including multiline values, directly in the box; arbitrary keys and comments are retained. Keep at least one `name: value` field or delete the entire block; delimiter lines are managed separately. Lekh does not evaluate YAML tags or claim complete schema validation.
 
 Image captions are edited directly where displayed. Image source and alternate text remain available under **Image source and alternate text**, while long descriptions and variant content use normal rich document editing. These controls keep undo/redo and accessible field names without repeating visible form labels.
-Documents containing tabbed examples, variant selectors, or variant content cannot be exported to DOCX or PDF. Those export options are disabled in the menu; choose **Export → Interactive HTML** instead. Local include directives are not resolved, so export restrictions are based only on the current document. Documents with metadata alone still support DOCX and PDF.
-Unsupported or over-depth directives remain source-preserving and visibly identified. **Edit block** opens their raw syntax inline within Visual, without switching the document to Source.
+Documents containing tabbed examples, variant selectors, or variant content cannot be exported to DOCX or PDF, including when those blocks come from an include. Those export options are disabled in the menu; choose **Export → Interactive HTML** instead. Documents with metadata alone still support DOCX and PDF.
+Unsupported or over-depth directives remain source-preserving and visibly identified. **Edit block** opens their raw syntax inline within Visual, without switching the document to Markdown.
 
 ![Edit the complete metadata YAML directly in the Visual document](images/publishing-fields-dark.png)
 
-Existing local include directives remain visible and editable as source-preserving blocks, but referenced files are never opened or loaded. Lekh does not fetch remote content. Relative images inside the Markdown file's folder continue to work; use **More (...) > Allow local image folder...** to grant this document access to images in a containing project folder. That grant is session-only and can be removed with **Stop local image folder access**.
-If publishing labels are defined in a local `zone-pivot-groups.yml`, allowing the image folder also lets Lekh use those definitions. **Make these choices editable** creates one explicit Visual selector for this document; it does not modify the external configuration. This also enables independent variant-content insertion. Otherwise selectors show discovered IDs with an explanation.
+Choose **Structure > Include** and enter a title and file path to insert `[!INCLUDE [title](filepath)]`. Save the parent document first so paths can be resolved. Visual and Preview show the included Markdown as read-only content; exports contain the same content, excluding the include file's opening YAML metadata. The parent and included source files are not rewritten. Use **Refresh content** after an included file changes outside Lekh, or open that file to edit it.
+
+Includes within the parent document's folder are available automatically. To use files elsewhere in the same project, choose **Allow include folder...** on the include or **More (...) > Allow local include folder...**, and select a folder containing both the saved parent and included files. This session-only grant covers local Markdown includes and their images, is separate from the image-folder grant, and can be revoked with **Stop local include folder access**. Paths in nested includes and their images are relative to the file containing them. Remote paths, files outside the allowed folder, symlink escapes, missing files, cycles and oversized content are reported instead of silently skipped; include nesting is limited to 12 levels, 128 includes and 20 MB total.
+
+Relative images inside the Markdown file's folder continue to work. If an image outside that folder cannot be displayed, use **Choose project folder...** in the image error to authorize a containing project folder, or insert the image as an embedded asset. Access is limited to this document and session and ends when the document is closed.
+If publishing labels are defined in a local `zone-pivot-groups.yml`, **Load variant labels...** on the fallback selector lets you choose a containing project folder. This also authorizes images within that folder for the document and session. Lekh displays those labels without modifying the document or external configuration; otherwise the selector shows discovered IDs with an explanation. When an external label file changes, **Refresh content** on an include reloads the labels too.
 Features requiring a publishing site's complete build pipeline are not simulated as successful output; unsupported syntax remains identified and preserved.
 
 ### Editor views and formatting
 
-- **Visual + Source:** turn on the switch to edit Visual on the left and Source on the right. Edits update the other pane, and scrolling is synchronized in both directions by default using content anchors and measured wrapped Source lines, not only the whole-document percentage. Click the side you want to edit; formatting follows it. Turning the switch off keeps Visual and retains offsets. Space operates the focused switch. A two-file pair shares this switch, which controls only the active document; scrolling never drives the other document.
-- **Single-editor views:** **More (...) > Visual only / Source only**, and **View > Visual / source** (Ctrl+/), retain the separate views. These mode changes reset undo history as before; simply showing Source alongside Visual does not recreate the editor. Visual edits can normalize Markdown syntax; use Source for exact syntax and unsupported constructs.
+- **Visual, Markdown and Split:** choose a single editing view or **Split** to edit Visual on the left and Markdown on the right. Both panes update together and synchronize scrolling using content anchors and wrapped source lines. Click the side you want to edit; formatting follows it. A two-file pair shares these controls, which affect only the active document. Visual edits can normalize Markdown syntax; use Markdown for exact syntax and unsupported constructs.
 - **Single-row toolbar:** headings, bold, italic, strikethrough, inline code, all three list types, quotes, links, images, tables, code blocks, horizontal rules, table-of-contents insertion/update, and Mermaid insertion are directly accessible when space permits. Icons expose names and shortcuts on hover. As the window narrows, commands that no longer fit move into **More tools and views (...)**, with readable labels, rather than producing a scrollbar. Widening the window returns them to the toolbar. More also contains additional views and help; arrow keys navigate and Escape returns focus to its button. All commands remain available from the native menus. Save and Export keep their labels.
-- **Compact right-click menu:** right-click in Visual or Source, or press **Shift+F10**. Two quick rows expose Cut, Copy, Paste, Delete, Bold, Italic, Code and Link. Other tools are grouped under **Edit**, **Formatting**, **Paragraph**, **Insert**, **Table** and **View and tools**. **Edit** contains Undo, Redo, Select All, Copy / Paste As, and move/duplicate/remove commands. **Insert** contains Image, Table, Code and **Alerts / Structure / Interactive**, matching the toolbar. Spelling suggestions get their own submenu when available. All options remain accessible, without a separate Block category. Submenus attach to their parent and flip/clamp at window edges; arrows navigate and Escape closes a level and restores focus. Clipboard actions preserve selection and target the clicked split side. Metadata/name/path inputs retain their native text-input menu.
-- **Mermaid insertion:** place the caret where the diagram belongs and choose **Mermaid diagram** from the toolbar, its More menu, or Insert. In Visual, the diagram is inserted and rendered at that selection without switching modes; in Source, its fenced template uses the Source caret. In a split pair only the active document changes. Undo removes the insertion in one step.
+- **Compact right-click menu:** right-click in Visual or Markdown, or press **Shift+F10**. Two quick rows expose Cut, Copy, Paste, Delete, Bold, Italic, Code and Link. Other tools are grouped under **Edit**, **Formatting**, **Paragraph**, **Insert**, **Table** and **View and tools**. **Edit** contains Undo, Redo, Select All, Copy / Paste As, and move/duplicate/remove commands. **Insert** contains Image, Table, Code and **Alerts / Structure / Interactive**, matching the toolbar. Spelling suggestions get their own submenu when available. All options remain accessible, without a separate Block category. Submenus attach to their parent and flip/clamp at window edges; arrows navigate and Escape closes a level and restores focus. Clipboard actions preserve selection and target the clicked split side. Metadata/name/path inputs retain their native text-input menu.
+- **Mermaid insertion:** place the caret where the diagram belongs and choose **Mermaid diagram** from the toolbar, its More menu, or Insert. In Visual, the diagram is inserted and rendered at that selection without switching modes; in Markdown, its fenced template uses the Markdown caret. In a split pair only the active document changes. Undo removes the insertion in one step.
 - **Document outline:** click a heading on the left to navigate. Linked headings show their readable descriptions, not link addresses or Markdown formatting syntax; links in the document remain unchanged. Click a heading's chevron, or press Left/Right on it, to collapse or expand its subheadings. Drag a top-level heading, or press **Alt+Up/Down** on it, to move its whole section; moves never split publishing zones, tabbed examples or lists, and **Ctrl+Z** undoes them.
 - **Command palette:** press **Ctrl+Shift+P**, or click **Search commands** in the header, to search every action, block and export. Type any words from a command name, then press Enter.
 - **Slash menu:** in Visual, type `/` on an empty line to insert headings, lists, tables, alerts, tabbed examples, variants and other blocks. Each entry shows an icon and short description. Arrow keys choose, Enter inserts, Escape dismisses; Enter with no match simply starts a new line.
 - **Block toolbar:** click into content in Visual to show a small floating toolbar for **Move up**, **Move down**, **Duplicate** and **Remove**. It hides while you type. The same commands are available from **Edit**, right-click **Edit**, and **Alt+Shift+Up/Down**.
 - **Export panel:** **Export** shows Word, PDF and HTML cards with previews. When a document contains tabbed examples or variants, HTML is marked **Recommended** and Word/PDF are disabled with an explanation.
-- **Links (0.6.2):** in Visual, click a link to edit its **Link text** and **Link address**, then choose **Save changes**. The link toolbar button, **Ctrl+K**, and right-click **Edit link...** also edit an existing link. **Remove link** keeps its text and formatting; Cancel leaves the document unchanged. Changing only the address preserves formatting within the label. Each change can be undone in one step. Use **Ctrl+click** to open a web/email link through the existing confirmation dialog, including in read-only Preview. Generated table-of-contents links still navigate with an ordinary click. Supported addresses are HTTP, HTTPS, `mailto:`, and `#heading` anchors. In Source, Ctrl+K continues to insert Markdown link syntax around the selection.
-- **Tables:** right-click and choose **Table > Insert table...** or **Insert > Table**, click the table toolbar button, or press **Ctrl+T**. Choose columns and rows, then **Insert table**. Rows include the header; the limits are 100 rows and 50 columns. Cancel leaves your text unchanged. The same dialog works in Visual and Source modes. Click inside an existing table for controls to add or remove rows and columns.
-- **Find and replace:** click **Find** or press **Ctrl+F** to toggle the bar; Close/Escape dismiss it without clearing your text. Search Markdown using **Match case** (on by default), **Whole word** (Unicode letters/numbers/underscore), or **Regex**. Previous/Next wrap around; Enter/Shift+Enter in Find navigate. Matches are counted and highlighted in Source. **Replace** changes the current result (or first result); **Replace all** changes every result in one undo step. Regex replacement supports `$1`, named groups, `$&`, and `$$`; literal replacement treats dollar signs literally. Navigation/replacement switches Visual to Source. Regex runs off the UI thread, stops after two seconds, and reports invalid expressions. Above 10,000 results, narrow the search before replacing; replacements cannot exceed the document size limit.
-- **Source + Preview:** choose **More (...) > Source + Preview (read-only)** or **View > Source + Preview** to edit Source alongside a read-only rendering. **Sync scrolling** proportionally links scroll positions in either direction and can be unchecked. This is distinct from editable Visual + Source and pairing two files; each paired pane can use it. Returning to Source keeps its undo history; entering Visual retains the existing mode-switch history-reset behavior.
-- **Undo and redo:** supported in both modes, independently for each tab. Switching tabs preserves history; switching single-editor Visual/Source modes resets that tab's history. In editable Visual + Source, undo follows the active editor; a Visual edit clears earlier Source-only snapshots so Source undo cannot overwrite that Visual edit with an obsolete snapshot.
+- **Links (0.6.2):** in Visual, click a link to edit its **Link text** and **Link address**, then choose **Save changes**. The link toolbar button, **Ctrl+K**, and right-click **Edit link...** also edit an existing link. **Remove link** keeps its text and formatting; Cancel leaves the document unchanged. Changing only the address preserves formatting within the label. Each change can be undone in one step. Use **Ctrl+click** to open a web/email link through the existing confirmation dialog, including in read-only Preview. Generated table-of-contents links still navigate with an ordinary click. Supported addresses are HTTP, HTTPS, `mailto:`, and `#heading` anchors. In Markdown, Ctrl+K continues to insert Markdown link syntax around the selection.
+- **Tables:** right-click and choose **Table > Insert table...** or **Insert > Table**, click the table toolbar button, or press **Ctrl+T**. Choose columns and rows, then **Insert table**. Rows include the header; the limits are 100 rows and 50 columns. Cancel leaves your text unchanged. The same dialog works in Visual and Markdown views. Click inside an existing table for controls to add or remove rows and columns.
+- **Find and replace:** click **Find** or press **Ctrl+F** to toggle the bar; Close/Escape dismiss it without clearing your text. Search Markdown using **Match case** (on by default), **Whole word** (Unicode letters/numbers/underscore), or **Regex**. Previous/Next wrap around; Enter/Shift+Enter in Find navigate. Matches are counted and highlighted in Markdown. **Replace** changes the current result (or first result); **Replace all** changes every result in one undo step. Regex replacement supports `$1`, named groups, `$&`, and `$$`; literal replacement treats dollar signs literally. Navigation/replacement switches Visual to Markdown. Regex runs off the UI thread, stops after two seconds, and reports invalid expressions. Above 10,000 results, narrow the search before replacing; replacements cannot exceed the document size limit.
+- **Preview:** choose **Preview** for a read-only, interactive reader view. Use **Show Markdown beside preview** to edit Markdown on the right; **Sync scrolling** links the two panes and can be unchecked. **Back to editing** restores the previous editing view. Preview and its Markdown option are independent for each document, including paired files.
+- **Undo and redo:** supported in both editors, independently for each tab. View changes retain history when the underlying editor has not changed; synchronizing edits made in the other editor may replace that editor's history. In Split, undo follows the active editor; a Visual edit clears earlier Markdown-only snapshots so Markdown undo cannot overwrite that Visual edit with an obsolete snapshot.
 - **Spelling:** native spell-checking in the visual editor. Availability and dictionaries depend on Windows.
 - **Themes:** click the theme action at the bottom of the sidebar to alternate **Light** and **Dark**. **View > Color theme** also remains available. Dark combines graphite writing surfaces, a midnight sidebar, and muted teal accents. Older Dark and GitHub Dark preferences automatically migrate to Dark. The sidebar icon uses the brighter variant in Dark; Light and the Windows application icon retain the original artwork.
 - **Sidebar toggle:** use the upper-left hamburger, **View > Toggle sidebar**, or **Ctrl+Shift+B**. The collapsed rail keeps New, Open, theme, and keyboard shortcuts available while hiding the outline/recent list. Your sidebar preference and expanded width are remembered.
@@ -185,7 +188,7 @@ Features requiring a publishing site's complete build pipeline are not simulated
 
 ### Formatting keyboard shortcuts
 
-These work in both Visual and Source modes, including the active side of a split. Hover over a toolbar control to see its shortcut. **Help > Keyboard shortcuts** or **F1** opens the reference.
+These work in both Visual and Markdown views, including the active side of a split. Hover over a toolbar control to see its shortcut. **Help > Keyboard shortcuts** or **F1** opens the reference.
 
 | Action | Shortcut |
 | --- | --- |
@@ -213,7 +216,7 @@ Formatting shortcuts are scoped to document editors, not Find fields, dialogs, o
 - Search the offline language catalog by name or alias, such as **PowerShell**, **ps1**, **Python**, **JavaScript**, **C#**, **JSON**, or **YAML**. Arrow keys navigate results; Enter selects; Escape closes the picker.
 - Choosing a language applies syntax colors immediately, with light/dark palettes matching your theme. It does **not** rewrite indentation, reformat, or run your code.
 - **Plain text** disables highlighting. Existing unsupported language labels are preserved and displayed as plain text, never guessed.
-- In Source mode, specify the language after the opening fence, for example three backticks followed by `powershell`. Languages and code contents survive saving, reopening, and tab/mode switches.
+- In Markdown view, specify the language after the opening fence, for example three backticks followed by `powershell`. Languages and code contents survive saving, reopening, and tab/mode switches.
 - **Copy** copies only the block's code, preserving its whitespace. PDF and Word exports include syntax colors using a print-friendly light palette, without the editor's buttons or language picker.
 
 ### Right-click Markdown menu
@@ -225,18 +228,18 @@ Right-click inside the visual editor or Markdown source to access:
 - **Copy / Paste As:** copy a selection or the full document as Markdown, paste as plain text, paste Markdown as formatted content in Visual mode, or explicitly **Paste image**.
 - **Formatting:** bold, italic, strikethrough, inline code, quotes, bullet/numbered/task lists, and Clear formatting in Visual mode.
 - **Paragraph:** Heading 1 through Heading 6, or normal Paragraph. The current style is checked.
-- **Insert:** image, footnote, link, link reference, horizontal line, table, code fence, math block, table of contents, YAML front matter, and a paragraph before or after the current block (current line in Source mode).
+- **Insert:** image, footnote, link, link reference, horizontal line, table, code fence, math block, table of contents, YAML front matter, and a paragraph before or after the current block (current line in Markdown view).
 - **Table:** **Insert table...** is always available, even before a table exists. Row/column controls are enabled only inside an existing table in Visual mode.
 
 Paragraph and Insert commands are also available under the native **Edit** menu.
 
-**Footnote, link reference, math block, and YAML** commands insert editable Markdown syntax in **Source mode**. From Visual mode they insert at the document's end (YAML goes at the top); from Source mode they use the current selection. YAML insertion refuses to duplicate an existing opening front-matter block. Footnotes and link references use unique reference numbers. Math and footnotes do not have formatted rendering or structured export support yet; keep them in Source mode to preserve the syntax. YAML is preserved in the metadata view and omitted from article-body exports. Standard Markdown link references are resolved by the renderer/exporter.
+**Footnote, link reference, math block, and YAML** commands insert editable Markdown syntax in **Markdown view**. From Visual mode they insert at the document's end (YAML goes at the top); from Markdown view they use the current selection. YAML insertion refuses to duplicate an existing opening front-matter block. Footnotes and link references use unique reference numbers. Math and footnotes do not have formatted rendering or structured export support yet; keep them in Markdown view to preserve the syntax. YAML is preserved in the metadata view and omitted from article-body exports. Standard Markdown link references are resolved by the renderer/exporter.
 
 **Table of contents** is one action: it inserts a marked list when none exists, then refreshes that same list when used again after changing headings. The list is enclosed by `<!-- lekh:toc -->` and `<!-- /lekh:toc -->`; refresh replaces only that marked block, preserving surrounding source. Duplicate heading names get distinct anchors. Visual editing preserves the block as a single contents node. Refresh requires exactly one well-formed marked block outside code fences; unmarked lists must be replaced with a newly inserted marked contents list. Its links navigate within Visual, Preview/PDF, and exported Word documents; Word uses heading bookmarks for internal destinations.
 
 ### Mermaid diagrams
 
-Choose **Mermaid diagram** in the toolbar, **More tools and views > Mermaid diagram** when it has moved into overflow, or **Insert > Mermaid diagram** for a flowchart starter at the current selection. Visual insertion stays in Visual; Source-only insertion opens Source + Preview, while editable Visual + Source stays enabled if already in use. A fenced block labelled `mermaid` renders locally in Visual and Preview, without running code or using a cloud service. PDF and Word exports render diagrams independently in an isolated local page and include PNG images.
+Choose **Mermaid diagram** in the toolbar, **More tools and views > Mermaid diagram** when it has moved into overflow, or **Insert > Mermaid diagram** for a flowchart starter at the current selection. Visual insertion stays in Visual; Markdown-only insertion opens Preview beside Markdown, while editable Split stays enabled if already in use. A fenced block labelled `mermaid` renders locally in Visual and Preview, without running code or using a cloud service. PDF and Word exports render diagrams independently in an isolated local page and include PNG images.
 
 Supported diagram families are flowchart, sequence, class, state, entity-relationship, pie, journey, and timeline. Diagram configuration directives/front matter are ignored; links, HTML, external resources, callbacks and custom shapes are disabled. Limits include 12,000 source characters, 250 lines, 350 statements, 200 edges and 32 diagrams per preview/export. Export images are limited to 4096 pixels per dimension and eight million pixels. Unsupported/invalid diagrams show an error with the source retained; export fails explicitly rather than silently dropping a diagram. Math rendering is still unsupported.
 
@@ -255,7 +258,7 @@ Supported diagram families are flowchart, sequence, class, state, entity-relatio
 | Find and replace | Ctrl+F |
 | Undo | Ctrl+Z |
 | Redo | Ctrl+Shift+Z |
-| Visual / Source | Ctrl+/ |
+| Visual / Markdown | Ctrl+/ |
 | Focus mode | F9 |
 | Toggle sidebar | Ctrl+Shift+B |
 | Bold / italic in both modes | Ctrl+B / Ctrl+I |
@@ -264,7 +267,7 @@ Supported diagram families are flowchart, sequence, class, state, entity-relatio
 | Insert image | Ctrl+Shift+I |
 | Insert table | Ctrl+T |
 | Code fence | Ctrl+Shift+K |
-| Math block (Source) | Ctrl+Shift+M |
+| Math block (Markdown) | Ctrl+Shift+M |
 
 ## Keeping your work safe
 
@@ -280,7 +283,7 @@ Supported diagram families are flowchart, sequence, class, state, entity-relatio
 
 **Insert image**, clipboard image paste, and image drag/drop offer **Embed in document** or **Save in this document's assets folder**. Embed is selected by default: it creates a portable data URL but increases Markdown/recovery size. Assets are available only after saving the Markdown file. Images get unique non-overwriting names under its `assets` folder and relative Markdown links. Unsafe asset folders (including links/junctions) and malformed images are rejected with an error. Cancellation does not insert an image. Drop one PNG, JPEG, GIF, or WebP at a time; the image limit is 20 MB, and embedded documents still have the 10 MB limit.
 
-**Clipboard images and screenshots:** copy an image or capture a screenshot, then use **Ctrl+V**, **Edit → Paste**, or right-click **Paste**. A clipboard bitmap becomes PNG; choosing embedding in Source produces `![Image](data:image/png;base64,...)`, while choosing assets produces a relative file link. Image-file paste events also support JPEG, GIF, and WebP. Right-click an image and choose **Copy image** to copy its bitmap for use in another document or application. Copy/cut of an individually selected image is also supported. Clipboard bitmaps do not preserve GIF animation. Remote HTML image links are not downloaded.
+**Clipboard images and screenshots:** copy an image or capture a screenshot, then use **Ctrl+V**, **Edit → Paste**, or right-click **Paste**. A clipboard bitmap becomes PNG; choosing embedding in Markdown produces `![Image](data:image/png;base64,...)`, while choosing assets produces a relative file link. Image-file paste events also support JPEG, GIF, and WebP. Right-click an image and choose **Copy image** to copy its bitmap for use in another document or application. Copy/cut of an individually selected image is also supported. Clipboard bitmaps do not preserve GIF animation. Remote HTML image links are not downloaded.
 
 Embedded pasted images remain inside the saved Markdown file and can be reopened or exported to HTML, Word or PDF, with no separate folder to manage. For assets, keep the `assets` folder with the Markdown document when copying or sharing it. The 10 MB document limit still applies.
 
@@ -292,7 +295,7 @@ Choose **Export → Interactive HTML** to create one `.html` file, then open it 
 
 Click an example tab or use Left/Right, Home and End to navigate its tabs. Variant choices update matching content throughout the document, including content above the selector. Heading links reveal the tab and variant containing their destination, including nested examples. If variant content has no selector, HTML provides one using the variant IDs. When JavaScript is disabled, all labeled alternatives remain visible instead of becoming inaccessible.
 
-The HTML file contains **all** alternatives, including those not currently selected. Local include directives remain inert and their referenced files are never read. Share the exported file only with people allowed to see the entire document. Metadata remains outside the exported article. Missing, invalid, remote or unauthorized images cause an explicit export error.
+The HTML file contains **all** alternatives, including those not currently selected, and the resolved contents of local includes. Share the exported file only with people allowed to see the entire document. Metadata remains outside the exported article. Missing, invalid, remote or unauthorized includes and images cause an explicit export error.
 
 ### DOCX and PDF formatting
 
@@ -311,11 +314,11 @@ Word output remains editable and reflows according to the receiving application'
 
 - Missing, unreadable, or unsupported export images cause an explicit error instead of silently disappearing.
 - Raw HTML is treated as text during export, not executed.
-- Math and footnotes do not have formatted rendering or structured export support; use Source mode to preserve their Markdown syntax. YAML remains metadata rather than article text. Standard Markdown link references are resolved.
+- Math and footnotes do not have formatted rendering or structured export support; use Markdown view to preserve their Markdown syntax. YAML remains metadata rather than article text. Standard Markdown link references are resolved.
 
 ## First-version boundaries
 
-Visual editing can normalize Markdown syntax and may not preserve unsupported constructs. Use **Source mode** for exact editing of YAML front matter, raw HTML, math, footnotes, or custom Markdown extensions. Simply opening, switching modes, and saving without edits preserves the original text.
+Visual editing can normalize Markdown syntax and may not preserve unsupported constructs. Use **Markdown view** for exact editing of YAML front matter, raw HTML, math, footnotes, or custom Markdown extensions. Simply opening, switching modes, and saving without edits preserves the original text.
 
 Not included yet: a folder workspace, cloud sync, automatic updates, custom export templates, manual advanced pagination controls, interactive Word form checkboxes, and LaTeX rendering. Task lists export as rendered boxes, not interactive form controls. Math and footnotes do not have formatted rendering or structured export support; metadata is not article body text.
 

@@ -1,4 +1,4 @@
-import type MarkdownIt from 'markdown-it';
+import MarkdownIt from 'markdown-it';
 import Token from 'markdown-it/lib/token.mjs';
 import type StateBlock from 'markdown-it/lib/rules_block/state_block.mjs';
 import { unescapeAll } from 'markdown-it/lib/common/utils.mjs';
@@ -40,6 +40,7 @@ type Lines = {
   closes: Map<number, number>;
   tabEnds: Map<number, number>;
   literal: Set<number>;
+  indented: Set<number>;
 };
 type Tab = { label: string; from: number; to: number };
 type TabsGroup = { end: number; explicit: boolean; tabs: Tab[] };
@@ -57,6 +58,8 @@ type Block = {
   options?: { id: string; label: string }[];
 };
 const stateLines = new WeakMap<StateBlock, Lines>();
+const stateLiteralLines = new WeakMap<StateBlock, Set<number>>();
+const literalParser = new MarkdownIt({ html: true });
 const directivePattern = /^ {0,3}:::[ \t]*([a-z][\w-]*)(?:[ \t]+(.*?))?[ \t]*$/i;
 const tabPattern = /^ {0,3}#{1,6}[ \t]+\[((?:\\.|[^\]\\\n])+)\]\(#tab\/([^\s)]+)\)[ \t]*$/i;
 const calloutPattern = /^ {0,3}>[ \t]?\[!(NOTE|TIP|IMPORTANT|CAUTION|WARNING)\](?:[ \t]+(.*))?[ \t]*$/i;
@@ -138,13 +141,14 @@ function makeLines(source: string): Lines {
     position = newline < 0 ? source.length : newline + 1;
   }
   starts.push(source.length);
-  const result: Lines = { source, starts, text, closes: new Map(), tabEnds: new Map(), literal: new Set() };
+  const result: Lines = { source, starts, text, closes: new Map(), tabEnds: new Map(), literal: new Set(), indented: new Set() };
   const openings = new Map<string, number[]>();
   let fence: { character: string; length: number } | undefined;
   let comment = false;
   for (const [index, line] of text.entries()) {
     if (!fence && !comment && /^(?: {4}|\t)/.test(line)) {
       result.literal.add(index);
+      result.indented.add(index);
       continue;
     }
     const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
@@ -207,6 +211,33 @@ function indexExplicitTabs(lines: Lines): void {
 
 function rawRange(lines: Lines, start: number, end: number): string {
   return lines.source.slice(lines.starts[start] ?? lines.source.length, lines.starts[end] ?? lines.source.length);
+}
+
+function containerLiteralLines(state: StateBlock): Set<number> {
+  const existing = stateLiteralLines.get(state);
+  if (existing) return existing;
+  const lines = new Set<number>();
+  const mark = (start: number, end: number) => { for (let line = start; line < end; line++) lines.add(line); };
+  // Use Markdown's container-aware parser only to locate literals; its HTML is never rendered.
+  for (const token of literalParser.parse(state.src, {})) {
+    if (!token.map) continue;
+    if (token.type === 'fence' || token.type === 'code_block' ||
+        token.type === 'html_block' && /^\s*<!--/.test(token.content)) {
+      mark(token.map[0], token.map[1]);
+    } else if (token.type === 'inline') {
+      let offset = 0;
+      for (const child of token.children ?? []) {
+        if (child.type !== 'html_inline' || !child.content.startsWith('<!--')) continue;
+        const index = token.content.indexOf(child.content, offset);
+        if (index < 0) continue;
+        const start = token.map[0] + (token.content.slice(0, index).match(/\n/g)?.length ?? 0);
+        mark(start, start + 1 + (child.content.match(/\n/g)?.length ?? 0));
+        offset = index + child.content.length;
+      }
+    }
+  }
+  stateLiteralLines.set(state, lines);
+  return lines;
 }
 
 function attributes(source: string): Record<string, string> | null {
@@ -314,7 +345,7 @@ function inspect(lines: Lines, start: number, end: number, metadata: boolean): B
       body: scanned.body, bodyLine: start + 1,
     };
   }
-  if (includePattern.test(line)) return unsupported(start + 1, 'Local include directives are preserved but not loaded.', 'include');
+  if (includePattern.test(line)) return unsupported(start + 1, 'Include not loaded. Save the document or allow its folder to preview it.', 'include');
   if (tabPattern.test(line)) {
     // Explicit terminators take priority over headings without rescanning later implicit groups.
     const group = docfxTabs(line, offset => start + offset < end ? lines.text[start + offset] : undefined,
@@ -457,6 +488,25 @@ export function publishingLabel(value: string): string {
   return unescapeAll(value);
 }
 
+export function publishingMarkdownLabel(value: unknown): string {
+  return String(value ?? '').replace(/[\r\n]/g, ' ').replace(/&/g, '&amp;').replace(/[\\[\]]/g, '\\$&');
+}
+
+export function includeMarkdown(title: unknown, path: unknown): string {
+  const source = String(path ?? '').replace(/[()<>\s&]/g, character =>
+    character === '(' ? '%28' : character === ')' ? '%29' : encodeURIComponent(character));
+  return `[!INCLUDE [${publishingMarkdownLabel(title)}](${source})]`;
+}
+
+export function parseIncludeDirective(raw: string): { label: string; source: string } | null {
+  const match = /^ {0,3}\[!INCLUDE[ \t]+\[((?:\\.|[^\]\\])+)\]\(([^\r\n]*)\)\][ \t]*(?:\r?\n)?$/i.exec(raw);
+  if (!match) return null;
+  return {
+    label: publishingLabel(match[1]),
+    source: publishingLabel(match[2].replace(/^<(.*)>$/, '$1')).replace(/\\ /g, ' '),
+  };
+}
+
 export type EditablePublishingBlock = {
   raw: string;
   kind: PublishingKind;
@@ -558,7 +608,8 @@ export function registerPublishing(parser: MarkdownIt): void {
       lines = makeLines(state.src);
       stateLines.set(state, lines);
     }
-    if (lines.literal.has(start)) return false;
+    if (lines.literal.has(start) &&
+      (!state.blkIndent || !lines.indented.has(start) || containerLiteralLines(state).has(start))) return false;
     const physical = lines;
     let offset = 0;
     let from = start;

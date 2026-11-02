@@ -57,7 +57,10 @@ export function imageDisplayURL(source: string, documentId = ''): string {
 }
 
 export function documentPreviewHTML(markdown: string, documentId: string): string {
-  const tokens = parser.parse(markdown, {});
+  return documentPreviewTokensHTML(parser.parse(markdown, {}), documentId);
+}
+
+export function documentPreviewTokensHTML(tokens: ReturnType<typeof parser.parse>, documentId: string): string {
   const scopeImages = (items: typeof tokens): void => {
     for (const token of items) {
       if (token.type === 'image') {

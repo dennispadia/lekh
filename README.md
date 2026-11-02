@@ -28,7 +28,7 @@
 
 ## Why Lekh?
 
-- ✍️ **Write the way you think.** Format visually like a word processor, or switch to Source for exact Markdown. Or keep both side by side, editing either one.
+- ✍️ **Write the way you think.** Format visually like a word processor, or switch to Markdown for exact syntax. Or keep both side by side, editing either one.
 - ⚡ **Everything is one keystroke away.** Search every command with **Ctrl+Shift+P**, type `/` on an empty line to insert any block, and move whole sections from the outline.
 - 📚 **Publishing-ready blocks.** Alerts, tabbed examples, variant selectors and YAML metadata — edited directly in place, written as standard Docs-style Markdown.
 - 📤 **Export that respects your document.** Interactive HTML for offline review, editable Word, and print-ready PDF.
@@ -40,7 +40,7 @@
 
 | | |
 | --- | --- |
-| **Visual + Source** | Two editable views of one document that scroll together. Source-only and read-only Source + Preview are also available. |
+| **Visual, Markdown and Split** | Choose an editable view, or open an interactive reader preview with optional Markdown beside it. |
 | **Rich Markdown** | Headings, emphasis, lists, task lists, quotes, links, tables, images, rules and syntax-highlighted code. |
 | **Mermaid diagrams** | Insert and edit diagrams that render offline, right where your cursor is. |
 | **Find and replace** | Match case, whole word and regex, with live match counts and one-step Replace all. |
@@ -62,8 +62,8 @@
 | | |
 | --- | --- |
 | **Alerts** | Note, Tip, Important, Caution and Warning, each with its own icon and Light/Dark colors. Type and format inside them directly. |
-| **Tabbed examples** | Start with empty example bodies and click-away writing hints, not sample text to delete. Rename tabs in place; **+** adds one and **×** removes one. Names become `# [Name](#tab/name)` headings in Source. |
-| **Variants** | Write your prompt in a clearly labeled field, then place variant content anywhere. Empty content cards guide you with placeholders that disappear on focus and never enter your document. |
+| **Tabbed examples** | Start with empty example bodies and click-away writing hints, not sample text to delete. Rename tabs in place; **+** adds one and **×** removes one. Names become `# [Name](#tab/name)` headings in Markdown. |
+| **Variants** | Give the selector a title, then use **Interactive > Add variant content** wherever it belongs. Empty content cards guide you with placeholders that disappear on focus and never enter your document. |
 | **Metadata** | One YAML box for any front-matter keys, kept out of the article body. |
 
 ### Workspace and safety
@@ -100,7 +100,8 @@ Export uses the active document, including unsaved edits, and never changes your
 - **Interactive HTML** behaves like learn.microsoft.com: click tabs, switch variants, and review offline. Everything — images and diagrams included — is packed into one file.
 - **Word** stays editable and reflows in Word, so it will not be pixel-identical to the PDF.
 - **PDF** uses A4 pages with 20 mm margins and print-friendly colors, whatever editor theme you use.
-- **Not exported:** YAML metadata (kept as document data, not article text), local include directives, and remote images (export stops with a clear error rather than dropping them). Math and footnotes are not rendered as formatted output.
+- **Includes:** Local included Markdown appears in Visual and exports without its YAML metadata. The parent keeps the original directive; missing or unauthorized includes stop export with a clear error. Tabs or variants in an include also require HTML.
+- **Not exported:** YAML metadata (kept as document data, not article text). Remote images stop export with a clear error rather than being dropped. Math and footnotes are not rendered as formatted output.
 
 See [images and exports](docs/USER_GUIDE.md#images-and-exports) for details.
 
@@ -113,7 +114,7 @@ See [images and exports](docs/USER_GUIDE.md#images-and-exports) for details.
   </tr>
   <tr>
     <td><img src="docs/images/alerts-dark.png" alt="Editable alerts in Dark theme"><br><sub><b>Alerts</b> — type and format directly inside them.</sub></td>
-    <td><img src="docs/images/publishing-split-dark.png" alt="Variant selector and content in Visual beside Markdown source"><br><sub><b>Publishing blocks</b> — controls stay with the document, beside exact Source.</sub></td>
+    <td><img src="docs/images/publishing-split-dark.png" alt="Variant selector and content in Visual beside Markdown source"><br><sub><b>Publishing blocks</b> — controls stay with the document, beside exact Markdown.</sub></td>
   </tr>
   <tr>
     <td><img src="docs/images/block-toolbar.png" alt="Floating block toolbar and collapsible outline"><br><sub><b>Block toolbar and outline</b> — rearrange content in a click.</sub></td>
@@ -150,7 +151,7 @@ The same version reports **already installed**, and downgrades are blocked. Your
 
 1. Open Lekh and start typing in the blank document, or open a `.md` file.
 2. Type `/` for blocks, or press **Ctrl+Shift+P** to find any command.
-3. Turn on **Visual + Source** to see the exact Markdown alongside.
+3. Choose **Split** to edit Visual and Markdown together, or **Preview** to try tabs and choices as a reader.
 4. Save with **Ctrl+S**. Choose **Export** for HTML, Word or PDF.
 5. Press **F1** any time for the keyboard shortcut reference.
 

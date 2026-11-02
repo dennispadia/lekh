@@ -16,13 +16,13 @@ const groups = `groups:
       title: Linux
 `;
 
-test('local include directives stay byte-identical without a folder grant or file access', async () => {
+test('variant preparation preserves include directives without a folder grant', async () => {
   const markdown = `# Article\r\n${include}\r\n`;
   assert.equal(await prepareVariantConfiguration(markdown, null, null), markdown);
   assert.equal(await prepareVariantConfiguration(markdown, 'Z:\\does-not-exist.md', null), markdown);
 });
 
-test('asset-folder access can load variant labels but never resolves include files', async () => {
+test('variant preparation does not consume includes when loading local labels', async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'lekh-local-assets-'));
   try {
     const document = path.join(root, 'docs', 'article.md');

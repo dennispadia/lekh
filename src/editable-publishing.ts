@@ -1,22 +1,26 @@
 import { Extension, Node, type Editor, type JSONContent, type MarkdownParseHelpers, type MarkdownRendererHelpers, type MarkdownToken } from '@tiptap/core';
 import type { Node as ModelNode, Schema } from '@tiptap/pm/model';
-import { TextSelection } from '@tiptap/pm/state';
+import { Selection, TextSelection } from '@tiptap/pm/state';
 import { closeHistory } from '@tiptap/pm/history';
-import { editablePublishingBlockAtStart, firstPublishingBlock, publishingLabel, type EditablePublishingBlock } from '../lib/publishing.js';
+import { editablePublishingBlockAtStart, firstPublishingBlock, includeMarkdown, parseIncludeDirective, publishingMarkdownLabel as label, type EditablePublishingBlock } from '../lib/publishing.js';
 import { imageDisplayURL } from '../lib/markdown.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
+import { reachableVariantChoices, validateVariantAssignment } from './publishing-insert.js';
 import { choosePublishingVariant, initializePublishing, publishingHTML, refreshPublishingVariants } from './publishing-view.js';
+import { renderMermaidBlocks } from './diagrams.js';
 import { containsResolvedReference, inlineDestinations, referenceDefinitions, snapshot, withoutSource } from './publishing-source.js';
 
 interface Options {
   schema: (() => Schema) | null;
   documentId: string;
   reportError: (message: string) => void;
-  addVariantContent: (position: number) => void;
+  allowIncludeFolder: () => void;
+  refreshIncludeContent: () => void;
 }
 export type VariantOption = { id: string; label: string };
 const defaults: Options = { schema: null, documentId: '', reportError: message => console.error(message),
-  addVariantContent: () => { throw new Error('Variant content insertion is unavailable.'); } };
+  allowIncludeFolder: () => { throw new Error('Include folder access is unavailable.'); },
+  refreshIncludeContent: () => { throw new Error('Include refresh is unavailable.'); } };
 let nextTabGroup = 0;
 const idPattern = /^[a-z0-9][\w-]*$/i;
 const names: Partial<Record<EditablePublishingBlock['kind'], string>> = {
@@ -88,11 +92,6 @@ function body(node: JSONContent, helpers: MarkdownRendererHelpers): string {
 }
 
 const quote = (value: unknown) => String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/[\r\n]/g, ' ');
-const label = (value: unknown) => String(value ?? '').replace(/[\r\n]/g, ' ').replace(/&/g, '&amp;').replace(/[\\[\]]/g, '\\$&');
-function includeMarkdown(attrs: Record<string, unknown>): string {
-  const source = String(attrs.source ?? '').replace(/[()<>\s&]/g, character => encodeURIComponent(character));
-  return `[!INCLUDE [${label(attrs.label)}](${source})]`;
-}
 function tabId(value: string, used: Map<string, number>): string {
   const base = value.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]/g, '') || 'example';
   const count = used.get(base) ?? 0;
@@ -183,8 +182,12 @@ function choiceLabel(context: ViewContext, title: string, value: () => string, c
   const name = field(context, title, value, change, false, true);
   name.wrapper.classList.add('publishing-choice-editor');
   name.wrapper.hidden = true;
-  const button = tool(value(), activate);
-  button.title = 'Click to show content. Double-click or press F2 to rename here.';
+  const button = tool(value(), () => {
+    const wasActive = button.getAttribute('aria-selected') === 'true' || button.getAttribute('aria-pressed') === 'true';
+    activate();
+    if (wasActive) rename();
+  });
+  button.title = 'Click to show content. Click the selected name again to rename it here.';
   let originalName = value();
   const rename = () => {
     if (!context.editor.isEditable) { context.options.reportError('Wait for the current operation to finish before renaming.'); return; }
@@ -210,6 +213,18 @@ function choiceLabel(context: ViewContext, title: string, value: () => string, c
     name.input.blur(); button.focus();
   });
   return { button, name, refresh: () => { button.textContent = value(); button.disabled = !context.editor.isEditable; name.refresh(); } };
+}
+
+function deleteBlock(context: ViewContext): void {
+  const position = context.getPos();
+  const { editor } = context;
+  if (!editor.isEditable || typeof position !== 'number' || !editor.state.doc.nodeAt(position)?.eq(context.node)) {
+    context.options.reportError('Wait for the current operation to finish before editing this block.'); return;
+  }
+  const tr = closeHistory(editor.state.tr).delete(position, position + context.node.nodeSize);
+  tr.setSelection(Selection.near(tr.doc.resolve(Math.min(position, tr.doc.content.size))));
+  editor.view.dispatch(tr.scrollIntoView());
+  editor.view.focus();
 }
 
 function paragraphAfter(context: ViewContext): HTMLButtonElement {
@@ -322,7 +337,14 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         if (heading) heading.input.placeholder = node.attrs.variant === 'checklist' ? 'Checklist' : 'Next step';
         const show = tool('Show and edit', () => {
           const pane = dom.closest<HTMLElement>('.document-pane');
-          if (pane) choosePublishingVariant(pane, String(context.node.attrs.variants[0]));
+          const position = getPos();
+          if (!pane || typeof position !== 'number') return;
+          try {
+            const reachable = reachableVariantChoices(editor.state.doc, position, context.node.attrs.variants);
+            choosePublishingVariant(pane, reachable[0]);
+          } catch (error) {
+            options.reportError(error instanceof Error ? error.message : String(error));
+          }
         });
         const assignments = document.createElement('details');
         const summary = document.createElement('summary');
@@ -330,17 +352,10 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
         const choices = document.createElement('div');
         assignments.append(summary, choices);
         header.append(heading?.wrapper ?? (kind === 'zone' ? identity : title),
-          ...(kind === 'zone' ? [status, assignments, show] : [paragraphAfter(context)]));
+          ...(kind === 'zone' ? [status, assignments, show, iconTool('Remove variant content', '\u00d7', () => deleteBlock(context))] : [paragraphAfter(context)]));
         const contentDOM = document.createElement('div');
         contentDOM.className = 'publishing-editable-body';
         dom.append(header, contentDOM);
-        if (kind === 'zone') {
-          const footer = document.createElement('div');
-          footer.className = 'publishing-edit-tools';
-          footer.contentEditable = 'false';
-          footer.append(paragraphAfter(context));
-          dom.append(footer);
-        }
         let signature = '';
         const refresh = () => {
           const current = context.node;
@@ -361,6 +376,19 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
                 check.addEventListener('change', () => {
                   const variants = check.checked ? [...context.node.attrs.variants, option.id] : context.node.attrs.variants.filter((id: string) => id !== option.id);
                   if (!variants.length) { check.checked = true; options.reportError('Variant content must apply to at least one option.'); return; }
+                  const position = getPos();
+                  if (typeof position !== 'number') {
+                    check.checked = !check.checked;
+                    options.reportError('This variant content changed. Retry in the intended document.');
+                    return;
+                  }
+                  try {
+                    validateVariantAssignment(editor.state.doc, position, variants);
+                  } catch (error) {
+                    check.checked = !check.checked;
+                    options.reportError(error instanceof Error ? error.message : String(error));
+                    return;
+                  }
                   set({ variants });
                 });
                 choice.append(check, document.createTextNode(option.label)); choices.append(choice);
@@ -446,7 +474,6 @@ const TabsNode = Node.create<Options>({
       const header = document.createElement('div'); header.contentEditable = 'false';
       header.className = 'publishing-tabs-header';
       const tabs = document.createElement('div'); tabs.className = 'publishing-tablist'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Content tabs');
-      const tools = document.createElement('div'); tools.className = 'publishing-edit-tools';
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-panels';
       const groupId = `lekh-editable-tabs-${++nextTabGroup}`;
       let selected = 0;
@@ -481,8 +508,9 @@ const TabsNode = Node.create<Options>({
         if (!editor.isEditable || typeof position !== 'number') { options.reportError('Wait for the current operation to finish.'); return; }
         if (context.node.childCount >= 32) { options.reportError('A tab group can contain at most 32 examples.'); return; }
         let next = context.node.childCount + 1;
-        const ids = new Set<string>(); context.node.forEach(child => ids.add(String(child.attrs.id)));
-        while (ids.has(`example-${next}`)) next++;
+        const ids = new Set<string>(); const labels = new Set<string>();
+        context.node.forEach(child => { ids.add(String(child.attrs.id)); labels.add(String(child.attrs.label).trim().toLowerCase()); });
+        while (ids.has(`example-${next}`) || labels.has(`example ${next}`)) next++;
         selected = context.node.childCount;
         const panel = editor.schema.nodes.lekhTab.create({ id: `example-${next}`, label: `Example ${next}` }, editor.schema.nodes.paragraph.create());
         const insertAt = position + context.node.nodeSize - 1;
@@ -493,18 +521,16 @@ const TabsNode = Node.create<Options>({
       const remove = (index: number) => {
         const position = panelPosition(index);
         if (position === undefined) return;
-        if (context.node.childCount === 1) { options.reportError('Keep at least one tab, or delete the entire group.'); return; }
+        if (context.node.childCount === 1) { deleteBlock(context); return; }
         const panel = editor.state.doc.nodeAt(position)!;
         if (index < selected) selected--;
         else if (index === selected) selected = Math.max(0, index - 1);
         editor.view.dispatch(closeHistory(editor.state.tr).delete(position, position + panel.nodeSize));
         queueMicrotask(() => tabs.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
       };
-      tools.append(paragraphAfter(context));
-      header.append(cardHeading('tabs', 'Tabbed examples'), tabs);
-      const hint = authoringHint('Double-click a name or press F2 to rename. + adds an example.');
-      tools.prepend(hint);
-      dom.append(header, contentDOM, tools);
+      const hint = authoringHint('Double-click a tab name or press F2 to rename it.');
+      header.append(cardHeading('tabs', 'Tabbed examples'), hint, tabs);
+      dom.append(header, contentDOM);
       let signature = '';
       let labels: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
@@ -541,7 +567,6 @@ const TabsNode = Node.create<Options>({
         labels.forEach(label => label.refresh());
         tabs.querySelectorAll<HTMLButtonElement>('[data-remove-tab]').forEach(button => { button.disabled = !editor.isEditable; });
         add.disabled = !editor.isEditable;
-        tools.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = !editor.isEditable; });
         queueMicrotask(() => { if (dom.isConnected) select(selected); });
       };
       refresh();
@@ -555,7 +580,7 @@ const SelectorNode = Node.create<Options>({
   name: 'lekhSelector', group: 'block', atom: true, addOptions: () => defaults,
   addAttributes: () => ({ ...provenance(),
     title: { default: '', rendered: false, parseHTML: element => element.getAttribute('data-selector-title') ?? '' },
-    options: { default: [{ id: 'first', label: 'First option' }, { id: 'second', label: 'Second option' }], rendered: false,
+    options: { default: [{ id: 'first', label: 'Option 1' }, { id: 'second', label: 'Option 2' }], rendered: false,
       parseHTML: element => JSON.parse(element.getAttribute('data-selector-options') ?? '[]'),
       validate: value => { const choices = variantOptions(value); if (!choices.length || choices.length > 32 || new Set(choices.map(item => item.id)).size !== choices.length) throw new Error('Use 1–32 unique variant choices.'); } },
   }),
@@ -570,9 +595,9 @@ const SelectorNode = Node.create<Options>({
     return ({ editor, node, getPos }) => {
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-selector publishing-editable'; dom.dataset.lekhSelector = ''; dom.dataset.publishingSelector = 'editable'; dom.contentEditable = 'false'; dom.setAttribute('role', 'group');
-      const title = field(context, 'Selector prompt', () => String(context.node.attrs.title), value => set({ title: value }));
+      const title = field(context, 'Selection title', () => String(context.node.attrs.title), value => set({ title: value }));
       title.wrapper.classList.add('publishing-prompt-field');
-      title.input.placeholder = 'Write a prompt, e.g. Choose your deployment approach';
+      title.input.placeholder = 'Describe the title for the selection';
       title.input.title = 'Title shown above the variant options. Click to edit.';
       const controls = document.createElement('div'); controls.className = 'publishing-variant-options';
       controls.setAttribute('role', 'group');
@@ -583,26 +608,16 @@ const SelectorNode = Node.create<Options>({
       const add = iconTool('Add option', '+', () => {
         const existing = documentVariantOptions(editor);
         if (context.node.attrs.options.length >= 32) { options.reportError('A selector can contain at most 32 options.'); return; }
-        let next = 1; while (existing.some(option => option.id === `option-${next}`)) next++;
+        let next = context.node.attrs.options.length + 1;
+        while (existing.some(option => option.id === `option-${next}` || option.label.trim().toLowerCase() === `option ${next}`)) next++;
         set({ options: [...context.node.attrs.options, { id: `option-${next}`, label: `Option ${next}` }] });
       });
-      const content = tool('Add variant content\u2026', () => {
-        const position = context.getPos();
-        if (!editor.isEditable || typeof position !== 'number') {
-          options.reportError('Wait for the current operation to finish before adding variant content.'); return;
-        }
-        options.addVariantContent(position);
-      });
-      content.className = 'publishing-add-variant-content';
-      content.insertAdjacentHTML('afterbegin', publishingIcon('nextstepaction'));
-      content.title = 'Choose which options apply, then write their content directly below this selector.';
-      const actions = document.createElement('div');
-      actions.className = 'publishing-selector-actions';
-      actions.append(content, paragraphAfter(context));
+      const guidance = authoringHint('');
+      guidance.classList.add('publishing-variant-guidance');
+      guidance.append('To add variant content for an option, choose ', Object.assign(document.createElement('strong'), { textContent: 'Add variant content' }), ' from ', Object.assign(document.createElement('strong'), { textContent: 'Interactive' }), '.');
       dom.append(cardHeading('selector', 'Variant selector'), title.wrapper,
-        authoringHint('Choose an option to show its content throughout the document.'),
-        controls, selection, actions,
-        authoringHint('Double-click a choice or press F2 to rename. Add content here, or use Interactive to place it anywhere.'));
+        authoringHint('Double-click an option name or press F2 to rename it.'),
+        controls, selection, guidance);
       let idsSignature = ''; let fields: ReturnType<typeof choiceLabel>[] = [];
       const refresh = () => {
         dom.setAttribute('aria-label', String(context.node.attrs.title) || 'Variant selector');
@@ -617,10 +632,7 @@ const SelectorNode = Node.create<Options>({
             const name = choiceLabel(context, `Option name (${choice.id})`, () => variantOptions(context.node.attrs.options).find(option => option.id === choice.id)!.label,
               value => set({ options: variantOptions(context.node.attrs.options).map(option => option.id === choice.id ? { ...option, label: value } : option) }), activate);
             const remove = iconTool('Remove option', '\u00d7', () => {
-              let used = false;
-              editor.state.doc.descendants(node => { if (node.type.name === 'lekhZone' && node.attrs.variants.includes(choice.id)) used = true; });
-              if (used) { options.reportError('Reassign or remove the content for this option before removing it.'); return; }
-              if (context.node.attrs.options.length === 1) { options.reportError('Keep at least one selector option.'); return; }
+              if (context.node.attrs.options.length === 1) { deleteBlock(context); return; }
               set({ options: variantOptions(context.node.attrs.options).filter(option => option.id !== choice.id) });
               controls.querySelector<HTMLButtonElement>('[data-publishing-choice]')?.focus();
             });
@@ -678,24 +690,71 @@ const IncludeNode = Node.create<Options>({
   parseHTML: () => [{ tag: '[data-lekh-include]' }],
   renderHTML: ({ node }) => ['section', { 'data-lekh-include': '', 'data-include-label': node.attrs.label, 'data-include-source': node.attrs.source }],
   parseMarkdown: (token, helpers) => remember(helpers.createNode('lekhInclude', { label: token.label, source: token.source }), token.raw ?? ''),
-  renderMarkdown(node) { return original(node, this.options.schema?.() ?? null) ?? includeMarkdown(node.attrs ?? {}); },
+  renderMarkdown(node) { return original(node, this.options.schema?.() ?? null) ?? includeMarkdown(node.attrs?.label, node.attrs?.source); },
   addNodeView() {
     const options = this.options;
     return ({ editor, node, getPos }) => {
       const { context, set } = viewContext(editor, getPos, node, options);
       const dom = document.createElement('section'); dom.className = 'publishing-include publishing-editable'; dom.dataset.lekhInclude = ''; dom.contentEditable = 'false';
-        const title = document.createElement('strong'); title.textContent = 'Include directive (not loaded)';
-        const name = field(context, 'Include name', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
-        const source = field(context, 'Include path', () => String(context.node.attrs.source), value => set({ source: value }), false, true);
-        const hint = document.createElement('p'); hint.className = 'publishing-field-hint'; hint.textContent = 'The directive is preserved in Markdown. Referenced files are not opened or included.';
-        dom.append(title, name.wrapper, source.wrapper, hint, paragraphAfter(context));
-        return { dom, ...ignoreControls(dom),
-          update: updated => {
-            if (updated.type !== node.type) return false;
-            context.node = updated; name.refresh(); source.refresh();
-            return true;
-          },
-        };
+      const header = document.createElement('div'); header.className = 'publishing-edit-header';
+      const title = document.createElement('strong');
+      const details = document.createElement('details');
+      const summary = document.createElement('summary'); summary.textContent = 'Include details';
+      const fields = document.createElement('div');
+      const name = field(context, 'Include title', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
+      const source = field(context, 'Include path', () => String(context.node.attrs.source), value => set({ source: value }), false, true);
+      fields.append(name.wrapper, source.wrapper); details.append(summary, fields); header.append(title, details);
+      const preview = document.createElement('article');
+      preview.className = 'publishing-include-preview'; preview.setAttribute('aria-label', 'Included content');
+      preview.textContent = 'Loading included content...';
+      const footer = document.createElement('div'); footer.className = 'publishing-edit-tools';
+      const refresh = tool('Refresh content', () => options.refreshIncludeContent());
+      const allow = tool('Allow include folder...', () => options.allowIncludeFolder());
+      footer.append(refresh, allow, paragraphAfter(context));
+      dom.append(header, preview, footer);
+      let revision = 0;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let destroyed = false;
+      let lastSource = String(node.attrs.source);
+      const load = () => {
+        const request = ++revision;
+        const raw = includeMarkdown(context.node.attrs.label, context.node.attrs.source);
+        void window.lekh.previewIncludes(options.documentId, raw).then(async result => {
+          if (destroyed || request !== revision) return;
+          if (!result.ok) throw new Error(result.error);
+          preview.innerHTML = result.value;
+          initializePublishing(preview, options.reportError);
+          await renderMermaidBlocks(preview);
+        }).catch(error => {
+          if (destroyed || request !== revision) return;
+          const warning = document.createElement('p');
+          warning.className = 'publishing-error';
+          warning.textContent = `Could not load include: ${error instanceof Error ? error.message : String(error)}`;
+          preview.replaceChildren(warning);
+        });
+      };
+      const onRefresh = (event: Event) => {
+        if ((event as CustomEvent<string>).detail === options.documentId) load();
+      };
+      window.addEventListener('lekh-publishing-refresh', onRefresh);
+      title.textContent = `Include: ${String(node.attrs.label)}`;
+      load();
+      return { dom, ...ignoreControls(dom),
+        update: updated => {
+          if (updated.type !== node.type) return false;
+          context.node = updated; name.refresh(); source.refresh();
+          title.textContent = `Include: ${String(updated.attrs.label)}`;
+          const nextSource = String(updated.attrs.source);
+          if (nextSource !== lastSource) {
+            lastSource = nextSource;
+            clearTimeout(timer);
+            revision++;
+            timer = setTimeout(load, 200);
+          }
+          return true;
+        },
+        destroy: () => { destroyed = true; clearTimeout(timer); window.removeEventListener('lekh-publishing-refresh', onRefresh); },
+      };
     };
   },
 });
@@ -769,13 +828,13 @@ export const EditablePublishing = Extension.create<Options>({
             const block = editablePublishingBlockAtStart(source);
             if (!block || block.kind === 'unsupported' || block.kind === 'callout' && !['checklist', 'nextstepaction'].includes(block.variant ?? '')) return undefined;
             if (depth >= 12) return undefined;
-            const include = block.kind === 'include' ? /^ {0,3}\[!INCLUDE[ \t]+\[((?:\\.|[^\]\\])+)\]\(([^\r\n]*)\)\][ \t]*(?:\r?\n|$)/i.exec(block.raw) : null;
+            const include = block.kind === 'include' ? parseIncludeDirective(block.raw) : null;
             if (block.kind === 'include' && !include) return undefined;
             const type = block.kind === 'include' ? 'lekhInclude' : block.kind === 'callout' ? 'lekhDivision' : names[block.kind];
             if (!type) return undefined;
             depth++;
             try {
-              return { ...block, type, ...(include ? { label: publishingLabel(include[1]), source: publishingLabel(include[2].replace(/^<(.*)>$/, '$1')).replace(/\\ /g, ' ') } : {}),
+              return { ...block, type, ...(include ?? {}),
                 ...(block.body !== undefined && block.kind !== 'metadata' ? { tokens: lexer.blockTokens(block.body) } : {}),
                 ...(block.panels ? { panels: block.panels.map(panel => ({ ...panel, type: 'lekhTab', tokens: lexer.blockTokens(panel.body) })) } : {}) };
             } finally { depth--; }

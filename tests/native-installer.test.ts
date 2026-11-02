@@ -233,9 +233,10 @@ test('native automatic startup, running-app retry, same-version rejection, truth
         $simulated.Dispose()
       }
     `;
+    // The preview sequence contains several separately bounded UI Automation waits.
     const previewOutput = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand',
       Buffer.from(previewCommand, 'utf16le').toString('base64')], {
-      encoding: 'utf8', timeout: 90_000,
+      encoding: 'utf8', timeout: 240_000,
       input: JSON.stringify({
         script: join(root, 'scripts', 'Test-Setup.ps1'),
         upgradeScript: join(root, 'scripts', 'Test-Upgrade.ps1'),
@@ -247,7 +248,7 @@ test('native automatic startup, running-app retry, same-version rejection, truth
     }
     assert.match(previewOutput, /PASS: four-part MSI version appears in the real accessible upgrade UI without an install action/);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
   }
 });
 

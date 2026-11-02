@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getSchema } from '@tiptap/core';
+import { Editor, getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
@@ -9,11 +9,13 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Marked } from 'marked';
 import type { Schema, Node as ModelNode } from '@tiptap/pm/model';
-import { EditorState } from '@tiptap/pm/state';
+import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state';
+import { closeHistory, history, undo } from '@tiptap/pm/history';
 import { AlertNode } from '../src/alert-node.js';
 import { PublishingNode } from '../src/publishing-node.js';
 import { EditablePublishing } from '../src/editable-publishing.js';
-import { editablePublishingBlockAtStart } from '../lib/publishing.js';
+import { prepareVariantInsertion, reachableVariantChoices, selectInsertedVariant, validateSourceVariantInsertion, validateVariantAssignment, variantInsertionPosition } from '../src/publishing-insert.js';
+import { editablePublishingBlockAtStart, includeMarkdown } from '../lib/publishing.js';
 import { publishingTemplateMarkdown } from '../lib/publishing-templates.js';
 import { documentPreviewHTML } from '../lib/markdown.js';
 import { toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
@@ -28,7 +30,7 @@ function fixture() {
   schema = getSchema(extensions);
   const manager = new MarkdownManager({ extensions, marked: new Marked() as unknown as typeof import('marked').marked });
   const parse = (source: string) => schema.nodeFromJSON(manager.parse(source));
-  return { schema, manager, parse };
+  return { schema, manager, parse, extensions };
 }
 
 function types(node: ModelNode): string[] {
@@ -78,6 +80,21 @@ test('source provenance retains exact untouched directive and heading syntax', (
   ]) assert.equal(manager.serialize(parse(raw).toJSON()).trimEnd(), raw.trimEnd(), raw);
 });
 
+test('include titles and file paths survive parsing and visual edits', () => {
+  const { parse, manager } = fixture();
+  const raw = includeMarkdown('Setup [Linux] & Windows', '../includes/setup (guide).md');
+  const doc = parse(raw);
+  assert.equal(doc.firstChild?.type.name, 'lekhInclude');
+  assert.equal(doc.firstChild?.attrs.label, 'Setup [Linux] & Windows');
+  assert.equal(doc.firstChild?.attrs.source, '../includes/setup%20%28guide%29.md');
+  assert.equal(manager.serialize(doc.toJSON()).trimEnd(), raw);
+  const edited = EditorState.create({ schema: doc.type.schema, doc }).tr.setNodeMarkup(0, undefined, {
+    ...doc.firstChild!.attrs, label: 'Updated title', source: '../includes/new.md',
+  }).doc;
+  assert.equal(manager.serialize(edited.toJSON()).trimEnd(), '[!INCLUDE [Updated title](../includes/new.md)]');
+  assert.equal(parse(manager.serialize(edited.toJSON())).firstChild?.attrs.source, '../includes/new.md');
+});
+
 test('distributed variant bodies remain editable and independent of selector position', () => {
   const { parse, manager } = fixture();
   const raw = `${selector}\n\nIntroduction.\n\n${zone}\n\nUnconditional section.\n\n:::zone pivot="scale-set"\nScale set text.\n:::zone-end\n\nLater.\n\n${zone}`;
@@ -90,6 +107,156 @@ test('distributed variant bodies remain editable and independent of selector pos
   assert.ok(saved.includes('Unconditional section.'));
   assert.ok(saved.includes(selector));
   parse(saved).check();
+});
+
+test('new variant content receives the caret at boundaries, in selections, and inside existing variants', () => {
+  const { manager, extensions } = fixture();
+  const document = `Before selector.\n\n${selector}\n\nAfter selector.\n\n:::zone pivot="zones"\nExisting variant.\n:::zone-end`;
+  const cases: Array<[string, number, number]> = [
+    ['Before selector.', 0, 0],
+    ['Before selector.', 7, 7],
+    ['Before selector.', 16, 16],
+    ['Before selector.', 0, 6],
+    ['After selector.', 0, 0],
+    ['After selector.', 15, 15],
+    ['Existing variant.', 0, 0],
+    ['Existing variant.', 8, 8],
+    ['Existing variant.', 17, 17],
+    ['Existing variant.', 0, 8],
+  ];
+  for (const [text, start, end] of cases) {
+    const editor = new Editor({ element: null, extensions, content: manager.parse(document) });
+    const { doc } = editor.state;
+    let textPosition: number | undefined;
+    doc.descendants((node, offset) => {
+      if (node.isText && node.text === text) textPosition = offset;
+    });
+    assert.notEqual(textPosition, undefined, text);
+    const from = textPosition! + start, to = textPosition! + end;
+    const state = EditorState.create({ schema: editor.schema, doc, selection: TextSelection.create(doc, from, to), plugins: [history()] });
+    editor.view.updateState(state);
+    const selected = text.slice(start, end);
+    const raw = `:::zone pivot="zones"\n${selected}\n:::zone-end`;
+    const insertion = prepareVariantInsertion(editor.schema, manager.parse(raw).content ?? []);
+    assert.equal(editor.chain().command(({ tr }) => { closeHistory(tr); return true; })
+      .insertContent(insertion.content).command(({ tr }) => { selectInsertedVariant(tr, insertion.zone); return true; }).run(), true);
+    const result = editor.state;
+    const caret = result.selection.$from;
+    assert.ok(Array.from({ length: caret.depth }, (_, index) => caret.node(index + 1)).includes(insertion.zone),
+      `The caret is inside the newly inserted zone for ${text} at ${start}-${end}`);
+    assert.equal(result.doc.textContent, doc.textContent, 'Insertion preserves surrounding and selected text');
+    let inserted = 0;
+    result.doc.descendants(node => { if (node === insertion.zone) inserted++; });
+    assert.equal(inserted, 1, 'Only the new zone is targeted');
+    assert.equal(undo(result, tr => editor.view.dispatch(tr)), true);
+    assert.ok(editor.state.doc.eq(doc), `One undo restores ${text} at ${start}-${end}`);
+    editor.destroy();
+  }
+});
+
+test('variant insertion replaces an empty paragraph and is independently undoable', () => {
+  const { manager, extensions } = fixture();
+  const content = [...(manager.parse(selector).content ?? []), { type: 'paragraph' }];
+  const editor = new Editor({ element: null, extensions, content: { type: 'doc', content } });
+  const doc = editor.state.doc;
+  const position = doc.firstChild!.nodeSize + 1;
+  editor.view.updateState(EditorState.create({
+    schema: editor.schema, doc, selection: TextSelection.create(doc, position), plugins: [history()],
+  }));
+  const insertion = prepareVariantInsertion(editor.schema, manager.parse(':::zone pivot="zones"\n\n:::zone-end').content ?? []);
+  assert.equal(editor.chain().command(({ tr }) => { closeHistory(tr); return true; })
+    .insertContent(insertion.content).command(({ tr }) => { selectInsertedVariant(tr, insertion.zone); return true; }).run(), true);
+  assert.equal(editor.state.doc.childCount, 3, 'The empty paragraph is replaced by the variant and a following paragraph');
+  assert.equal(editor.state.selection.$from.node(1), insertion.zone);
+  assert.equal(undo(editor.state, tr => editor.view.dispatch(tr)), true);
+  assert.ok(editor.state.doc.eq(doc));
+  editor.destroy();
+});
+
+test('variant insertion follows a selected block instead of wrapping or replacing it', () => {
+  const { manager, extensions, parse } = fixture();
+  for (const source of [selector, '[!INCLUDE [Shared](./shared.md)]', '---\ntitle: Document\n---',
+    ':::image type="content" source="image.png" alt-text="Diagram":::']) {
+    const editor = new Editor({ element: null, extensions, content: manager.parse(source) });
+    const doc = editor.state.doc;
+    editor.view.updateState(EditorState.create({
+      schema: editor.schema, doc, selection: NodeSelection.create(doc, 0), plugins: [history()],
+    }));
+    const position = variantInsertionPosition(editor.state.selection);
+    assert.equal(position, doc.firstChild!.nodeSize);
+    const insertion = prepareVariantInsertion(editor.schema, manager.parse(':::zone pivot="zones"\n\n:::zone-end').content ?? []);
+    assert.equal(editor.chain().command(({ tr }) => { closeHistory(tr); return true; })
+      .insertContentAt(position!, insertion.content).command(({ tr }) => { selectInsertedVariant(tr, insertion.zone); return true; }).run(), true);
+    assert.ok(editor.state.doc.child(0).eq(doc.child(0)), 'The selected block is unchanged');
+    assert.equal(editor.state.doc.child(1), insertion.zone);
+    assert.equal(editor.state.doc.child(2).type.name, 'paragraph');
+    assert.equal(editor.state.selection.$from.node(1), insertion.zone, 'The caret enters the new variant');
+    assert.equal(undo(editor.state, tr => editor.view.dispatch(tr)), true);
+    assert.ok(editor.state.doc.eq(doc), 'One undo restores the original block');
+    editor.destroy();
+  }
+  const text = parse('Selected text.');
+  assert.equal(variantInsertionPosition(TextSelection.create(text, 1, 9)), undefined, 'Text selections remain eligible for wrapping');
+});
+
+test('variant insertion reports malformed or missing inserted content', () => {
+  const { parse, schema, manager } = fixture();
+  assert.throws(() => prepareVariantInsertion(schema, [{ type: 'paragraph' }]), /could not be prepared/);
+  const insertion = prepareVariantInsertion(schema, manager.parse(':::zone pivot="zones"\n\n:::zone-end').content ?? []);
+  const tr = EditorState.create({ schema, doc: parse('Existing content.') }).tr;
+  assert.throws(() => selectInsertedVariant(tr, insertion.zone), /could not be located/);
+});
+
+test('nested variant insertion keeps an enclosing choice visible and rejects unreachable content', () => {
+  const { manager, extensions } = fixture();
+  const source = `${selector}\n\n:::zone pivot="zones,scale-set"\nOuter.\n\n:::zone pivot="zones"\nInner.\n:::zone-end\n:::zone-end`;
+  const editor = new Editor({ element: null, extensions, content: manager.parse(source) });
+  const doc = editor.state.doc;
+  let position = 0;
+  doc.descendants((node, offset) => { if (node.isText && node.text === 'Inner.') position = offset + node.nodeSize; });
+  editor.view.updateState(EditorState.create({ schema: editor.schema, doc, selection: TextSelection.create(doc, position) }));
+  const insertion = prepareVariantInsertion(editor.schema, manager.parse(':::zone pivot="scale-set,zones"\n\n:::zone-end').content ?? []);
+  let reachable: string[] = [];
+  assert.equal(editor.chain().insertContent(insertion.content).command(({ tr }) => {
+    reachable = selectInsertedVariant(tr, insertion.zone);
+    return true;
+  }).run(), true);
+  assert.deepEqual(reachable, ['zones'], 'The selected option must reveal every enclosing variant');
+  assert.equal(editor.state.selection.$from.node(editor.state.selection.$from.depth - 1), insertion.zone);
+
+  editor.view.updateState(EditorState.create({ schema: editor.schema, doc, selection: TextSelection.create(doc, position) }));
+  const disjoint = prepareVariantInsertion(editor.schema, manager.parse(':::zone pivot="scale-set"\n\n:::zone-end').content ?? []);
+  assert.throws(() => editor.chain().insertContent(disjoint.content).command(({ tr }) => {
+    selectInsertedVariant(tr, disjoint.zone);
+    return true;
+  }).run(), /share.*option/i);
+  assert.ok(editor.state.doc.eq(doc), 'An unreachable insertion does not modify the document');
+  editor.destroy();
+});
+
+test('changing variant assignments preserves reachability of nested alternatives', () => {
+  const { parse } = fixture();
+  const doc = parse(':::zone pivot="zones,scale-set"\nOuter.\n\n:::zone pivot="zones"\nInner.\n:::zone-end\n:::zone-end');
+  let inner = -1;
+  doc.descendants((node, offset) => { if (node.type.name === 'lekhZone' && offset > 0) inner = offset; });
+  assert.ok(inner > 0);
+  assert.deepEqual(validateVariantAssignment(doc, 0, ['zones']), ['zones']);
+  assert.throws(() => validateVariantAssignment(doc, 0, ['scale-set']), /share.*option/i);
+  assert.throws(() => validateVariantAssignment(doc, inner, ['unrelated']), /share.*option/i);
+  assert.deepEqual(reachableVariantChoices(doc, inner, ['scale-set', 'zones']), ['scale-set', 'zones']);
+  assert.throws(() => validateVariantAssignment(doc, inner, []), /at least one option/i);
+});
+
+test('Markdown variant insertion rejects unreachable nesting without changing source', () => {
+  const outer = `${selector}\n\n:::zone pivot="zones"\nInsert here.\n:::zone-end`;
+  const at = outer.indexOf('Insert here.') + 'Insert here.'.length;
+  const candidate = (raw: string) => `${outer.slice(0, at)}\n\n${raw}\n\n${outer.slice(at)}`;
+  assert.doesNotThrow(() => validateSourceVariantInsertion(candidate(':::zone pivot="scale-set,zones"\n\n:::zone-end'), at + 2));
+  assert.throws(() => validateSourceVariantInsertion(candidate(':::zone pivot="scale-set"\n\n:::zone-end'), at + 2), /share.*option/i);
+  const wrapper = candidate(':::zone pivot="zones"\n:::zone pivot="scale-set"\nHidden.\n:::zone-end\n:::zone-end');
+  assert.throws(() => validateSourceVariantInsertion(wrapper, at + 2), /share.*option/i);
+  const fenced = '```md\n\n:::zone pivot="zones"\n\n:::zone-end\n\n```';
+  assert.throws(() => validateSourceVariantInsertion(fenced, fenced.indexOf(':::zone')), /could not be inserted/i);
 });
 
 test('renaming selector labels preserves stable IDs and all distant content', () => {

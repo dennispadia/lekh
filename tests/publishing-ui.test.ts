@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { publishingTemplateMarkdown, publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { parser, documentPreviewHTML } from '../lib/markdown.js';
-import { publishingBlockAtStart } from '../lib/publishing.js';
+import { includeMarkdown, publishingBlockAtStart } from '../lib/publishing.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
 
 test('toolbar exposes every alert type and reusable authoring building block', () => {
@@ -11,7 +11,7 @@ test('toolbar exposes every alert type and reusable authoring building block', (
     assert.ok(publishingTemplates.some(item => item.id === `callout-${kind}`));
     assert.match(publishingTemplateMarkdown(`callout-${kind}`)!, new RegExp(`> \\[!${kind.toUpperCase()}\\]`));
   }
-  for (const kind of ['tabs', 'selector', 'image', 'metadata']) {
+  for (const kind of ['tabs', 'selector', 'image', 'metadata', 'include']) {
     assert.ok(publishingTemplates.some(item => item.id === `publishing-${kind}`));
   }
   assert.ok(!publishingTemplates.some(item => String(item.id) === 'publishing-steps'));
@@ -23,9 +23,23 @@ test('toolbar exposes every alert type and reusable authoring building block', (
   }
 });
 
-test('local includes are not offered as an insertion tool', () => {
-  assert.ok(!publishingTemplates.some(item => String(item.id) === 'publishing-include'));
-  assert.equal(publishingTemplateMarkdown('publishing-include'), undefined);
+test('new interactive blocks use the agreed example and option names', () => {
+  const tabs = publishingTemplateMarkdown('publishing-tabs')!;
+  const selector = publishingTemplateMarkdown('publishing-selector')!;
+  assert.match(tabs, /\[Example 1\].*\[Example 2\]/s);
+  assert.match(selector, /\[Option 1\].*\[Option 2\]/s);
+});
+
+test('include insertion formats the title and file path', async () => {
+  assert.equal(publishingTemplates.find(item => item.id === 'publishing-include')?.label, 'Include…');
+  assert.equal(publishingTemplateMarkdown('publishing-include'), '');
+  assert.equal(includeMarkdown('Prerequisites', '../includes/prerequisites.md'), '[!INCLUDE [Prerequisites](../includes/prerequisites.md)]');
+  assert.equal(includeMarkdown('A [B] & C', '../includes/A (B & C).md'),
+    '[!INCLUDE [A \\[B\\] &amp; C](../includes/A%20%28B%20%26%20C%29.md)]');
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  assert.match(renderer, /templateItem\('publishing-include'\)/);
+  assert.match(electron, /'publishing-metadata', 'publishing-image', 'publishing-include'/);
 });
 
 test('variant creation is a single prerequisite-aware tool, not two independent block options', () => {
@@ -34,6 +48,15 @@ test('variant creation is a single prerequisite-aware tool, not two independent 
   assert.equal(variantInsertionTemplate(true).label, 'Add variant content\u2026');
   assert.equal(publishingTemplates.filter(item => item.category === 'content' && item.id === 'publishing-selector').length, 1);
   assert.ok(!publishingTemplates.some(item => item.category === 'content' && String(item.id) === 'publishing-zone'));
+});
+
+test('the selector points to the Interactive menu instead of inserting content beside itself', async () => {
+  const source = await readFile(new URL('../src/editable-publishing.ts', import.meta.url), 'utf8');
+  const selector = source.slice(source.indexOf('const SelectorNode ='), source.indexOf('const MetadataNode ='));
+  assert.match(selector, /publishing-variant-guidance/);
+  assert.match(selector, /Add variant content.*Interactive/);
+  assert.doesNotMatch(selector, /publishing-add-variant-content|addVariantContent/);
+  assert.match(publishingTemplates.find(item => item.id === 'publishing-selector')!.description, /Interactive menu/);
 });
 
 test('metadata editing exposes only the complete YAML field without a heading', async () => {
@@ -117,17 +140,29 @@ test('formatting selected text retains Markdown, code and literal replacement ch
   assert.equal(publishingTemplateMarkdown('unknown'), undefined);
 });
 
-test('local include directives remain inert and have no authorization or file-opening actions', async () => {
+test('include loading has a separate, revocable folder grant and visible refresh controls', async () => {
   const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
   const bridge = await readFile(new URL('../src/bridge.ts', import.meta.url), 'utf8');
   const renderer = await readFile(new URL('../src/editable-publishing.ts', import.meta.url), 'utf8');
-  assert.doesNotMatch(electron, /publishing:(?:allow|revoke|open)-includes|readAuthorizedInclude/);
-  assert.doesNotMatch(bridge, /allowPublishingIncludes|revokePublishingIncludes|openPublishingInclude/);
-  assert.doesNotMatch(renderer, /Allow project folder|Open shared file in Visual/);
-  assert.match(renderer, /Include directive \(not loaded\)/);
-  assert.match(renderer, /Referenced files are not opened or included/);
+  assert.match(electron, /includeRoots\.set\(String\(id\), \{ root \}\)/);
+  assert.match(electron, /includeRoots\.delete\(String\(id\)\)/);
+  assert.match(bridge, /allowIncludeFolder/);
+  assert.match(bridge, /revokeIncludeFolder/);
+  assert.match(renderer, /Refresh content/);
+  assert.match(renderer, /Allow include folder/);
   assert.match(bridge, /allowImageFolder/);
   assert.match(bridge, /revokeImageFolder/);
   assert.match(electron, /imageRoots\.set\(String\(id\), \{ root \}\)/);
-  assert.match(electron, /const imageRoot = grant\?\.root \?\? null/);
+  assert.match(electron, /resolveIncludes\(prepared, currentPath, includeGrant\?\.root/);
+});
+
+test('image-folder permission commands are absent from menus while contextual access remains scoped', async () => {
+  const renderer = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  const electron = await readFile(new URL('../electron/main.ts', import.meta.url), 'utf8');
+  const formatMenu = renderer.slice(renderer.indexOf('<div id="format-menu"'), renderer.indexOf('<div id="notification"'));
+  assert.doesNotMatch(formatMenu, /allow-image-folder|revoke-image-folder/);
+  assert.doesNotMatch(electron, /label: '(?:Allow local image folder|Stop local image folder access)/);
+  assert.match(renderer, /Choose project folder\.\.\./);
+  assert.match(electron, /imageRoots\.set\(String\(id\), \{ root \}\)/);
+  assert.match(electron, /imageRoots\.delete\(String\(id\)\)/);
 });

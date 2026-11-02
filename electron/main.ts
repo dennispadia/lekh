@@ -4,9 +4,11 @@ import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type Token from 'markdown-it/lib/token.mjs';
 import { atomicWrite, readMarkdown } from '../lib/files.js';
-import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES } from '../lib/images.js';
-import { isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
+import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES, type AuthorizedImageRoots } from '../lib/images.js';
+import { documentPreviewTokensHTML, headingAnchor, isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
+import { resolveIncludes } from '../lib/includes.js';
 import { toDocx, toOfflineHTML, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
 import { diagramLimits, isMermaidLanguage, prepareMermaid } from '../lib/diagrams.js';
 import { themes } from '../lib/themes.js';
@@ -15,7 +17,7 @@ import { fileArguments } from '../lib/launch.js';
 import { productName, productTitle, userDataDirectory } from '../lib/branding.js';
 import { prepareVariantConfiguration } from '../lib/variant-config.js';
 import { publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
-import { interactiveExportMessage } from '../lib/publishing.js';
+import { hasInteractivePublishing, interactiveExportMessage } from '../lib/publishing.js';
 import type { ContextMenuItem, EditorContext, OpenedFile, Result } from '../src/bridge.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'lekh-image', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -33,6 +35,7 @@ interface NativeDocument { path: string | null; diskContent: string | null }
 const documents = new Map<string, NativeDocument>();
 // Grant identity changes even when the same folder is authorized again.
 const imageRoots = new Map<string, { root: string }>();
+const includeRoots = new Map<string, { root: string }>();
 let dirty = false;
 let allowClose = false;
 let recentFiles: string[] = [];
@@ -177,7 +180,7 @@ function insertItems(): MenuItemConstructorOptions[] {
       { id: 'structure-toc', label: 'Table of contents', click: () => action('insert:toc') },
       { id: 'structure-mermaid', label: 'Mermaid diagram', click: () => action('insert:mermaid') },
       { id: 'structure-rule', label: 'Horizontal rule', click: () => action('format:rule') },
-      ...publishingTemplates.filter(item => ['publishing-metadata', 'publishing-image'].includes(item.id)).map(item => ({
+      ...publishingTemplates.filter(item => ['publishing-metadata', 'publishing-image', 'publishing-include'].includes(item.id)).map(item => ({
         id: item.id, label: item.label, click: () => action(`insert:${item.id}`),
       })),
     ] },
@@ -187,13 +190,13 @@ function insertItems(): MenuItemConstructorOptions[] {
         click: () => action(`insert:${item.id}`),
       })),
     ] },
-    { label: 'Footnote (Source)', click: () => action('insert:footnote') },
+    { label: 'Footnote (Markdown)', click: () => action('insert:footnote') },
     { label: 'Link...', accelerator: 'CmdOrCtrl+K', click: () => action('link') },
-    { label: 'Link reference (Source)', click: () => action('insert:reference') },
+    { label: 'Link reference (Markdown)', click: () => action('insert:reference') },
     { label: 'Horizontal line', click: () => action('format:rule') },
-    { label: 'Math block (Source)', accelerator: 'CmdOrCtrl+Shift+M', click: () => action('insert:math') },
-    { label: 'Mermaid diagram (Source)', click: () => action('insert:mermaid') },
-    { label: 'YAML front matter (Source)', click: () => action('insert:frontmatter') },
+    { label: 'Math block (Markdown)', accelerator: 'CmdOrCtrl+Shift+M', click: () => action('insert:math') },
+    { label: 'Mermaid diagram', click: () => action('insert:mermaid') },
+    { label: 'YAML front matter (Markdown)', click: () => action('insert:frontmatter') },
     { type: 'separator' },
     { label: 'Paragraph before', click: () => action('insert:before') },
     { label: 'Paragraph after', click: () => action('insert:after') },
@@ -240,8 +243,8 @@ async function validateRaster(data: Buffer, mime: string): Promise<void> {
   } finally { decoder.destroy(); }
 }
 
-async function exportPDF(content: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, imageRoot?: string | null): Promise<Buffer> {
-  const html = await toPrintHTML(content, documentPath, loadDiagram, imageRoot);
+async function exportPDF(content: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, imageRoot?: AuthorizedImageRoots, tokens?: Token[]): Promise<Buffer> {
+  const html = await toPrintHTML(content, documentPath, loadDiagram, imageRoot, tokens);
   const printWindow = new BrowserWindow({
     show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: true },
   });
@@ -261,8 +264,8 @@ async function exportPDF(content: string, documentPath: string | null, loadDiagr
   } finally { printWindow.destroy(); }
 }
 
-async function exportWithDiagrams(content: string, currentPath: string | null, format: 'pdf' | 'docx' | 'html', imageRoot?: string | null): Promise<Buffer> {
-  const diagrams = parser.parse(content, {}).filter(token => token.type === 'fence' && isMermaidLanguage(token.info));
+async function exportWithDiagrams(content: string, currentPath: string | null, format: 'pdf' | 'docx' | 'html', imageRoot: AuthorizedImageRoots, tokens: Token[]): Promise<Buffer> {
+  const diagrams = tokens.filter(token => token.type === 'fence' && isMermaidLanguage(token.info));
   if (diagrams.length > diagramLimits.diagrams) throw new Error('Export supports at most 32 Mermaid diagrams.');
   for (const diagram of diagrams) prepareMermaid(diagram.content);
   let renderer: BrowserWindow | undefined;
@@ -306,10 +309,31 @@ async function exportWithDiagrams(content: string, currentPath: string | null, f
     } finally { clearTimeout(timer); }
   };
   try {
-    if (format === 'pdf') return await exportPDF(content, currentPath, loadDiagram, imageRoot);
-    if (format === 'html') return Buffer.from(await toOfflineHTML(content, currentPath, loadDiagram, imageRoot, validateRaster), 'utf8');
-    return await toDocx(content, source => readImage(source, currentPath, imageRoot), loadDiagram);
+    if (format === 'pdf') return await exportPDF(content, currentPath, loadDiagram, imageRoot, tokens);
+    if (format === 'html') return Buffer.from(await toOfflineHTML(content, currentPath, loadDiagram, imageRoot, validateRaster, tokens), 'utf8');
+    return await toDocx(content, source => readImage(source, currentPath, imageRoot), loadDiagram, tokens);
   } finally { if (renderer && !renderer.isDestroyed()) renderer.destroy(); }
+}
+
+async function prepareDocument(id: unknown, content: string, displayErrors = false) {
+  const document = documentFor(id);
+  const currentPath = document.path;
+  const imageGrant = imageRoots.get(String(id));
+  const includeGrant = includeRoots.get(String(id));
+  const assertAccess = () => {
+    if (documentFor(id) !== document || document.path !== currentPath ||
+        imageRoots.get(String(id)) !== imageGrant || includeRoots.get(String(id)) !== includeGrant) {
+      throw new Error('The document or its local folder access changed. Try again.');
+    }
+  };
+  const prepared = /^zone_pivot_groups\s*:/m.test(content)
+    ? await prepareVariantConfiguration(content, currentPath, imageGrant?.root ?? null)
+    : content;
+  assertAccess();
+  const tokens = await resolveIncludes(prepared, currentPath, includeGrant?.root, { displayErrors });
+  assertAccess();
+  const imageAccess = [imageGrant?.root, includeGrant?.root].filter((root): root is string => Boolean(root));
+  return { prepared, tokens, currentPath, imageAccess, assertAccess };
 }
 
 function installIPC(): void {
@@ -358,8 +382,10 @@ function installIPC(): void {
   handle('editor:copy-image', async (id: unknown, source: unknown) => {
     contentArgument(source);
     const grant = imageRoots.get(String(id));
-    const { data } = await readImage(source, documentFor(id).path, grant?.root);
-    if (imageRoots.get(String(id)) !== grant) throw new Error('Local image access changed. Try copying the image again.');
+    const includeGrant = includeRoots.get(String(id));
+    const roots = [grant?.root, includeGrant?.root].filter((root): root is string => Boolean(root));
+    const { data } = await readImage(source, documentFor(id).path, roots);
+    if (imageRoots.get(String(id)) !== grant || includeRoots.get(String(id)) !== includeGrant) throw new Error('Local image access changed. Try copying the image again.');
     const image = nativeImage.createFromBuffer(data);
     if (image.isEmpty()) throw new Error('This image could not be decoded for copying.');
     clipboard.writeImage(image);
@@ -371,11 +397,25 @@ function installIPC(): void {
       || context.heading < 0 || context.heading > 6 || typeof context.inTable !== 'boolean'
       || context.hasVariantSelector !== undefined && typeof context.hasVariantSelector !== 'boolean'
       || context.hasInteractivePublishing !== undefined && typeof context.hasInteractivePublishing !== 'boolean'
-      || context.formField !== undefined && typeof context.formField !== 'boolean') {
+      || context.formField !== undefined && typeof context.formField !== 'boolean'
+      || context.view !== undefined && !['visual', 'source', 'split'].includes(context.view)
+      || context.preview !== undefined && typeof context.preview !== 'boolean'
+      || context.previewSource !== undefined && typeof context.previewSource !== 'boolean') {
       console.error('Invalid editor context.');
       return;
     }
     editorContext = context;
+    for (const view of ['visual', 'source', 'split']) {
+      const item = Menu.getApplicationMenu()?.getMenuItemById(`view-${view}`);
+      if (item) item.checked = !context.preview && (context.view ?? context.mode) === view;
+    }
+    const previewItem = Menu.getApplicationMenu()?.getMenuItemById('view-preview');
+    if (previewItem) previewItem.label = context.preview ? 'Back to editing' : 'Preview';
+    const previewSourceItem = Menu.getApplicationMenu()?.getMenuItemById('view-preview-source');
+    if (previewSourceItem) {
+      previewSourceItem.enabled = Boolean(context.preview);
+      previewSourceItem.checked = Boolean(context.preview && context.previewSource);
+    }
     const variantTool = Menu.getApplicationMenu()?.getMenuItemById('publishing-selector');
     if (variantTool) variantTool.label = variantInsertionTemplate(Boolean(context.hasVariantSelector)).label;
     const exportHint = Menu.getApplicationMenu()?.getMenuItemById('export-interactive-hint');
@@ -440,12 +480,13 @@ function installIPC(): void {
     documentFor(id);
     documents.delete(String(id));
     imageRoots.delete(String(id));
+    includeRoots.delete(String(id));
   });
   handle('images:allow-folder', async (id: unknown) => {
     const document = documentFor(id);
     if (!document.path) throw new Error('Save this document before allowing access to a project image folder.');
     const selected = await dialog.showOpenDialog(window, {
-      title: 'Allow project images for this document', buttonLabel: 'Allow this folder',
+      title: 'Allow project images and variant labels for this document', buttonLabel: 'Allow this folder',
       properties: ['openDirectory'],
     });
     if (selected.canceled) return false;
@@ -469,6 +510,47 @@ function installIPC(): void {
   handle('images:revoke-folder', async (id: unknown) => {
     documentFor(id);
     imageRoots.delete(String(id));
+  });
+  handle('includes:allow-folder', async (id: unknown) => {
+    const document = documentFor(id);
+    const currentPath = document.path;
+    if (!currentPath) throw new Error('Save this document before allowing an include folder.');
+    const selected = await dialog.showOpenDialog(window, {
+      title: 'Allow local includes and their images for this document', buttonLabel: 'Allow this folder',
+      properties: ['openDirectory'],
+    });
+    if (selected.canceled) return false;
+    if (documentFor(id) !== document || document.path !== currentPath) throw new Error('The document changed. Choose the folder again.');
+    const root = await realpath(selected.filePaths[0]);
+    const file = await realpath(currentPath);
+    const relative = path.relative(root, file);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('Choose a project folder that contains both this saved document and its include files.');
+    }
+    includeRoots.set(String(id), { root });
+    return true;
+  });
+  handle('includes:revoke-folder', async (id: unknown) => {
+    documentFor(id);
+    includeRoots.delete(String(id));
+  });
+  handle('includes:preview', async (id: unknown, content: unknown) => {
+    contentArgument(content);
+    const { tokens, assertAccess } = await prepareDocument(id, content, true);
+    const anchors = new Map<string, number>();
+    for (const [index, token] of tokens.entries()) {
+      if (token.type === 'heading_open') token.attrSet('id', headingAnchor(tokens[index + 1].content, anchors));
+    }
+    const html = documentPreviewTokensHTML(tokens, String(id));
+    assertAccess();
+    return html;
+  });
+  handle('includes:interactive', async (id: unknown, content: unknown) => {
+    contentArgument(content);
+    const { tokens, assertAccess } = await prepareDocument(id, content);
+    const interactive = hasInteractivePublishing(tokens);
+    assertAccess();
+    return interactive;
   });
   handle('document:save', async (id: unknown, content: unknown, saveAs: unknown) => {
     const document = documentFor(id);
@@ -510,6 +592,7 @@ function installIPC(): void {
       }
     }
     await atomicWrite(file, content);
+    if (currentPath && !samePath(path.dirname(file), path.dirname(currentPath))) includeRoots.delete(String(id));
     document.path = file;
     document.diskContent = content;
     await remember(file);
@@ -542,14 +625,9 @@ function installIPC(): void {
     contentArgument(content);
     if (format !== 'pdf' && format !== 'docx' && format !== 'html') throw new Error('Unsupported export format.');
     if (format !== 'html' && requiresInteractiveExport(content)) throw new Error(interactiveExportMessage);
-    const grant = imageRoots.get(String(id));
-    const imageRoot = grant?.root ?? null;
-    const assertAssetAccess = () => {
-      if (imageRoots.get(String(id)) !== grant) throw new Error('Local asset access changed. Retry the export.');
-    };
-    const prepared = await prepareVariantConfiguration(content, currentPath, imageRoot);
-    assertAssetAccess();
-    if (format !== 'html' && requiresInteractiveExport(prepared)) throw new Error(interactiveExportMessage);
+    const { prepared, tokens, imageAccess, assertAccess } = await prepareDocument(id, content);
+    assertAccess();
+    if (format !== 'html' && hasInteractivePublishing(tokens)) throw new Error(interactiveExportMessage);
     const selection = await dialog.showSaveDialog(window, {
       title: `Export ${format.toUpperCase()}`,
       defaultPath: currentPath ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}.${format}`) : `Untitled.${format}`,
@@ -559,9 +637,9 @@ function installIPC(): void {
     if ([...documents.values()].some(document => document.path && samePath(selection.filePath!, document.path))) {
       throw new Error('Export cannot replace an open Markdown source file.');
     }
-    assertAssetAccess();
-    const data = await exportWithDiagrams(prepared, currentPath, format, imageRoot);
-    assertAssetAccess();
+    assertAccess();
+    const data = await exportWithDiagrams(prepared, currentPath, format, imageAccess, tokens);
+    assertAccess();
     await atomicWrite(selection.filePath, data);
     return selection.filePath;
   });
@@ -580,6 +658,24 @@ function installIPC(): void {
     window.setDocumentEdited(dirty);
   });
   ipcMain.on('document:close', event => { assertSender(event); allowClose = true; window.close(); });
+}
+
+function viewAndToolsItems(): MenuItemConstructorOptions[] {
+  return [
+    { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', registerAccelerator: false, click: () => action('command-palette') },
+    { type: 'separator' },
+    { label: 'Visual', type: 'checkbox', checked: !editorContext.preview && (editorContext.view ?? editorContext.mode) === 'visual', click: () => action('visual') },
+    { label: 'Markdown', type: 'checkbox', checked: !editorContext.preview && (editorContext.view ?? editorContext.mode) === 'source', click: () => action('source') },
+    { label: 'Split (Visual and Markdown)', type: 'checkbox', checked: !editorContext.preview && editorContext.view === 'split', click: () => action('edit-split') },
+    { label: editorContext.preview ? 'Back to editing' : 'Preview', click: () => action('preview') },
+    { label: 'Show Markdown beside preview', type: 'checkbox', enabled: Boolean(editorContext.preview), checked: Boolean(editorContext.preview && editorContext.previewSource), click: () => action('preview-source') },
+    { label: 'Split / Unsplit files', click: () => action('split') },
+    { type: 'separator' },
+    { label: 'Writing assistance', click: () => action('writing-assistance') },
+    { label: 'Allow local include folder...', click: () => action('allow-include-folder') },
+    { label: 'Stop local include folder access', click: () => action('revoke-include-folder') },
+    { label: 'Getting started', click: () => action('help') },
+  ];
 }
 
 function createWindow(): void {
@@ -643,20 +739,7 @@ function createWindow(): void {
         ] },
         { label: 'Paragraph', submenu: paragraphItems() },
         { label: 'Insert', submenu: insertItems() },
-        { label: 'View and tools', submenu: [
-          { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', registerAccelerator: false, click: () => action('command-palette') },
-          { type: 'separator' },
-          { label: 'Visual + Source', click: () => action('side-by-side') },
-          { label: 'Visual only', click: () => action('visual') },
-          { label: 'Source only', click: () => action('source') },
-          { label: 'Source + Preview', click: () => action('preview') },
-          { label: 'Split / Unsplit', click: () => action('split') },
-          { type: 'separator' },
-          { label: 'Writing assistance', click: () => action('writing-assistance') },
-          { label: 'Allow local image folder...', click: () => action('allow-image-folder') },
-          { label: 'Stop local image folder access', click: () => action('revoke-image-folder') },
-          { label: 'Getting started', click: () => action('help') },
-        ] },
+        { label: 'View and tools', submenu: viewAndToolsItems() },
         { label: 'Table', submenu: [
           { label: 'Insert table...', click: () => action('table') },
           { type: 'separator' },
@@ -670,7 +753,10 @@ function createWindow(): void {
           })),
         ] },
       );
-    } else if (parameters.selectionText) items.push({ role: 'copy' });
+    } else {
+      if (parameters.selectionText) items.push({ role: 'copy' });
+      if (editorContext.preview) items.push({ label: 'View and tools', submenu: viewAndToolsItems() });
+    }
     if (parameters.mediaType === 'image') {
       items.push({ label: 'Copy image', click: () => action('copy-image') });
     }
@@ -721,10 +807,15 @@ function createWindow(): void {
     { label: '&View', submenu: [
       { label: 'Command palette...', accelerator: 'CmdOrCtrl+Shift+P', click: send('command-palette') },
       { type: 'separator' },
-      { label: 'Visual + Source', click: send('side-by-side') },
-      { label: 'Visual / source', accelerator: 'CmdOrCtrl+/', click: send('mode') },
-      { label: 'Source + Preview', click: send('preview') },
+      { id: 'view-visual', label: 'Visual', type: 'checkbox', checked: true, click: send('visual') },
+      { id: 'view-source', label: 'Markdown', type: 'checkbox', click: send('source') },
+      { id: 'view-split', label: 'Split (Visual and Markdown)', type: 'checkbox', click: send('edit-split') },
+      { label: 'Switch Visual / Markdown', accelerator: 'CmdOrCtrl+/', click: send('mode') },
+      { id: 'view-preview', label: 'Preview', click: send('preview') },
+      { id: 'view-preview-source', label: 'Show Markdown beside preview', type: 'checkbox', enabled: false, click: send('preview-source') },
       { label: 'Writing assistance', click: send('writing-assistance') },
+      { label: 'Allow local include folder...', click: send('allow-include-folder') },
+      { label: 'Stop local include folder access', click: send('revoke-include-folder') },
       { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+Shift+B', click: send('sidebar') },
       { label: 'Focus mode', accelerator: 'F9', click: send('focus') },
       { label: 'Split with...', click: send('split') },
@@ -768,8 +859,10 @@ if (primaryInstance) void app.whenReady().then(async () => {
       if (!source) throw new Error('Missing image source.');
       const documentId = parameters.get('document');
       const grant = imageRoots.get(documentId ?? '');
-      const { data, mime } = await readImage(source, documentFor(documentId).path, grant?.root);
-      if (imageRoots.get(documentId ?? '') !== grant) throw new Error('Local image access changed. Refresh the preview.');
+      const includeGrant = includeRoots.get(documentId ?? '');
+      const roots = [grant?.root, includeGrant?.root].filter((root): root is string => Boolean(root));
+      const { data, mime } = await readImage(source, documentFor(documentId).path, roots);
+      if (imageRoots.get(documentId ?? '') !== grant || includeRoots.get(documentId ?? '') !== includeGrant) throw new Error('Local image access changed. Refresh the preview.');
       return new Response(new Uint8Array(data), { headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' } });
     } catch (error) {
       console.error('Image could not be displayed:', error);

@@ -8,7 +8,7 @@ import {
 import { createHash } from 'node:crypto';
 import Token from 'markdown-it/lib/token.mjs';
 import { escapeHTML, headingAnchor, isSafeLink, parser } from './markdown.js';
-import { embeddedImage, readImage } from './images.js';
+import { embeddedImage, readImage, type AuthorizedImageRoots } from './images.js';
 import { highlightedHTML, highlightedSegments, syntaxCSS, type CodeSegment } from './highlight.js';
 import { diagramLimits, isMermaidLanguage, prepareMermaid } from './diagrams.js';
 import { productName } from './branding.js';
@@ -64,8 +64,8 @@ const styles: IStylesOptions = {
 type List = { level: number; reference: string };
 type ListItem = { pending: boolean };
 
-export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagram?: DiagramImageLoader): Promise<Buffer> {
-  const tokens = parser.parse(markdown, {});
+export async function toDocx(markdown: string, loadImage: ImageLoader, loadDiagram?: DiagramImageLoader, preparedTokens?: Token[]): Promise<Buffer> {
+  const tokens = preparedTokens ?? parser.parse(markdown, {});
   assertStaticExportSupported(tokens);
   if (tokens.filter(token => token.type === 'fence' && isMermaidLanguage(token.info)).length > diagramLimits.diagrams) throw new Error('An export supports at most 32 Mermaid diagrams.');
   const blocks: Block[] = [];
@@ -429,9 +429,9 @@ export const printCSS = `
 
 async function renderExportHTML(
   markdown: string, documentPath: string | null, interactive: boolean,
-  loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null, validateRaster?: RasterValidator,
+  loadDiagram?: DiagramImageLoader, authorizedRoot?: AuthorizedImageRoots, validateRaster?: RasterValidator, preparedTokens?: Token[],
 ): Promise<string> {
-  const tokens = parser.parse(markdown, {});
+  const tokens = preparedTokens ?? parser.parse(markdown, {});
   if (!interactive) assertStaticExportSupported(tokens);
   if (tokens.filter(token => token.type === 'fence' && isMermaidLanguage(token.info)).length > diagramLimits.diagrams) throw new Error('An export supports at most 32 Mermaid diagrams.');
   const anchors = new Map<string, number>();
@@ -505,13 +505,13 @@ async function renderExportHTML(
   });
 }
 
-export async function toPrintHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null): Promise<string> {
-  const html = await renderExportHTML(markdown, documentPath, false, loadDiagram, authorizedRoot);
+export async function toPrintHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: AuthorizedImageRoots, preparedTokens?: Token[]): Promise<string> {
+  const html = await renderExportHTML(markdown, documentPath, false, loadDiagram, authorizedRoot, undefined, preparedTokens);
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'"><title>${escapeHTML(`${productName} export`)}</title><style>${printCSS}</style></head><body>${html}</body></html>`;
 }
 
-export async function toOfflineHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: string | null, validateRaster?: RasterValidator): Promise<string> {
-  const html = await renderExportHTML(markdown, documentPath, true, loadDiagram, authorizedRoot, validateRaster);
+export async function toOfflineHTML(markdown: string, documentPath: string | null, loadDiagram?: DiagramImageLoader, authorizedRoot?: AuthorizedImageRoots, validateRaster?: RasterValidator, preparedTokens?: Token[]): Promise<string> {
+  const html = await renderExportHTML(markdown, documentPath, true, loadDiagram, authorizedRoot, validateRaster, preparedTokens);
   const hash = createHash('sha256').update(interactiveExportScript, 'utf8').digest('base64');
   const policy = `default-src 'none'; script-src 'sha256-${hash}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'`;
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><title>${escapeHTML(`${productName} export`)}</title><style>${interactiveExportCSS}</style></head><body><noscript><p class="offline-notice">JavaScript is disabled; all tabbed examples and variant content are shown.</p></noscript>${html}<script>${interactiveExportScript}</script></body></html>`;

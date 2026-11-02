@@ -337,8 +337,8 @@ test('explicit toolbar tabs retain selected H1 content and take priority over im
     assert.equal((tokens.find(token => token.type === 'publishing_tabs_open')!.meta as PublishingMeta).raw, source);
     assert.equal(headings(source)[0].displayText, 'Selected heading');
     const html = documentPreviewHTML(source, '');
-    assert.match(html, /data-publishing-tab="0">First example/);
-    assert.match(html, /data-publishing-tab="1">Second example/);
+    assert.match(html, /data-publishing-tab="0">Example 1/);
+    assert.match(html, /data-publishing-tab="1">Example 2/);
     assert.match(html, /<h1>Selected heading<\/h1>/);
     assert.match(html, /Selected body\./);
     assert.doesNotMatch(html, /publishing-unsupported/);
@@ -346,7 +346,7 @@ test('explicit toolbar tabs retain selected H1 content and take priority over im
     assert.match(exported, /<h1 id="selected-heading">Selected heading<\/h1>/);
     assert.match(exported, /data-publishing-panel="1">/);
     assert.match(exported, /Selected body\./);
-    assert.match(exported, /Second example/);
+    assert.match(exported, /Example 2/);
     await assert.rejects(() => wordXML(source), /Word and PDF export.*HTML/);
     await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
   }

@@ -28,8 +28,9 @@ import { ContextMenu } from './context-menu.js';
 import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
-import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, publishingHTML, refreshPublishingVariants, revealPublishingElement } from './publishing-view.js';
-import { editablePublishingBlockAtStart, hasInteractivePublishing, interactiveExportMessage, publishingBlockRanges, publishingCSS } from '../lib/publishing.js';
+import { prepareVariantInsertion, selectInsertedVariant, validateSourceVariantInsertion, variantInsertionPosition } from './publishing-insert.js';
+import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
+import { editablePublishingBlockAtStart, hasInteractivePublishing, includeMarkdown, interactiveExportMessage, publishingBlockRanges, publishingCSS } from '../lib/publishing.js';
 import { publishingTemplateMarkdown, publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
 import { AlertNode } from './alert-node.js';
@@ -117,7 +118,7 @@ const structureMenuHTML = `<div class="menu-section" role="presentation">Structu
   ${menuItem('data-action="insert:toc"', icon('contents'), 'Table of contents', 'Insert a linked table of contents, or refresh the existing one.')}
   ${menuItem('data-action="insert:mermaid"', icon('diagram'), 'Mermaid diagram', 'Flowcharts, sequence and other diagrams written as text.')}
   ${menuItem('data-command="rule"', icon('rule'), 'Horizontal rule', 'Divide sections with a horizontal line.')}
-  ${templateItem('publishing-metadata')}${templateItem('publishing-image')}`;
+  ${templateItem('publishing-metadata')}${templateItem('publishing-image')}${templateItem('publishing-include')}`;
 const interactiveMenuHTML = `<div class="menu-section" role="presentation">Interactive \u00b7 HTML export only</div>
   ${templateItem('publishing-tabs')}${templateItem('publishing-selector')}`;
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -149,7 +150,7 @@ app.innerHTML = `
       </div>
     </header>
     <div class="toolbar" role="toolbar" aria-label="Text formatting">
-      ${group('view', 'View', `<div class="global-modes"><button type="button" id="view-switch" data-action="side-by-side" class="view-switch" role="switch" aria-checked="false" aria-controls="canvas" title="Show Source beside Visual"><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>Visual + Source</span></button></div>${button('split', 'Split', 'split', 'split-control')}`)}
+      ${group('view', 'View', `<div class="global-modes" role="group" aria-label="Editing view"><button type="button" id="view-visual" data-action="visual" aria-pressed="true" aria-controls="canvas" title="Edit in Visual"><span>Visual</span></button><button type="button" id="view-markdown" data-action="source" aria-pressed="false" aria-controls="canvas" title="Edit Markdown"><span>Markdown</span></button><button type="button" id="view-split" data-action="edit-split" aria-pressed="false" aria-controls="canvas" title="Edit Visual and Markdown side by side"><span>Split</span></button></div><button type="button" id="preview-toggle" data-action="preview" aria-pressed="false" aria-controls="canvas" title="Open reader preview"><span>Preview</span></button>`)}
       ${group('style', 'Style', `<select id="heading" aria-label="Paragraph style" title="Paragraph style (Ctrl+0 to Ctrl+6)"><option value="0">Paragraph</option><option value="1">Heading 1</option><option value="2">Heading 2</option><option value="3">Heading 3</option><option value="4">Heading 4</option><option value="5">Heading 5</option><option value="6">Heading 6</option></select>`)}
       ${group('text', 'Text', `${formatButton('bold', 'Bold')}${formatButton('italic', 'Italic')}${formatButton('strike', 'Strikethrough')}${formatButton('code', 'Inline code')}${button('link', 'Insert / edit link', 'link', 'icon-only')}`)}
       ${group('paragraph', 'Paragraph', `${formatButton('bullet', 'Bullet list')}${formatButton('ordered', 'Numbered list')}${formatButton('task', 'Task list')}${formatButton('quote', 'Block quote')}`)}
@@ -158,6 +159,7 @@ app.innerHTML = `
       <span class="toolbar-spacer"></span>
       ${group('review', 'Review', `<button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
     </div>
+    <div id="view-hint" class="view-hint"><span id="view-hint-text"><strong>Visual:</strong> Edit the document as it appears.</span><label id="preview-source-option" hidden><input id="preview-source" type="checkbox" />Show Markdown beside preview</label></div>
     <div id="table-tools" hidden><span>TABLE</span>${button('row', '+ Row')}${button('column', '+ Column')}${button('delete-row', 'Remove row')}${button('delete-column', 'Remove column')}${button('delete-table', 'Remove table')}</div>
     <section id="find-panel" hidden aria-label="Find and replace">
       <input id="find-text" aria-label="Find text" placeholder="Find Markdown text" />
@@ -178,8 +180,16 @@ app.innerHTML = `
   ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
   <div id="structure-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Structure" hidden>${structureMenuHTML}</div>
   <div id="interactive-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Interactive" hidden>${interactiveMenuHTML}</div>
-  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('visual', 'Visual only')}${button('source', 'Source only')}${button('preview', 'Source + Preview (read-only)')}${button('writing-assistance', 'Writing assistance')}${button('allow-image-folder', 'Allow local image folder...')}${button('revoke-image-folder', 'Stop local image folder access')}${button('help', 'Getting started', 'help')}</div>
+  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('allow-include-folder', 'Allow local include folder...')}${button('revoke-include-folder', 'Stop local include folder access')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
+  <dialog id="publishing-include-dialog" aria-labelledby="publishing-include-title"><form method="dialog">
+    <h2 id="publishing-include-title">Insert include</h2>
+    <label>Title<input id="publishing-include-name" required pattern=".*\\S.*" title="Enter a nonblank title." /></label>
+    <label>File path<input id="publishing-include-path" required pattern=".*\\S.*" title="Enter a nonblank file path." placeholder="../includes/shared.md" spellcheck="false" /></label>
+    <p>The directive stays in Markdown. Local included content appears in Visual and exports without its document metadata.</p>
+    <pre id="publishing-include-preview" aria-live="polite">[!INCLUDE [&lt;title&gt;](&lt;filepath&gt;)]</pre>
+    <div class="dialog-actions"><button value="insert" class="primary">Insert include</button><button value="cancel" formnovalidate>Cancel</button></div>
+  </form></dialog>
   <dialog id="publishing-image-dialog" aria-labelledby="publishing-image-title"><form method="dialog">
     <h2 id="publishing-image-title">Describe this image</h2>
     <label>Alternate text<input id="publishing-image-alt" required placeholder="Describe the information conveyed by the image" /></label>
@@ -225,7 +235,7 @@ app.innerHTML = `
   <div id="tab-context-menu" popover="auto" role="menu" aria-label="Tab actions"></div>
   <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title">
     <h2 id="shortcuts-title">Keyboard shortcuts</h2>
-    <p>Formatting works in Visual and Source modes, in the active side of a split. Shortcuts do not format your document while you type in Find, dialogs, or the language picker.</p>
+    <p>Formatting works in Visual and Markdown views, in the active side of a split. Shortcuts do not format your document while you type in Find, dialogs, or the language picker.</p>
     <table class="shortcut-table"><tbody>
       ${formattingShortcuts.map(item => `<tr><th scope="row">${item.label}</th><td><kbd>${item.accelerator.replace('CmdOrCtrl', 'Ctrl')}</kbd></td></tr>`).join('')}
       <tr><th scope="row">Paragraph / Headings 1-6</th><td><kbd>Ctrl+0 / Ctrl+1-6</kbd></td></tr>
@@ -235,7 +245,7 @@ app.innerHTML = `
       <tr><th scope="row">Insert table</th><td><kbd>Ctrl+T</kbd></td></tr>
       <tr><th scope="row">Code block</th><td><kbd>Ctrl+Shift+K</kbd></td></tr>
       <tr><th scope="row">Undo / Redo</th><td><kbd>Ctrl+Z / Ctrl+Shift+Z</kbd></td></tr>
-      <tr><th scope="row">Visual / Source</th><td><kbd>Ctrl+/</kbd></td></tr>
+      <tr><th scope="row">Visual / Markdown</th><td><kbd>Ctrl+/</kbd></td></tr>
       <tr><th scope="row">Next / Previous tab</th><td><kbd>Ctrl+Tab / Ctrl+Shift+Tab</kbd></td></tr>
       <tr><th scope="row">Toggle sidebar</th><td><kbd>Ctrl+Shift+B</kbd></td></tr>
       <tr><th scope="row">Command palette</th><td><kbd>Ctrl+Shift+P</kbd></td></tr>
@@ -255,25 +265,25 @@ app.innerHTML = `
   <dialog id="help-dialog">
     <h2>Your writing desk, explained</h2>
     <p><b>Tabs:</b> Open and New keep other files open. Each tab keeps its edits and undo history. Click its x to close; a dot means unsaved changes. Save and Export use the active tab; Save all saves every modified tab.</p>
-    <p><b>Split tabs:</b> choose <b>Split with...</b> or right-click a tab, then choose another open file from its thumbnail preview card. Previews include current unsaved edits. One paired tab displays exactly those two files side by side. Other tabs still open alone; clicking the pair restores both files. Each side keeps its own Visual/Source mode and undo. Click a side to target formatting, Find, Save, and Export. Drag the divider or focus it and use Left/Right to resize. <b>Unsplit</b> restores individual tabs without closing files. The pair's x closes both files with unsaved-change prompts; Ctrl+W closes only the active file.</p>
+    <p><b>Split files:</b> choose <b>More &gt; Split with another file...</b> or right-click a tab, then choose another open file from its thumbnail preview card. One paired tab displays two files side by side. Other tabs still open alone; clicking the pair restores both files. Each side keeps its own view and undo. Click a side to target formatting, Find, Save, and Export. Drag the divider or focus it and use Left/Right to resize. <b>Unsplit</b> restores individual tabs without closing files. The pair's x closes both files with unsaved-change prompts; Ctrl+W closes only the active file.</p>
     <p><b>Themes:</b> choose Light or Dark at the bottom of the sidebar, or use View &gt; Color theme when the sidebar is hidden. Recent Files starts collapsed; expand its heading to browse history. This preference is remembered, and the outline gets the remaining space.</p>
     <p><b>Save:</b> the Save button saves the active file. Its arrow opens Save All and Save As. Hover over tools for their keyboard shortcuts, or open ${button('shortcuts', 'Keyboard shortcuts')} (F1). The toolbar is grouped into View, Style, Text, Paragraph, Insert and Review. Insert includes Image, Table, Code, Alerts, Structure and Interactive. Structure and Interactive stay visible; at narrower widths lower-priority tools move into More.</p>
     <p><b>Search commands</b> (Ctrl+Shift+P, or the search box in the header) finds any command, block, theme or setting by name. In Visual mode, type <code>/</code> on an empty line to insert a heading, list, table, alert or block; Escape dismisses the list. <b>Block</b> commands (right-click, Edit menu or palette) move, duplicate or remove the block at the cursor; Alt+Shift+Up/Down moves it. Clicking into a block shows a small floating toolbar with the same commands. Drag top-level outline headings, or focus one and press Alt+Up/Down, to move a section with its subsections; Left/Right collapse or expand it. Ctrl+Z undoes any move. Click the word count for document statistics.</p>
     <p><b>Visual</b> works like a word processor. Type <code># </code> for a heading, <code>- </code> for a list, or use the toolbar.</p>
     <p><b>Code blocks</b> have a searchable language selector and Copy button at the bottom-right. Select PowerShell, Python, JSON, or another supported language for syntax colors. Code contents are never reformatted or executed. PDF and Word include the colors, not the controls.</p>
     <p><b>Writing assistance:</b> enable offline English grammar checks from the status bar, More tools, or View menu. Harper runs locally in the background. Review underlined suggestions, apply an undoable correction, or ignore it once or throughout the current document. No text is sent online or changed automatically; suggestions can be imperfect.</p>
-    <p><b>Structure and Interactive:</b> Structure has table of contents, diagrams, horizontal rules, image descriptions and YAML metadata. Interactive has editable tabs and variant selectors. Select an example and type/format directly in its body. Double-click a tab or variant choice, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, and undo restores its content. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then click <b>Add variant content</b> on it to write content below. The same Interactive menu entry changes to <b>Add variant content</b> for placing more content anywhere. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Local include directives are preserved but never loaded. Use interactive HTML export for documents with tabs or variants; Word and PDF do not support them.</p>
-    <p><b>Visual + Source:</b> scrolling is synchronized in both directions by default, using document anchors and wrapped source lines. Paired documents remain independent.</p>
-    <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the button to the left of Visual/Source or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
+    <p><b>Structure and Interactive:</b> Structure has table of contents, diagrams, horizontal rules, image descriptions, YAML metadata and include directives. Interactive has editable tabs and variant selectors. Select an example and type/format directly in its body. Click the selected tab or variant choice again, double-click it, or focus its name and press <b>F2</b>, to rename it in place. <b>Enter</b> finishes; <b>Escape</b> cancels the rename. <b>+</b> adds an example or choice; each <b>&times;</b> removes its own item, removing the last one removes the whole block, and undo restores it. Edit metadata directly in its YAML box and edit image settings only when needed. Create a <b>Variant selector</b>, then put the caret where content belongs and choose <b>Add variant content</b> from Interactive. Inactive content has <b>Show and edit</b>. Unsupported syntax remains editable in its inline block field. Save the document to preview and export included content without its document metadata; allow a local include folder if the file is outside the document's folder. The original directives stay in your document. Use interactive HTML export for documents with tabs or variants, including those in included files; Word and PDF do not support them.</p>
+    <p><b>Editing views:</b> choose <b>Visual</b>, <b>Markdown</b>, or <b>Split</b> for both side by side. Split scrolling is synchronized in both directions using document anchors and wrapped source lines. Paired documents remain independent.</p>
+    <p><b>Sidebar</b>: drag its right edge to resize, or focus the edge and use Left/Right (Home/End set limits). Double-click the edge to reset. Width is remembered between launches and limited to leave room for editing. Use the sidebar button or Ctrl+Shift+B to toggle outline/recent files. <b>View &gt; Focus mode</b> or F9 also hides the document header; Escape restores your previous sidebar preference.</p>
     <p><b>Find</b>: click Find or press Ctrl+F to open or close the find bar. Close and Escape also dismiss it; the search and replacement text are retained.</p>
     <p><b>Right-click</b> for Formatting, Paragraph (Heading 1-6 or normal text), Insert &gt; Alerts / Structure / Interactive, View and tools, Copy / Paste As, and spelling suggestions. Toolbar tools are also available here. Create a Variant selector first; its menu entry then changes to Add variant content. Nested menus stay next to their parent and support arrows/Escape. Choose <b>Table &gt; Insert table</b> or <b>Insert &gt; Table</b> to choose rows and columns. Row/column editing controls become available inside a table.</p>
-    <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use the same <b>Table of contents</b> button to refresh the existing marked list after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Source mode</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
+    <p><b>Insert</b> includes images, links, tables, code fences, Mermaid, horizontal lines, a marked table of contents, and paragraphs before/after. Use the same <b>Table of contents</b> button to refresh the existing marked list after changing headings. Footnotes, link references, math, and YAML insert editable syntax in <b>Markdown view</b>. From Visual mode these go at the end, except YAML at the top. Math and footnotes do not yet have formatted rendering or structured export support; YAML is preserved as document metadata, not article text.</p>
     <p><b>Links:</b> in Visual, click a link to edit its text and address, or right-click and choose <b>Edit link...</b>. The link toolbar button and <b>Ctrl+K</b> also edit the selected link. <b>Remove link</b> keeps its text. <b>Ctrl+click</b> opens a link after confirmation; generated contents links still navigate normally.</p>
-    <p><b>Source</b> lets you edit the exact Markdown text. Use it for advanced syntax or HTML the visual editor doesn't support. Visual editing may normalize Markdown syntax; switching Visual/Source modes resets that tab's undo history.</p>
+    <p><b>Markdown</b> lets you edit exact source text. Use it for advanced syntax or HTML the visual editor doesn't support. Visual editing may normalize Markdown syntax; edits in one editor can require the other editor's history to be refreshed.</p>
     <p><b>Save</b> keeps a regular UTF-8 Markdown file. <b>Export</b> creates a separate HTML, Word, or PDF document, including the active tab's unsaved edits. HTML works offline and retains interactive tabs and variants.</p>
     <p>Insert, paste or drop an image, then choose embedding or a saved document's <b>assets</b> folder. Clipboard bitmaps become PNG. Right-click an image for <b>Copy image</b>. Embedded images travel with the Markdown; relative assets must be kept with its folder. Remote images are not fetched. Word supports PNG, JPEG, and GIF; PDF also supports WebP.</p>
     <p><b>Ctrl+N</b> New tab &nbsp; <b>Ctrl+O</b> Open &nbsp; <b>Ctrl+S</b> Save<br><b>Ctrl+W</b> Close tab &nbsp; <b>Ctrl+Tab</b> Next tab<br><b>Ctrl+Alt+S</b> Save all &nbsp; <b>Ctrl+P</b> PDF<br><b>Ctrl+0-6</b> Paragraph / Headings &nbsp; <b>Ctrl+T</b> Table<br><b>Ctrl+F</b> Find &nbsp; <b>Ctrl+/</b> Switch mode &nbsp; <b>F9</b> Focus</p>
-    <p><b>Source + Preview</b> shows a read-only rendering beside your editable Markdown, with optional synchronized scrolling. Mermaid diagrams render locally. Use the single-row toolbar or Insert menu for a Mermaid template and the Table of contents action.</p>
+    <p><b>Preview</b> shows a read-only, interactive rendering. Turn on <b>Show Markdown beside preview</b> to edit source on the right, with optional synchronized scrolling. <b>Back to editing</b> restores your previous view. Mermaid diagrams render locally.</p>
     <p>Local draft recovery covers every unsaved tab. Save regularly; recovery is not a substitute for backups. Rendered math is not supported.</p>
     <form method="dialog"><button class="primary">Let's write</button></form>
   </dialog>
@@ -318,6 +328,9 @@ let exportCheckedDocumentId = '';
 let rawInteractiveExportRequired = false;
 let interactiveExportRequired = false;
 let exportCheckPending = false;
+let exportCheckError = '';
+let exportCheckComplete = false;
+let exportCheckTimer: ReturnType<typeof setTimeout> | undefined;
 let exportCheckRevision = 0;
 let savedMarkdown = '';
 let documentPath: string | null = null;
@@ -359,8 +372,12 @@ interface DocumentTab {
   visualMarkdown: string;
   sideBySide?: boolean;
   preview?: boolean;
+  previewSource?: boolean;
+  previewReturnMode?: 'visual' | 'source';
   previewMarkdown?: string;
   previewRevision?: number;
+  variantConfigKey?: string;
+  variantConfigRevision?: number;
 }
 const tabs: DocumentTab[] = [];
 const pairs: SplitPair[] = [];
@@ -493,12 +510,12 @@ function refreshPreview(tab: DocumentTab): void {
   tab.previewRevision = revision;
   tab.previewMarkdown = snapshot;
   void publishingHTML(snapshot, tab.id).then(async html => {
-    if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tab.pane.isConnected) return;
+    if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tabs.includes(tab)) return;
     content.innerHTML = html;
     initializePublishing(content, message => notify(message, true));
     await renderMermaidBlocks(content);
   }).catch(error => {
-    if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tab.pane.isConnected) return;
+    if (!tab.preview || tab.markdown !== snapshot || tab.previewRevision !== revision || !tabs.includes(tab)) return;
     const message = `Preview could not be rendered: ${String(error)}`;
     content.replaceChildren();
     const warning = document.createElement('p');
@@ -523,14 +540,57 @@ function refreshLocalImages(id: string): void {
   }
 }
 
+function refreshProjectVariantLabels(tab: DocumentTab, force = false): void {
+  const field = /^zone_pivot_groups\s*:.*$/m.exec(tab.markdown)?.[0];
+  const key = JSON.stringify([tab.path, field]);
+  if (!force && tab.variantConfigKey === key) return;
+  tab.variantConfigKey = key;
+  const revision = (tab.variantConfigRevision ?? 0) + 1;
+  tab.variantConfigRevision = revision;
+  setProjectVariantLabels(tab.pane, null);
+  if (!field || !tab.path) return;
+  const snapshot = tab.markdown;
+  void window.lekh.prepareVariantConfiguration(tab.id, snapshot).then(result => {
+    if (!tabs.includes(tab) || tab.variantConfigRevision !== revision) return;
+    if (!result.ok) throw new Error(result.error);
+    setProjectVariantLabels(tab.pane, result.value === snapshot ? null : result.value);
+  }).catch(error => {
+    if (tabs.includes(tab) && tab.variantConfigRevision === revision) notify(`Variant labels could not be loaded: ${String(error)}`, true);
+  });
+}
+
 function togglePreview(): void {
   if (!activeTab) return;
-  const enabled = !activeTab.preview;
-  switchMode('source');
-  activeTab.preview = enabled;
+  if (activeTab.preview) {
+    setEditingView(activeTab.sideBySide ? 'split' : activeTab.previewReturnMode ?? 'visual');
+    return;
+  }
+  activeTab.canvasScroll = visualScroll(activeTab).scrollTop;
+  if (!source.hidden) activeTab.sourceScroll = source.scrollTop;
+  activeTab.previewReturnMode = mode;
+  activeTab.preview = true;
+  activeTab.previewSource ??= true;
+  if (activeTab.previewSource) {
+    prepareSource(activeTab);
+    mode = 'source';
+  }
   showMode();
+  updateToolbar();
   refreshPreview(activeTab);
-  source.focus({ preventScroll: true });
+  activeTab.viewport.querySelector<HTMLElement>('.live-preview')!.focus({ preventScroll: true });
+}
+
+function setPreviewSource(show: boolean): void {
+  if (!activeTab?.preview) return;
+  if (!source.hidden) activeTab.sourceScroll = source.scrollTop;
+  activeTab.previewSource = show;
+  if (show) {
+    prepareSource(activeTab);
+    mode = 'source';
+  } else mode = activeTab.previewReturnMode ?? mode;
+  showMode();
+  source.scrollTop = activeTab.sourceScroll;
+  updateToolbar();
 }
 
 function searchKey(): string {
@@ -694,14 +754,8 @@ function createEditor(content: string, id = documentId, host = visual): Editor {
     EditablePublishing.configure({
       schema: () => created.schema, documentId: id,
       reportError: message => notify(message, true),
-      addVariantContent: position => { void run(async () => {
-        activateTab(id);
-        const selector = editor.state.doc.nodeAt(position);
-        if (selector?.type.name !== 'lekhSelector') throw new Error('The selector changed. Retry from its Add variant content button.');
-        await insertPublishingBlock('publishing-zone', position + selector.nodeSize);
-      }).then(() => {
-        if (documentId === id && mode === 'visual' && !busy && editor.isEditable && !document.querySelector('dialog[open]')) editor.view.focus();
-      }); },
+      allowIncludeFolder: () => { void run(async () => { activateTab(id); await dispatch('allow-include-folder'); }); },
+      refreshIncludeContent: () => { refreshPublishingFiles(); invalidateExportCheck(); },
     }),
     PublishingNode.configure({
       documentId: id,
@@ -758,8 +812,9 @@ function createPane(host: HTMLElement, text: HTMLTextAreaElement): { pane: HTMLE
   const preview = document.createElement('section');
   preview.className = 'live-preview';
   preview.setAttribute('aria-label', 'Read-only Markdown preview');
+  preview.tabIndex = 0;
   preview.hidden = true;
-  preview.innerHTML = '<div class="preview-heading">Preview (read-only)<label><input class="preview-sync" type="checkbox" checked />Sync scrolling</label></div><article class="document-preview"></article>';
+  preview.innerHTML = '<div class="preview-heading">Reader preview (read-only)<label><input class="preview-sync" type="checkbox" checked />Sync scrolling</label></div><article class="document-preview"></article>';
   let synchronizing = false;
   const sync = (from: HTMLElement, to: HTMLElement) => {
     if (synchronizing || !preview.querySelector<HTMLInputElement>('.preview-sync')!.checked) return;
@@ -770,13 +825,13 @@ function createPane(host: HTMLElement, text: HTMLTextAreaElement): { pane: HTMLE
   text.addEventListener('scroll', () => {
     highlights.scrollTop = text.scrollTop;
     highlights.scrollLeft = text.scrollLeft;
-    if (!preview.hidden) sync(text, preview);
+    if (!preview.hidden && !surface.hidden) sync(text, preview);
   });
-  preview.addEventListener('scroll', () => sync(preview, text));
+  preview.addEventListener('scroll', () => { if (!surface.hidden) sync(preview, text); });
   const visualViewport = document.createElement('div');
   visualViewport.className = 'visual-surface';
   visualViewport.append(host);
-  viewport.append(visualViewport, surface, preview);
+  viewport.append(visualViewport, preview, surface);
   pane.append(header, viewport);
   synchronizeDocumentScroll(pane, text, visualViewport, () => tabs.find(tab => tab.pane === pane)?.editor ?? editor);
   return { pane, viewport, visualViewport };
@@ -795,6 +850,13 @@ function mirrorSource(tab: DocumentTab): void {
   tab.source.scrollLeft = scrollLeft;
 }
 
+function prepareSource(tab: DocumentTab): void {
+  if (tab.source.value === tab.markdown) return;
+  mirrorSource(tab);
+  tab.undo.length = 0;
+  tab.redo.length = 0;
+}
+
 function syncVisual(): void {
   if (!activeTab || activeTab.visualMarkdown === markdown) return;
   const scroll = visualScroll(activeTab);
@@ -804,22 +866,32 @@ function syncVisual(): void {
   scroll.scrollTop = top;
 }
 
-function toggleSideBySide(): void {
+function setEditingView(next: 'visual' | 'source' | 'split'): void {
   if (!activeTab) return;
-  const top = visualScroll(activeTab).scrollTop;
+  if (!activeTab.preview && (next === 'split' ? activeTab.sideBySide : !activeTab.sideBySide && mode === next)) return;
+  const previousMode = activeTab.preview ? activeTab.previewReturnMode ?? mode : mode;
+  const top = activeTab.preview ? activeTab.canvasScroll : visualScroll(activeTab).scrollTop;
   const sourceTop = source.hidden ? activeTab.sourceScroll : source.scrollTop;
-  const sourceFocused = document.activeElement === source;
-  syncVisual();
+  const wasSplit = Boolean(activeTab.sideBySide);
   activeTab.sourceScroll = sourceTop;
-  activeTab.sideBySide = !activeTab.sideBySide;
+  if (activeTab.preview) {
+    activeTab.previewMarkdown = undefined;
+    activeTab.previewRevision = (activeTab.previewRevision ?? 0) + 1;
+  }
   activeTab.preview = false;
-  if (!activeTab.sideBySide) mode = 'visual';
-  mirrorSource(activeTab);
+  activeTab.sideBySide = next === 'split';
+  if (next !== 'visual') prepareSource(activeTab);
+  if (next !== 'source' && activeTab.visualMarkdown !== markdown) {
+    if (next === 'visual' && !wasSplit) resetVisual(markdown);
+    else syncVisual();
+  }
+  mode = next === 'split' ? previousMode : next;
   showMode();
-  if (!activeTab.sideBySide && sourceFocused && !busy) editor.view.focus();
   visualScroll(activeTab).scrollTop = top;
   source.scrollTop = sourceTop;
   updateToolbar();
+  if (mode === 'source') source.focus({ preventScroll: true });
+  else editor.view.focus();
 }
 
 function visibleTabs(): DocumentTab[] {
@@ -884,10 +956,12 @@ function updatePaneHeaders(): void {
     header.querySelector<HTMLElement>('.pane-title')!.textContent = `${tab.name}${tab.markdown !== tab.savedMarkdown ? ' \u2022' : ''}`;
   }
   const control = document.querySelector<HTMLButtonElement>('[data-action="split"]')!;
-  const label = pair ? 'Unsplit' : 'Split';
+  const label = pair ? 'Unsplit files' : 'Split with another file...';
   control.querySelector('span')!.textContent = label;
   control.title = pair ? 'Unsplit the two documents' : 'Split with another document';
   control.setAttribute('aria-pressed', String(Boolean(pair)));
+  control.setAttribute('role', 'menuitemcheckbox');
+  control.setAttribute('aria-checked', String(Boolean(pair)));
   control.disabled = !pair && !tabs.some(tab => tab.id !== documentId && !pairFor(pairs, tab.id));
   scheduleResponsiveLayout();
 }
@@ -903,13 +977,13 @@ function showWorkspace(): void {
   if (mounted.length !== visible.length || mounted.some((pane, index) => pane !== visible[index].pane)) {
     for (const tab of tabs) {
       if (tab.pane.parentElement === root) {
-        tab.canvasScroll = visualScroll(tab).scrollTop;
+        if (!tab.preview) tab.canvasScroll = visualScroll(tab).scrollTop;
         if (!tab.source.hidden) tab.sourceScroll = tab.source.scrollTop;
       }
     }
     root.replaceChildren(...(pair ? [visible[0].pane, splitDivider(pair), visible[1].pane] : [visible[0].pane]));
     for (const tab of visible) {
-      visualScroll(tab).scrollTop = tab.canvasScroll;
+      if (!tab.preview) visualScroll(tab).scrollTop = tab.canvasScroll;
       tab.source.scrollTop = tab.sourceScroll;
     }
   }
@@ -931,7 +1005,8 @@ function captureTab(): void {
     markdown, savedMarkdown, name: documentName, path: documentPath, mode, editor, visual,
     undo: sourceUndo, redo: sourceRedo,
     selection: [source.selectionStart, source.selectionEnd],
-    sourceScroll: source.hidden ? activeTab.sourceScroll : source.scrollTop, canvasScroll: visualScroll(activeTab).scrollTop,
+    sourceScroll: source.hidden ? activeTab.sourceScroll : source.scrollTop,
+    canvasScroll: activeTab.preview ? activeTab.canvasScroll : visualScroll(activeTab).scrollTop,
   });
 }
 
@@ -988,21 +1063,43 @@ function renderTabs(): void {
 }
 
 function showMode(): void {
-  const sideBySide = Boolean(activeTab?.sideBySide);
-  source.hidden = !sideBySide && mode !== 'source';
+  const preview = Boolean(activeTab?.preview);
+  const sideBySide = Boolean(activeTab?.sideBySide && !preview);
+  const previewSource = Boolean(preview && activeTab?.previewSource);
+  source.hidden = preview ? !previewSource : !sideBySide && mode !== 'source';
   source.closest<HTMLElement>('.source-surface')!.hidden = source.hidden;
-  visual.hidden = !sideBySide && mode !== 'visual';
+  visual.hidden = preview || !sideBySide && mode !== 'visual';
   if (activeTab) activeTab.visualViewport.hidden = visual.hidden;
   activeTab?.viewport.classList.toggle('side-by-side', sideBySide);
-  const preview = Boolean(activeTab?.preview && mode === 'source');
-  activeTab?.viewport.classList.toggle('has-preview', preview);
+  activeTab?.viewport.classList.toggle('reader-preview', preview);
+  activeTab?.viewport.classList.toggle('has-preview', previewSource);
   if (activeTab) activeTab.viewport.querySelector<HTMLElement>('.live-preview')!.hidden = !preview;
-  element('view-switch').setAttribute('aria-checked', String(sideBySide));
-  element('view-switch').title = `${sideBySide ? 'Hide Source; keep Visual' : 'Show Source beside Visual'}${activeTab ? ` - ${activeTab.name}` : ''}`;
+  const current = sideBySide ? 'split' : mode === 'source' ? 'markdown' : 'visual';
+  for (const view of ['visual', 'markdown', 'split']) {
+    const control = element<HTMLButtonElement>(`view-${view}`);
+    const pressed = !preview && current === view;
+    control.setAttribute('aria-pressed', String(pressed));
+    if (control.getAttribute('role') === 'menuitemcheckbox') control.setAttribute('aria-checked', String(pressed));
+  }
+  const toggle = element<HTMLButtonElement>('preview-toggle');
+  toggle.setAttribute('aria-pressed', String(preview));
+  if (toggle.getAttribute('role') === 'menuitemcheckbox') toggle.setAttribute('aria-checked', String(preview));
+  toggle.querySelector('span')!.textContent = preview ? 'Back to editing' : 'Preview';
+  toggle.title = preview ? 'Return to the previous editing view' : 'Open reader preview';
+  element('preview-source-option').hidden = !preview;
+  element<HTMLInputElement>('preview-source').checked = Boolean(activeTab?.previewSource);
+  element('view-hint-text').innerHTML = preview
+    ? '<strong>Preview:</strong> Reader view; click choices and tabs without editing the document.'
+    : current === 'split'
+      ? '<strong>Split:</strong> Visual and Markdown are both editable, side by side.'
+      : current === 'markdown'
+        ? '<strong>Markdown:</strong> Edit the document source.'
+        : '<strong>Visual:</strong> Edit the document as it appears.';
   document.querySelector('.toolbar')!.classList.toggle('source-toolbar', mode === 'source');
   if (activeTab) activeTab.mode = mode;
   updatePaneHeaders();
   if (!visual.hidden) synchronizeVisualHeadingAnchors();
+  if (preview && activeTab) refreshPreview(activeTab);
   writingAssistance?.schedule();
 }
 
@@ -1292,7 +1389,7 @@ function editPublishingSource(id: string, raw: string, position: number): void {
   const block = ranges[ordinal];
   switchMode('source');
   if (!block) {
-    notify('The block changed. Its original Markdown is available in Source.', true);
+    notify('The block changed. Its original Markdown is available in Markdown view.', true);
     return;
   }
   source.focus();
@@ -1300,22 +1397,44 @@ function editPublishingSource(id: string, raw: string, position: number): void {
   source.scrollTop = Math.max(0, text.slice(0, block.from).split('\n').length * 24 - 50);
 }
 
-async function insertPublishingBlock(kind: string, insertionPosition?: number): Promise<boolean> {
+async function insertPublishingBlock(kind: string): Promise<boolean> {
   const template = publishingTemplates.find(item => item.id === kind);
   if (!template) return false;
+  const insertionDocument = documentId;
+  const sourceSelection = mode === 'source' ? [source.selectionStart, source.selectionEnd] as const : null;
   if (mode === 'visual' && template.category === 'alerts') {
     const changed = editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; }).setAlert(template.color).run();
     if (!changed) throw new Error('The alert could not be applied at the current selection.');
     editor.view.dispatch(closeHistory(editor.state.tr));
     return true;
   }
-  const selected = insertionPosition === undefined ? selectionMarkdown() : '';
   if (kind === 'publishing-selector' && (mode === 'visual' ? documentVariantOptions(editor).length :
     publishingBlockRanges(markdown).some(block => block.kind === 'selector'))) {
-    return insertPublishingBlock('publishing-zone', insertionPosition);
+    return insertPublishingBlock('publishing-zone');
   }
+  const insertionPosition = kind === 'publishing-zone' && mode === 'visual'
+    ? variantInsertionPosition(editor.state.selection) : undefined;
+  const selected = insertionPosition === undefined ? selectionMarkdown() : '';
   let raw = publishingTemplateMarkdown(kind, selected)!;
   let insertedVariants: string[] | undefined;
+  if (kind === 'publishing-include') {
+    const dialog = element<HTMLDialogElement>('publishing-include-dialog');
+    const title = element<HTMLInputElement>('publishing-include-name');
+    const path = element<HTMLInputElement>('publishing-include-path');
+    const preview = element('publishing-include-preview');
+    title.value = ''; path.value = '';
+    const updatePreview = () => {
+      const name = title.value.trim(); const file = path.value.trim();
+      preview.textContent = name && file ? includeMarkdown(name, file) : '[!INCLUDE [<title>](<filepath>)]';
+    };
+    title.oninput = updatePreview; path.oninput = updatePreview; updatePreview();
+    dialog.returnValue = 'cancel'; dialog.showModal(); title.focus();
+    const choice = await new Promise<string>(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue), { once: true }));
+    if (choice !== 'insert') return true;
+    const name = title.value.trim(); const file = path.value.trim();
+    if (!name || !file) throw new Error('Enter both a title and a file path for the include.');
+    raw = includeMarkdown(name, file);
+  }
   if (kind === 'publishing-zone') {
     const choices = mode === 'visual' ? documentVariantOptions(editor) : publishingBlockRanges(markdown)
       .flatMap(block => block.kind === 'selector' ? editablePublishingBlockAtStart(block.raw)?.options ?? [] : []);
@@ -1356,6 +1475,7 @@ async function insertPublishingBlock(kind: string, insertionPosition?: number): 
       ? `:::image type="complex" source="${image}" alt-text="${alt}":::\n${description}\n:::image-end`
       : `:::image type="content" source="${image}" alt-text="${alt}":::`;
   }
+  if (documentId !== insertionDocument) throw new Error('The active document changed. Insert the block again in the intended document.');
   const metadata = kind === 'publishing-metadata';
   if (metadata && publishingBlockRanges(markdown).some(block => block.kind === 'metadata' && block.from === 0)) {
     switchMode('visual');
@@ -1366,13 +1486,20 @@ async function insertPublishingBlock(kind: string, insertionPosition?: number): 
   if (mode === 'visual') {
     const chain = editor.chain().focus().command(({ tr }) => { closeHistory(tr); return true; });
     if (!editor.markdown) throw new Error('The Markdown parser is unavailable.');
-    const content = [...(editor.markdown.parse(raw).content ?? []), { type: 'paragraph' }];
-    const inserted = metadata ? chain.insertContentAt(0, content).run() :
-      insertionPosition === undefined ? chain.insertContent(content).run() :
-        chain.insertContentAt(insertionPosition, content).setTextSelection(insertionPosition + 2).run();
+    const parsedContent = editor.markdown.parse(raw).content ?? [];
+    const variantInsertion = insertedVariants ? prepareVariantInsertion(editor.schema, parsedContent) : null;
+    const content = variantInsertion?.content ?? [...parsedContent, { type: 'paragraph' }];
+    let reachableVariants = insertedVariants;
+    const insertion = metadata ? chain.insertContentAt(0, content)
+      : insertionPosition !== undefined ? chain.insertContentAt(insertionPosition, content)
+        : chain.insertContent(content);
+    const inserted = insertion.command(({ tr }) => {
+      if (variantInsertion) reachableVariants = selectInsertedVariant(tr, variantInsertion.zone);
+      return true;
+    }).run();
     if (!inserted) throw new Error('The publishing block could not be inserted at the current selection.');
-    if (insertedVariants && activeTab && !insertedVariants.includes(activeTab.pane.dataset.variantSelection ?? '')) {
-      choosePublishingVariant(activeTab.pane, insertedVariants[0]);
+    if (reachableVariants && activeTab && !reachableVariants.includes(activeTab.pane.dataset.variantSelection ?? '')) {
+      choosePublishingVariant(activeTab.pane, reachableVariants[0]);
       editor.view.focus();
     }
   } else if (metadata) {
@@ -1381,7 +1508,12 @@ async function insertPublishingBlock(kind: string, insertionPosition?: number): 
     source.focus();
     source.setSelectionRange(0, raw.length);
   } else {
-    source.setRangeText(`\n\n${raw}\n\n`, source.selectionStart, source.selectionEnd, 'end');
+    const [start, end] = sourceSelection ?? [source.selectionStart, source.selectionEnd];
+    if (insertedVariants) {
+      const next = `${source.value.slice(0, start)}\n\n${raw}\n\n${source.value.slice(end)}`;
+      validateSourceVariantInsertion(next, start + 2);
+    }
+    source.setRangeText(`\n\n${raw}\n\n`, start, end, 'end');
     changed(source.value);
     source.focus();
   }
@@ -1399,7 +1531,11 @@ function selectionMarkdown(): string {
 function update(): void {
   renderTabs();
   updatePaneHeaders();
-  for (const tab of tabs) if (tab.pane.isConnected) refreshPublishingVariants(tab.pane);
+  for (const tab of tabs) {
+    tab.pane.dataset.variantConfig = String(/^zone_pivot_groups\s*:/m.test(tab.markdown));
+    refreshProjectVariantLabels(tab);
+    if (tab.pane.isConnected) refreshPublishingVariants(tab.pane);
+  }
   synchronizeVisualHeadingAnchors();
   const dirty = markdown !== savedMarkdown;
   element('filename').textContent = documentName;
@@ -1420,6 +1556,8 @@ function update(): void {
     rawInteractiveExportRequired = hasInteractivePublishing(tokens);
     interactiveExportRequired = rawInteractiveExportRequired;
     exportCheckPending = false;
+    exportCheckError = '';
+    exportCheckComplete = false;
     exportCheckRevision++;
   }
   const outlineHeadings = headings(markdown, tokens);
@@ -1503,7 +1641,14 @@ function update(): void {
       moveOutlineSectionTo(from, target);
     });
     entry.addEventListener('click', () => {
-      if (mode === 'source') {
+      if (activeTab?.preview && !activeTab.previewSource) {
+        const preview = activeTab.viewport.querySelector<HTMLElement>('.document-preview')!;
+        const used = new Map<string, number>();
+        const anchor = outlineHeadings.slice(0, index + 1).map(heading => headingAnchor(heading.text, used)).at(-1);
+        const target = [...preview.querySelectorAll<HTMLElement>('[id]')].find(candidate => candidate.id === anchor)
+          ?? preview.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')[index];
+        if (target) { revealPublishingElement(target); target.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+      } else if (mode === 'source') {
         const offset = markdown.split('\n').slice(0, item.line).join('\n').length + (item.line > 0 ? 1 : 0);
         source.focus();
         source.setSelectionRange(offset, offset);
@@ -1564,23 +1709,17 @@ function storeDraft(): void {
 
 function switchMode(next: 'visual' | 'source'): void {
   editorMenu.hide();
-  if (activeTab) { activeTab.preview = false; activeTab.sideBySide = false; }
-  if (next === mode) { showMode(); return; }
-  if (next === 'source') {
-    source.value = markdown;
-    sourceUndo.length = 0;
-    sourceRedo.length = 0;
-  }
-  else resetVisual(markdown);
-  mode = next;
-  showMode();
-  updateToolbar();
-  if (next === 'source') source.focus({ preventScroll: true });
-  else editor.view.focus();
+  setEditingView(next);
 }
 
 function useSource(): void {
-  if (activeTab?.sideBySide) {
+  if (activeTab?.preview) {
+    if (!activeTab.previewSource) setPreviewSource(true);
+    mode = 'source';
+    activeTab.mode = mode;
+    updateToolbar();
+    writingAssistance?.schedule();
+  } else if (activeTab?.sideBySide) {
     mode = 'source';
     activeTab.mode = mode;
     updateToolbar();
@@ -1588,24 +1727,48 @@ function useSource(): void {
   } else if (mode !== 'source') switchMode('source');
 }
 
+function editingAvailable(target?: EventTarget | null): boolean {
+  const inPreview = target instanceof Element && Boolean(target.closest('.live-preview'));
+  if (!activeTab?.preview || (activeTab.previewSource && !inPreview)) return true;
+  notify('Preview is read-only. Return to editing or show Markdown beside the preview.');
+  return false;
+}
+
 function updateToolbar(): void {
   if (!editor) return;
+  const readerOnly = Boolean(activeTab?.preview && !activeTab.previewSource);
+  for (const control of document.querySelectorAll<HTMLButtonElement | HTMLSelectElement>(
+    '[data-group="style"] select, [data-group="text"] button, [data-group="paragraph"] button, [data-group="insert"] button, [data-group="insert-extra"] button, [data-action="undo"], [data-action="redo"], #alerts-menu button, #structure-menu button, #interactive-menu button',
+  )) control.disabled = readerOnly;
   if (exportCheckedMarkdown !== markdown || exportCheckedDocumentId !== documentId) {
     exportCheckedMarkdown = markdown;
     exportCheckedDocumentId = documentId;
     rawInteractiveExportRequired = requiresInteractiveExport(markdown);
     interactiveExportRequired = rawInteractiveExportRequired;
     exportCheckPending = false;
+    exportCheckError = '';
+    exportCheckComplete = false;
     exportCheckRevision++;
   }
+  if (!rawInteractiveExportRequired && !exportCheckPending && !exportCheckComplete && documentId &&
+      /\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(markdown)) {
+    exportCheckPending = true;
+    clearTimeout(exportCheckTimer);
+    const revision = exportCheckRevision;
+    exportCheckTimer = setTimeout(() => {
+      if (revision !== exportCheckRevision) return;
+      exportCheckPending = false;
+      void checkLocalVariantExportRestrictions();
+    }, 250);
+  }
   const restriction = element('export-restriction');
-  restriction.hidden = !interactiveExportRequired && !exportCheckPending;
+  restriction.hidden = !interactiveExportRequired && !exportCheckPending && !exportCheckError;
   document.querySelector('#export-menu [data-action="export-html"]')?.classList.toggle('recommended', interactiveExportRequired);
-  restriction.textContent = exportCheckPending ? 'Checking local variant configuration for tabbed examples and variants...' :
-    'Tabbed examples and variants require HTML. Word and PDF are not supported for this document.';
+  restriction.textContent = exportCheckPending ? 'Checking local includes and variant configuration...' :
+    exportCheckError || 'Tabbed examples and variants require HTML. Word and PDF are not supported for this document.';
   for (const control of document.querySelectorAll<HTMLButtonElement>('[data-action="export-docx"],[data-action="export-pdf"]')) {
-    control.disabled = interactiveExportRequired || exportCheckPending;
-    control.title = interactiveExportRequired ? interactiveExportMessage : exportCheckPending ? restriction.textContent : control.textContent?.trim() ?? '';
+    control.disabled = interactiveExportRequired || exportCheckPending || Boolean(exportCheckError);
+    control.title = interactiveExportRequired ? interactiveExportMessage : exportCheckPending || exportCheckError ? restriction.textContent : control.textContent?.trim() ?? '';
     if (control.disabled) control.setAttribute('aria-describedby', 'export-restriction');
     else control.removeAttribute('aria-describedby');
   }
@@ -1631,7 +1794,9 @@ function updateToolbar(): void {
   }
   window.lekh.setEditorContext({
     mode, heading: Number(level ?? 0), inTable: mode === 'visual' && editor.isActive('table'),
-    hasVariantSelector: hasSelector, hasInteractivePublishing: interactiveExportRequired,
+    view: activeTab?.sideBySide ? 'split' : activeTab?.preview ? activeTab.previewReturnMode ?? mode : mode,
+    preview: Boolean(activeTab?.preview), previewSource: Boolean(activeTab?.previewSource),
+    hasVariantSelector: hasSelector, hasInteractivePublishing: interactiveExportRequired || exportCheckPending || Boolean(exportCheckError),
     formField: document.activeElement instanceof Element && Boolean(document.activeElement.closest('.publishing-field, .publishing-raw-editor')),
     active: mode === 'visual' ? Object.entries(names).filter(([, name]) => editor.isActive(name)).map(([command]) => command) : [],
   });
@@ -1641,34 +1806,41 @@ function invalidateExportCheck(): void {
   exportCheckedMarkdown = undefined;
   exportCheckRevision++;
   exportCheckPending = false;
+  exportCheckError = '';
+  exportCheckComplete = false;
+  clearTimeout(exportCheckTimer);
   updateToolbar();
 }
 
 async function checkLocalVariantExportRestrictions(): Promise<void> {
-  if (!documentId || rawInteractiveExportRequired || !/^zone_pivot_groups\s*:/m.test(markdown)) return;
+  if (!documentId || rawInteractiveExportRequired || exportCheckPending || exportCheckComplete ||
+      !/\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(markdown)) return;
   const id = documentId;
   const content = markdown;
   const revision = ++exportCheckRevision;
   exportCheckPending = true;
+  exportCheckError = '';
   updateToolbar();
   try {
-    const prepared = unwrap(await window.lekh.prepareVariantConfiguration(id, content));
+    const interactive = unwrap(await window.lekh.includesRequireInteractiveExport(id, content));
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
-      interactiveExportRequired = requiresInteractiveExport(prepared);
+      interactiveExportRequired = interactive;
     }
   } catch (error) {
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
-      notify(`Could not check local variant configuration for export: ${error instanceof Error ? error.message : String(error)}`, true);
+      exportCheckError = `Could not check included content for export: ${error instanceof Error ? error.message : String(error)}`;
     }
   } finally {
     if (revision === exportCheckRevision && id === documentId && content === markdown) {
       exportCheckPending = false;
+      exportCheckComplete = true;
       updateToolbar();
     }
   }
 }
 
 function setHeading(value: number): void {
+  if (!editingAvailable()) return;
   if (!Number.isInteger(value) || value < 0 || value > 6) throw new Error('Unsupported heading level.');
   if (mode === 'source') {
     const start = source.selectionStart === 0 ? 0 : source.value.lastIndexOf('\n', source.selectionStart - 1) + 1;
@@ -1708,7 +1880,7 @@ function insertAdvanced(kind: string): void {
   switchMode('source');
   if (wasVisual) source.setSelectionRange(source.value.length, source.value.length);
   if (kind === 'frontmatter') {
-    if (/^(?:\uFEFF)?---\r?\n/.test(source.value)) throw new Error('This document already starts with a front-matter block. Edit it in Source mode instead.');
+    if (/^(?:\uFEFF)?---\r?\n/.test(source.value)) throw new Error('This document already starts with a front-matter block. Edit it in Markdown view instead.');
     source.setSelectionRange(0, 0);
     insertSource('---\ntitle: Untitled\nauthor: ""\ndate: ""\n---\n\n');
   } else if (kind === 'math') insertSource('\n\n$$\nx^2 + y^2 = z^2\n$$\n\n');
@@ -1735,7 +1907,7 @@ function insertAdvanced(kind: string): void {
     changed(source.value);
     source.focus();
   } else throw new Error('Unsupported insert command.');
-  notify('Inserted in Source mode. Math and footnotes remain source syntax; YAML is preserved as metadata rather than article text.');
+  notify('Inserted in Markdown view. Math and footnotes remain source syntax; YAML is preserved as metadata rather than article text.');
 }
 
 function applyDocumentEdit(updated: string): void {
@@ -1947,10 +2119,12 @@ async function save(saveAs = false): Promise<boolean> {
 function refreshPublishingFiles(): void {
   for (const tab of tabs) {
     if (!/\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(tab.markdown)) continue;
+    if (/^zone_pivot_groups\s*:/m.test(tab.markdown)) refreshProjectVariantLabels(tab, true);
     tab.previewMarkdown = undefined;
     refreshPreview(tab);
     window.dispatchEvent(new CustomEvent('lekh-publishing-refresh', { detail: tab.id }));
   }
+  if (/\[!INCLUDE\b|^zone_pivot_groups\s*:/im.test(markdown)) invalidateExportCheck();
 }
 
 let zoomRevision = 0;
@@ -2017,6 +2191,9 @@ async function openPending(): Promise<void> {
 }
 
 async function runAction(action: string): Promise<void> {
+  const edits = action.startsWith('format:') || action.startsWith('heading:') || action.startsWith('insert:') || action.startsWith('block:') ||
+    ['undo', 'redo', 'paste-markdown', 'paste-image', 'link', 'image', 'table', 'row', 'column', 'delete-row', 'delete-column', 'delete-table'].includes(action);
+  if (edits && !editingAvailable()) return;
   const focused = document.activeElement;
   if (action === 'command-palette') { commandPalette.open(); return; }
   if ((action === 'undo' || action === 'redo') && mode === 'visual' && !busy && editor.isEditable &&
@@ -2104,6 +2281,7 @@ async function chooseImageStorage(image: string): Promise<void> {
 }
 
 function format(command: string): void {
+  if (!editingAvailable()) return;
   if (mode === 'source') {
     const syntax: Record<string, [string, string]> = {
       bold: ['**', '**'], italic: ['*', '*'], strike: ['~~', '~~'], code: ['`', '`'],
@@ -2198,12 +2376,30 @@ async function dispatch(action: string): Promise<void> {
   }
   switch (action) {
     case 'command-palette': commandPalette.open(); break;
+    case 'revoke-include-folder': {
+      unwrap(await window.lekh.revokeIncludeFolder(documentId));
+      refreshPublishingFiles();
+      refreshLocalImages(documentId);
+      invalidateExportCheck();
+      notify('Project-folder include access has been stopped for this document.');
+      break;
+    }
+    case 'allow-include-folder': {
+      if (unwrap(await window.lekh.allowIncludeFolder(documentId))) {
+        refreshPublishingFiles();
+        refreshLocalImages(documentId);
+        invalidateExportCheck();
+        notify('Local includes and their images are allowed within the selected folder for this document and session.');
+      }
+      break;
+    }
     case 'revoke-image-folder': {
       unwrap(await window.lekh.revokeImageFolder(documentId));
       invalidateExportCheck();
       refreshLocalImages(documentId);
       for (const tab of tabs) {
         if (tab.id !== documentId) continue;
+        refreshProjectVariantLabels(tab, true);
         tab.previewMarkdown = undefined;
         refreshPreview(tab);
       }
@@ -2212,14 +2408,10 @@ async function dispatch(action: string): Promise<void> {
     }
     case 'allow-image-folder': {
       if (unwrap(await window.lekh.allowImageFolder(documentId))) {
-        invalidateExportCheck();
+        refreshPublishingFiles();
         refreshLocalImages(documentId);
-        for (const tab of tabs) {
-          if (tab.id !== documentId) continue;
-          tab.previewMarkdown = undefined;
-          refreshPreview(tab);
-        }
-        notify('Project-folder images are allowed only within the selected folder for this document and session.');
+        invalidateExportCheck();
+        notify('Project images and variant labels are allowed within the selected folder for this document and session.');
       }
       break;
     }
@@ -2232,9 +2424,14 @@ async function dispatch(action: string): Promise<void> {
       notify(`${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} \u00b7 ${markdown.length.toLocaleString()} characters \u00b7 ${paragraphs.toLocaleString()} ${paragraphs === 1 ? 'paragraph' : 'paragraphs'} \u00b7 ${headingCount.toLocaleString()} ${headingCount === 1 ? 'heading' : 'headings'} \u00b7 about ${Math.max(1, Math.ceil(words / 220))} min read`);
       break;
     }
-    case 'side-by-side': toggleSideBySide(); break;
+    case 'edit-split': setEditingView('split'); break;
+    case 'side-by-side': setEditingView(activeTab?.sideBySide && !activeTab.preview ? 'visual' : 'split'); break;
     case 'split': openSplit(); break;
     case 'preview': togglePreview(); break;
+    case 'preview-source':
+      if (!activeTab?.preview) throw new Error('Open Preview before showing Markdown beside it.');
+      setPreviewSource(!activeTab.previewSource);
+      break;
     case 'unsplit': unsplit(); break;
     case 'paste-image': {
       const image = unwrap(await window.lekh.readClipboardImage());
@@ -2407,7 +2604,7 @@ function activateEventPane(event: Event): void {
   if (busy || !(event.target instanceof HTMLElement)) return;
   const id = event.target.closest<HTMLElement>('.document-pane')?.dataset.documentId;
   if (id && id !== documentId) activateTab(id);
-  if (activeTab?.sideBySide) {
+  if (activeTab?.sideBySide && !activeTab.preview) {
     const next = event.target.closest('.source-surface') ? 'source' : event.target.closest('.visual-surface') ? 'visual' : null;
     if (next && next !== mode) {
       mode = next;
@@ -2421,6 +2618,9 @@ function activateEventPane(event: Event): void {
 element('canvas').addEventListener('pointerdown', activateEventPane, true);
 element('canvas').addEventListener('focusin', activateEventPane, true);
 element('canvas').addEventListener('contextmenu', activateEventPane, true);
+element<HTMLInputElement>('preview-source').addEventListener('change', event => {
+  if (!busy) setPreviewSource((event.target as HTMLInputElement).checked);
+});
 for (const id of ['find-text', 'replace-text', 'find-case', 'find-word', 'find-regex']) {
   element(id).addEventListener('input', scheduleSearch);
 }
@@ -2670,8 +2870,26 @@ element('link-dialog').addEventListener('close', () => {
   if (!element<HTMLDialogElement>('link-dialog').open) linkSelection = null;
 });
 element('canvas').addEventListener('error', event => {
-  if (event.target instanceof HTMLImageElement) notify('An image could not be displayed. Check its path and local project-folder access, or use Insert image to embed it.', true);
+  if (!(event.target instanceof HTMLImageElement)) return;
+  const image = event.target;
+  const id = image.closest<HTMLElement>('.document-pane')?.dataset.documentId;
+  notify('An image could not be displayed. Check its path, choose its project folder, or use Insert image to embed it.', true);
+  if (!id || !tabs.find(tab => tab.id === id)?.path || !image.src.startsWith('lekh-image:')) return;
+  const control = document.createElement('button');
+  control.type = 'button';
+  control.className = 'notification-action';
+  control.textContent = 'Choose project folder...';
+  control.addEventListener('click', event => {
+    event.stopPropagation();
+    window.dispatchEvent(new CustomEvent('lekh-project-assets', { detail: id }));
+  });
+  element('notification').append(' ', control);
 }, true);
+window.addEventListener('lekh-project-assets', event => {
+  const id: unknown = (event as CustomEvent<unknown>).detail;
+  if (typeof id !== 'string' || !tabs.some(tab => tab.id === id)) return;
+  void run(async () => { activateTab(id); await dispatch('allow-image-folder'); });
+});
 element('canvas').addEventListener('contextmenu', event => {
   contextImageSource = event.target instanceof HTMLImageElement ? event.target.getAttribute('data-lekh-source') : null;
   const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('.tiptap a') : null;
@@ -2714,6 +2932,8 @@ element('canvas').addEventListener('paste', event => {
   if (!hasImage) return;
   event.preventDefault();
   event.stopPropagation();
+  activateEventPane(event);
+  if (!editingAvailable(event.target)) return;
   void run(async () => {
     if (!file) { await dispatch('paste-image'); return; }
     if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(file.type)) throw new Error('Paste a PNG, JPEG, GIF, or WebP image.');
@@ -2736,6 +2956,7 @@ element('canvas').addEventListener('drop', event => {
   event.preventDefault();
   event.stopPropagation();
   activateEventPane(event);
+  if (!editingAvailable(event.target)) return;
   void run(async () => {
     if (files.length !== 1) throw new Error('Drop one image at a time.');
     const file = files[0];
@@ -2820,17 +3041,13 @@ function scheduleResponsiveLayout(): void {
 function layoutResponsiveChrome(): void {
   if (!toolbar.getClientRects().length) return;
   const focused = document.activeElement;
-  const key = `${toolbar.clientWidth}:${document.querySelector('.split-control')!.textContent}`;
+  const key = `${toolbar.clientWidth}:${element('preview-toggle').textContent}`;
   if (key !== toolbarLayoutKey) {
     toolbarLayoutKey = key;
     for (const { control, slot } of toolbarSlots) {
       slot.after(control);
       control.setAttribute('role', 'group');
       for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
-        if (item.id === 'view-switch') {
-          item.setAttribute('role', 'switch');
-          continue;
-        }
         item.removeAttribute('role');
         item.removeAttribute('aria-checked');
       }
@@ -2840,8 +3057,9 @@ function layoutResponsiveChrome(): void {
       if (toolbar.scrollWidth <= toolbar.clientWidth) break;
       overflow.prepend(control);
       for (const item of control.querySelectorAll<HTMLButtonElement>('button')) {
-        item.setAttribute('role', item.dataset.command || item.id === 'view-switch' ? 'menuitemcheckbox' : 'menuitem');
-        if (item.dataset.command) item.setAttribute('aria-checked', item.getAttribute('aria-pressed') ?? 'false');
+        const checked = Boolean(item.dataset.command) || item.id.startsWith('view-') || item.id === 'preview-toggle';
+        item.setAttribute('role', checked ? 'menuitemcheckbox' : 'menuitem');
+        if (checked) item.setAttribute('aria-checked', item.getAttribute('aria-pressed') ?? 'false');
       }
     }
     toolbar.scrollLeft = 0;
