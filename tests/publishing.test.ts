@@ -140,6 +140,25 @@ test('image directives expose ordinary image tokens with safe alt, caption, bord
   assert.equal(publishingBlockAtStart(escaped)?.raw, escaped);
 });
 
+test('directive end markers accept trailing colons without consuming following content', () => {
+  const blocks = [
+    { kind: 'image', raw: ':::image type="complex" source="../../articles/diagram.png" alt-text="A diagram.":::\nLong **description**.\n:::image-end:::\n' },
+    { kind: 'zone', raw: ':::zone pivot="first"\nVariant body.\n:::zone-end:::\n' },
+    { kind: 'selector', raw: ':::selector title="Choose"\n- [First](#variant/first)\n:::selector-end:::\n' },
+    { kind: 'tabs', raw: ':::tabs\n:::tab First\nPanel body.\n:::tab-end:::\n:::tabs-end:::\n' },
+    { kind: 'steps', raw: ':::steps\n1. First step.\n:::steps-end:::\n' },
+  ];
+  for (const { kind, raw } of blocks) {
+    for (const ending of [':::', ' :::', ':::  ']) {
+      const source = raw.replace(/:::$/gm, ending);
+      assert.deepEqual(publishingBlockAtStart(`${source}\nFollowing paragraph.\n`), { kind, raw: source });
+      const html = documentPreviewHTML(`${source}\nFollowing paragraph.\n`, '');
+      assert.doesNotMatch(html, /not rendered|Source retained/);
+      assert.match(html, /<p>Following paragraph\.<\/p>/);
+    }
+  }
+});
+
 test('frontmatter is collapsed, escaped, retained in tokens and excluded from article headings and exports', async () => {
   const source = '---\r\ntitle: "<script>Bad</script>"\r\ndescription: hidden metadata\r\n---\r\n\r\n# Actual article\r\n';
   const html = documentPreviewHTML(source, '');

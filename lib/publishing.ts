@@ -69,10 +69,10 @@ const includePattern = /^ {0,3}\[!INCLUDE\b/i;
 const horizontalPattern = /^ {0,3}-{3,}[ \t]*$/;
 
 function directive(line: string): { name: string; rest: string; selfClosing: boolean } | null {
-  const match = directivePattern.exec(line);
+  const match = directivePattern.exec(line.replace(/[ \t]*:::[ \t]*$/, ''));
   if (!match) return null;
   const rest = match[2] ?? '';
-  return { name: match[1].toLowerCase(), rest: rest.replace(/[ \t]*:::[ \t]*$/, ''), selfClosing: /:::[ \t]*$/.test(rest) };
+  return { name: match[1].toLowerCase(), rest, selfClosing: /:::[ \t]*$/.test(line) };
 }
 
 function opensBlock(item: NonNullable<ReturnType<typeof directive>>): boolean {

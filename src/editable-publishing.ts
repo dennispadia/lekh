@@ -808,6 +808,7 @@ const ImageDescriptionNode = Node.create<Options>({
       form.append(image, inputs[2].wrapper, settings, description, paragraphAfter(context));
       const contentDOM = document.createElement('div'); contentDOM.className = 'publishing-editable-body'; dom.append(form, contentDOM);
       const refresh = () => {
+        image.dataset.lekhSource = String(context.node.attrs.source);
         image.src = imageDisplayURL(String(context.node.attrs.source), options.documentId); image.alt = String(context.node.attrs.alt);
         contentDOM.hidden = context.node.attrs.imageType !== 'complex'; description.hidden = context.node.attrs.imageType === 'complex'; inputs.forEach(field => field.refresh());
       };
