@@ -3876,6 +3876,8 @@ try {
   await main.evaluate(`smokeOpenPath=${JSON.stringify(relationshipFile)}`);
   await action('open');
   await action('visual');
+  const relationshipDocument = await activeTab();
+  const relationshipTabCount = await tabCount();
   await waitFor(async () => ui("document.querySelectorAll('#visual-editor .include-relationship-control input').length === 3"), 'Visual relationship checkboxes');
   await ui("document.querySelector('#visual-editor .include-relationship-control input').click()");
   await waitFor(async () => ui("document.querySelector('#relationships-status').textContent.includes('Choose a workspace')"), 'relationship workspace opt-in');
@@ -3898,9 +3900,18 @@ try {
   assert.equal(await ui("document.querySelectorAll('.relationship-include').length"), 2, 'Include list groups repeated file usage');
   await ui("document.querySelector('.relationship-include').click()");
   await waitFor(async () => ui("document.querySelector('#relationships-target').textContent === 'shared/first.md' && document.querySelector('.relationship-line') !== null"), 'restored focused include');
+  await action('source');
+  const unsavedRelationshipText = relationshipText + '\nUnsaved article edit.\n';
+  await sourceEdit(unsavedRelationshipText);
+  await waitFor(async () => ui("document.querySelector('.relationship-line') !== null"), 'relationships after unsaved edit');
   await ui("document.querySelector('.relationship-line').click()");
-  await waitFor(async () => ui("document.activeElement.id === 'source-editor'"), 'consumer line navigation');
+  await waitFor(async () => ui(`document.activeElement.id === 'source-editor' && document.querySelector('#source-editor').selectionStart === ${relationshipText.indexOf('[!INCLUDE')}`), 'consumer line navigation');
+  assert.equal(await activeTab(), relationshipDocument, 'Canonical relationship paths reuse the existing document');
+  assert.equal(await tabCount(), relationshipTabCount, 'Relationship navigation does not duplicate a short-path tab');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), unsavedRelationshipText, 'Navigation preserves unsaved edits');
   assert.equal(await ui("document.querySelector('#source-editor').selectionStart"), relationshipText.indexOf('[!INCLUDE'));
+  await menuAction('undo');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), relationshipText);
   await ui("document.querySelector('#relationships-revoke').click()");
   await waitFor(async () => ui("document.querySelectorAll('.relationship-consumer').length === 0 && document.querySelector('#relationships-status').textContent.includes('Choose a workspace')"), 'workspace revocation clears results');
   await ui("document.querySelector('#relationships-close').click()");

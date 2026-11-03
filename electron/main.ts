@@ -749,9 +749,19 @@ function installIPC(): void {
     const currentPath = document.path;
     const file = await realpath(path.resolve(grant.root, relative));
     if (!withinWorkspace(grant.root, file) || ![...grant.index.files.values()].some(entry => samePath(entry.file, file))) throw new Error('Choose a Markdown article listed in this workspace.');
+    // Keep an existing tab's identity when Windows used an equivalent 8.3 path.
+    let openPath = file;
+    for (const existing of documents.values()) {
+      if (!existing.path) continue;
+      try {
+        if (samePath(await realpath(existing.path), file)) { openPath = existing.path; break; }
+      } catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || !['ENOENT', 'ENOTDIR'].includes(String(error.code))) throw error;
+      }
+    }
     const content = await readMarkdown(file);
     if (documents.get(String(id)) !== document || document.path !== currentPath || relationshipWorkspaces.get(String(id)) !== grant) throw new Error('Workspace access changed. Refresh relationships.');
-    const opened = await openDocument(file, content);
+    const opened = await openDocument(openPath, content);
     if (!relationshipWorkspaces.has(opened.id)) relationshipWorkspaces.set(opened.id, { root: grant.root, index: grant.index });
     return opened;
   });
