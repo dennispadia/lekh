@@ -2,6 +2,7 @@
 
 ## 0.9.8
 
+- Retry editable directive images immediately after project-folder access is granted, including in Split view.
 - Accept closing directive markers with trailing colons, including `:::image-end:::`, without losing complex image descriptions or following content.
 - Preserve complex image descriptions through Visual edits and reopening.
 - Guard the genuine 0.9.7 -> 0.9.8 hosted upgrade matrix.

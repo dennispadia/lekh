@@ -2829,6 +2829,17 @@ try {
   await ui("document.querySelector('#notification .notification-action').click()");
   await waitFor(async () => ui("document.querySelector('.tiptap img')?.naturalWidth === 1"), 'project image refreshes after its own explicit grant');
   await menuAction('close-tab');
+  await writeFile(imageAccessFile, '# Complex image\n\n:::image type="complex" source="../assets/pixel.png" alt-text="Pixel":::\nLong description.\n:::image-end\n');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(imageAccessFile)}`);
+  await action('open');
+  await action('source');
+  await menuAction('edit-split');
+  await waitFor(async () => ui("Boolean(document.querySelector('#notification .notification-action'))"), 'complex image in Split offers project-folder access');
+  assert.equal(await ui("document.querySelector('[data-lekh-described-image] img').naturalWidth"), 0, 'Complex image starts without folder access');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(publishingRoot)}`);
+  await ui("document.querySelector('#notification .notification-action').click()");
+  await waitFor(async () => ui("document.querySelector('[data-lekh-described-image] img')?.naturalWidth === 1"), 'complex image refreshes in Split after its explicit grant');
+  await menuAction('close-tab');
   assert.equal(await ui("Boolean(document.querySelector('[data-action=allow-image-folder], [data-action=revoke-image-folder]'))"), false, 'Image permission commands are absent from toolbar menus');
   const sharedPublishing = '---\ntitle: Include metadata is not article content\n---\n\nShared included prose.\n\n![Shared pixel](../assets/pixel.png)\n';
   await writeFile(path.join(publishingRoot, 'includes', 'shared.md'), sharedPublishing);
