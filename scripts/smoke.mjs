@@ -4152,6 +4152,8 @@ try {
   await clickControl('.block-toolbar [data-action="block:duplicate"]');
   await waitFor(async () => (await visualBlocks()).filter(text => text === 'First paragraph.').length === 2, 'Toolbar duplicate');
   assert.equal(await ui("Boolean(document.activeElement.closest('.tiptap'))"), true, 'Toolbar clicks keep editor focus');
+  // The duplicate moves the toolbar on the next animation frame; do not click its old coordinates.
+  await ui("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
   await clickControl('.block-toolbar [data-action="block:remove"]');
   await waitFor(async () => JSON.stringify(await visualBlocks()) === JSON.stringify(before), 'Toolbar remove');
   await clickParagraph('First paragraph.');
