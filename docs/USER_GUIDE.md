@@ -110,6 +110,8 @@ Supported containers, including tabs and variant bodies around an alert, are edi
 #### Tabs and variant selectors
 
 **Interactive** includes **Tabbed examples** and **Variant selector**. Image descriptions, document metadata and Include are in **Structure**. Variant content is a follow-on action after creating a selector, not a separate starting option. Inline hints explain how to select, rename and add choices. New example and variant bodies are empty, with placeholders that disappear when clicked; there is no sample text to delete. Variant cards identify their assigned options and keep assignment controls in the header. Existing document text is never cleared when you focus it.
+
+Existing variant content, including code-only bodies inside numbered steps, is editable in Visual and Split views. Select its variant or use **Show and edit** to reveal it. Code fences may have up to three leading spaces relative to their containing block; their code contents and language are retained. The empty-content hint appears only for genuinely empty bodies.
 Select existing content before choosing tabs or variant content to retain it inside the new body. A selector inserts only choices, retaining selected prose separately rather than bundling variant bodies.
 
 **Tabbed examples:** a new block starts with two empty examples. Select a tab and type/format directly in its body, with no separate tab-name form above the content. Click the selected tab name again (or double-click it, or press **F2**) to rename it directly on the tab. **Enter** finishes renaming; **Escape** restores the previous name. The Markdown heading's `#tab/` identifier follows the tab label (for example, **Service Principal** becomes `#tab/serviceprincipal`). The **+** immediately after the tabs adds an example and puts the caret in its body. Each tab has an **×** to remove that example; undo restores its name and complete content. Removing the last tab removes the whole tabbed example. Inserting a block always leaves an empty line below it so you can keep writing.
@@ -215,10 +217,11 @@ Formatting shortcuts are scoped to document editors, not Find fields, dialogs, o
 ### Code blocks and languages
 
 - Insert a code block with the **Code block** icon (under **More formatting** in narrow windows), Ctrl+Shift+K, or **Insert > Code fence**. In Visual mode, use the language selector at the bottom-right of each block.
-- Search the offline language catalog by name or alias, such as **PowerShell**, **ps1**, **Python**, **JavaScript**, **C#**, **JSON**, or **YAML**. Arrow keys navigate results; Enter selects; Escape closes the picker.
+- Search the offline language catalog by name or alias, such as **PowerShell**, **ps1**, **Azure CLI**, **azurecli**, **Python**, **JavaScript**, **C#**, **JSON**, or **YAML**. Arrow keys navigate results; Enter selects; Escape closes the picker.
 - Choosing a language applies syntax colors immediately, with light/dark palettes matching your theme. It does **not** rewrite indentation, reformat, or run your code.
 - **Plain text** disables highlighting. Existing unsupported language labels are preserved and displayed as plain text, never guessed.
 - In Markdown view, specify the language after the opening fence, for example three backticks followed by `powershell`. Languages and code contents survive saving, reopening, and tab/mode switches.
+- **Azure CLI** uses shell-style syntax colors and preserves the `azurecli` fence label rather than changing it to `bash`. The `azure-cli` alias is also recognized.
 - **Copy** copies only the block's code, preserving its whitespace. PDF and Word exports include syntax colors using a print-friendly light palette, without the editor's buttons or language picker.
 
 ### Right-click Markdown menu
@@ -315,8 +318,17 @@ Export uses the active document's current contents, including unsaved edits, and
 Word output remains editable and reflows according to the receiving application's fonts and layout engine. DOCX and PDF are **not pixel-identical**, and page breaks may differ. Check the exported document before sharing, especially long tables, code, and complex nested content.
 
 - Missing, unreadable, or unsupported export images cause an explicit error instead of silently disappearing.
+- If an existing export cannot be replaced because it may be open or locked, the error names the destination and explains how to retry. Close the exported document in Word, a PDF reader, or another app, then export again, or choose a different filename. If it is already closed, check write permissions and file-sync restrictions. The failed replacement leaves the existing file intact; Lekh does not close other apps or delete the original.
 - Raw HTML is treated as text during export, not executed.
 - Math and footnotes do not have formatted rendering or structured export support; use Markdown view to preserve their Markdown syntax. YAML remains metadata rather than article text. Standard Markdown link references are resolved.
+
+## Markdown compatibility
+
+Markdown is the source syntax; **CommonMark** specifies its core rules, and a parser turns that text into document structure. **Markdig** is the parser used by Microsoft Learn, not a separate file format. Learn adds publishing-specific extensions on top of that core; see its [Markdown reference](https://learn.microsoft.com/en-us/contribute/content/markdown-reference).
+
+Lekh uses **markdown-it** for Preview and export, and **Tiptap Markdown** for Visual editing, rather than Markdig. It supports core Markdown features plus tables, tasks, strikethrough, highlighted code, Mermaid diagrams, and selected publishing extensions: alerts, tabs, includes, image directives, metadata, zones, and shared variant selectors. This is not a claim of complete CommonMark conformance or identical support for every Microsoft Learn extension.
+
+Use Preview to check supported publishing content locally, and the target publishing platform to verify its final behavior. Raw HTML is not executed, math and footnotes do not yet render as structured content, and Visual edits can normalize source syntax. Documents with tabs or variants require HTML rather than Word/PDF export. Use Markdown view when exact source or an unsupported extension must be retained.
 
 ## First-version boundaries
 

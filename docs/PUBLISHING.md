@@ -19,7 +19,7 @@ The repository is `dennispadia/lekh`. The [latest release](https://github.com/de
 
 The complete **0.9.5** unit, packaged desktop, setup and genuine hosted **0.9.4 -> 0.9.5** removal/cancellation-rollback/upgrade/repair gates passed the [official Windows build](https://github.com/dennispadia/lekh/actions/runs/41409759753). The old payload/profile restoration assertion remains mandatory; do not replace it with a skipped or label-only scenario.
 
-The current hosted gate targets the pinned public **0.9.5 -> 0.9.6** lineage and must pass before publication: real idle/running EXE upgrades, same-version rejection, removal-before-new, cancellation restoring old bytes, repair and profile-preserving cleanup.
+The [official 0.9.6 Windows build](https://github.com/dennispadia/lekh/actions/runs/41498704662) verified the genuine 0.9.5 -> 0.9.6 lineage. The current hosted gate targets the pinned public **0.9.6 -> 0.9.7** lineage and must pass before publication: real idle/running EXE upgrades, same-version rejection, removal-before-new, cancellation restoring old bytes, repair and profile-preserving cleanup.
 
 Lekh's independent identities are npm package `lekh`, application ID `com.lekh.desktop`, `%APPDATA%\Lekh` profile, and `%LOCALAPPDATA%\lekh` application directory. The executable is `Lekh - Markdown editor.exe`. The independent MSI upgrade code is `DCBCF7FA-11DA-4F35-8D27-D066EEC6C582`; keep it stable for future Lekh upgrades and consistent with installer policy and verification tests. Existing Lekh profiles are retained during upgrades. No migration aliases or automatic removal of another product are included.
 

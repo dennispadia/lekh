@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -874,6 +874,47 @@ async function runChecks() {
   assert.equal(word.subarray(0, 2).toString(), 'PK');
   assert.ok(word.length > 7000);
   console.log(`PASS: native Word export (${word.length} bytes)`);
+
+  if (process.platform === 'win32') {
+    const script = `$ErrorActionPreference = 'Stop'
+$file = [System.IO.File]::Open('${docx.replace(/'/g, "''")}', [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+try {
+  [Console]::WriteLine('LOCKED')
+  [Console]::ReadLine() | Out-Null
+} finally { $file.Dispose() }`;
+    const lock = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let lockOutput = '';
+    let lockError;
+    lock.on('error', error => { lockError = error; });
+    lock.stdin.on('error', error => { lockError = error; });
+    lock.stdout.on('data', data => { lockOutput += data; });
+    lock.stderr.on('data', data => { lockOutput += data; });
+    try {
+      await waitFor(() => {
+        if (lockError) throw lockError;
+        if (lock.exitCode !== null) throw new Error(`Could not lock export destination: ${lockOutput}`);
+        return lockOutput.includes('LOCKED');
+      }, 'lock export destination', 10000);
+      await menuAction('export-docx');
+      const message = await ui("document.querySelector('#notification').textContent");
+      assert.match(message, /Could not replace "export\.docx"/);
+      assert.match(message, /may be open or locked by Word/);
+      assert.match(message, /Close the file and export again/);
+      assert.match(message, /write permissions and file-sync restrictions/);
+      assert.doesNotMatch(message, /EPERM|\.tmp|Exported successfully/);
+      assert.deepEqual(await readFile(docx), word, 'A failed replacement preserves the existing export');
+      assert.ok(!(await readdir(temporary)).some(name => name.startsWith('.export.docx.') && name.endsWith('.tmp')), 'Failed export removes its temporary file');
+    } finally {
+      if (lock.exitCode === null && !lock.stdin.destroyed) lock.stdin.end('\n');
+      await waitFor(() => lock.exitCode !== null || lockError, 'release export file lock', 10000);
+      if (lockError) throw lockError;
+      assert.equal(lock.exitCode, 0, lockOutput);
+    }
+    await menuAction('export-docx');
+    assert.match(await ui("document.querySelector('#notification').textContent"), /Exported successfully/);
+    assert.equal((await readFile(docx)).subarray(0, 2).toString(), 'PK');
+    console.log('PASS: locked Word destination gives actionable guidance, preserves the original, cleans staging files and exports after unlocking');
+  }
 
   const pdf = path.join(temporary, 'export.pdf');
   await main.evaluate(`smokeSavePath = ${JSON.stringify(pdf)}`);
@@ -1796,20 +1837,23 @@ async function runChecks() {
     '{\n  "enabled": true,\n  "count": 42\n}',
     'const leavePlain = 42;',
     '<script>window.__codeDidRun = true</script>\n  custom text',
+    '# Azure CLI\naz vmss create --resource-group "$group" --name "demo"',
   ];
   const languageFixture = '# Code language test\n\n' + codeBodies.map((body, index) =>
-    `\`\`\`${['powershell', 'json', '', 'my-custom-language'][index]}\n${body}\n\`\`\``).join('\n\n');
+    `\`\`\`${['powershell', 'json', '', 'my-custom-language', 'azurecli'][index]}\n${body}\n\`\`\``).join('\n\n');
   await action('new');
   await action('source');
   await sourceEdit(languageFixture);
   await action('visual');
   const codeText = () => ui("Array.from(document.querySelectorAll('.code-block pre code'), code => code.textContent)");
   assert.deepEqual(await codeText(), codeBodies);
-  assert.equal(await ui("document.querySelectorAll('.code-block').length"), 4);
+  assert.equal(await ui("document.querySelectorAll('.code-block').length"), 5);
   assert.ok(await ui("document.querySelector('.code-block .hljs-variable') !== null"));
   assert.equal(await ui("document.querySelectorAll('.code-block')[2].querySelectorAll('[class*=hljs-]').length"), 0);
   assert.equal(await ui("document.querySelectorAll('.code-block')[3].querySelectorAll('[class*=hljs-]').length"), 0);
   assert.equal(await ui("typeof window.__codeDidRun"), 'undefined');
+  assert.match(await ui("document.querySelectorAll('.code-language')[4].textContent"), /Azure CLI/);
+  assert.ok(await ui("document.querySelectorAll('.code-block')[4].querySelector('.hljs-string') !== null"));
   await menuAction('focus');
   await ui("document.querySelector('.code-language').click()");
   await browser.call('Input.dispatchKeyEvent', {type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27}, sessionId);
@@ -1822,6 +1866,10 @@ async function runChecks() {
     await ui(`(() => {const search=document.querySelector('.code-language-picker:popover-open input');search.value=${JSON.stringify(query)};search.dispatchEvent(new Event('input',{bubbles:true}));})()`);
     await ui(`document.querySelector('.code-language-picker:popover-open [data-language=${JSON.stringify(id)}]').click()`);
   };
+  await chooseCodeLanguage(4, 'bash', 'bash');
+  await chooseCodeLanguage(4, 'azurecli', 'azurecli');
+  assert.match(await ui("document.querySelectorAll('.code-language')[4].textContent"), /Azure CLI/);
+  assert.deepEqual(await codeText(), codeBodies);
   await chooseCodeLanguage(0, 'javascript', 'javascript');
   assert.match(await ui("document.querySelector('.code-language').textContent"), /JavaScript/);
   assert.deepEqual(await codeText(), codeBodies);
@@ -1860,12 +1908,17 @@ async function runChecks() {
   const savedCode = await readFile(codeFile, 'utf8');
   assert.match(savedCode, /```powershell/);
   assert.match(savedCode, /```my-custom-language/);
+  assert.match(savedCode, /```azurecli/);
   assert.doesNotMatch(savedCode, /```json|Search languages|copy-code|code-language-picker/);
   for (const body of codeBodies) assert.ok(savedCode.includes(body), 'Code text is preserved in Markdown');
   await action('source');
   assert.equal(await ui("document.querySelector('#source-editor').value"), savedCode);
   await action('visual');
   assert.deepEqual(await codeText(), codeBodies);
+  await action('preview');
+  assert.ok(await ui("document.querySelectorAll('.document-preview pre code')[4].querySelector('.hljs-string') !== null"));
+  assert.equal(await ui("document.querySelectorAll('.document-preview pre code')[4].textContent"), codeBodies[4] + '\n');
+  await action('visual');
   await action('new');
   await menuAction('previous-tab');
   assert.deepEqual(await codeText(), codeBodies);
@@ -1890,6 +1943,7 @@ async function runChecks() {
   await action('open');
   assert.deepEqual(await codeText(), codeBodies);
   assert.match(await ui("document.querySelector('.code-language').textContent"), /PowerShell/);
+  assert.match(await ui("document.querySelectorAll('.code-language')[4].textContent"), /Azure CLI/);
   await menuAction('close-tab');
   console.log('PASS: searchable code languages, alias/keyboard selection, per-block colors, undo/redo, raw copy, real visual editing, safe unknown/plain fences, mode/tab isolation, save/reopen and native PDF/Word exports');
 
@@ -2630,6 +2684,105 @@ async function runChecks() {
   assert.equal(await ui("document.querySelector('.visual-surface .publishing-document-selector > strong').textContent"), 'Operating system');
   console.log('PASS: shared file/heading/selection survive Preview, Visual and Split; comments hidden; selector alignment and actual pointer/keyboard document resizing');
   await menuAction('close-tab');
+  const codeVariantFile = path.join(publishingRoot, 'docs', 'code-variants.md');
+  const variantCommands = { windows: 'sudo zypper -n install sbd', linux: 'sudo zypper -n install sbd open-iscsi' };
+  const codeVariantSource = '---\nzone_pivot_groups: operating-system\n---\n\n# Code variants\n\n1. Install fencing packages.\n\n' +
+    Object.entries(variantCommands).map(([id, code]) =>
+      `   :::zone pivot="${id}"\n   \`\`\`bash\n   ${code}\n   \`\`\`\n   :::zone-end`).join('\n\n') + '\n\n2. Configure DNS.\n';
+  await writeFile(codeVariantFile, codeVariantSource);
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(codeVariantFile)}`);
+  await action('open');
+  await action('visual');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(path.join(publishingRoot, 'zone-pivot-groups.yml'))}`);
+  await ui("document.querySelector('.visual-surface .publishing-choose-shared-file').click()");
+  await waitFor(async () => ui("document.querySelector('.visual-surface [data-publishing-choice=windows]')?.textContent==='Updated Windows' && document.querySelector('#app').getAttribute('aria-busy')==='false'"), 'Shared labels for code-only variants');
+  const assertVariantCode = async id => {
+    assert.equal(await ui(`document.querySelector('.visual-surface [data-publishing-zone="${id}"] > .publishing-editable-body').hidden`), false);
+    assert.equal(await ui(`document.querySelector('.visual-surface [data-publishing-zone="${id}"] .code-block pre code').textContent`), variantCommands[id]);
+    assert.equal(await ui(`document.querySelectorAll('.visual-surface [data-publishing-zone="${id}"] .editor-empty-hint').length`), 0);
+  };
+  await assertVariantCode('windows');
+  await ui("document.querySelector('.visual-surface [data-publishing-choice=linux]').click()");
+  await assertVariantCode('linux');
+  await action('edit-split');
+  await assertVariantCode('linux');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), codeVariantSource);
+  await ui("[...document.querySelectorAll('.visual-surface [data-publishing-zone=windows] button')].find(button=>button.textContent==='Show and edit').click()");
+  await assertVariantCode('windows');
+  await action('preview');
+  await waitFor(async () => ui("Boolean(document.querySelector('.document-preview [data-publishing-zone=windows] pre code'))"), 'Preview shows the same variant code as Visual');
+  assert.equal(await ui("document.querySelector('.document-preview [data-publishing-zone=windows] pre code').textContent"), variantCommands.windows + '\n');
+  await action('visual');
+  await assertVariantCode('windows');
+  await ui(`(() => {
+    const code=document.querySelector('.visual-surface [data-publishing-zone=windows] .code-block pre code');
+    const range=document.createRange();range.selectNodeContents(code);range.collapse(false);
+    code.closest('.tiptap').focus();getSelection().removeAllRanges();getSelection().addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  })()`);
+  await browser.call('Input.insertText', {text:'\n# Edited in Visual'}, sessionId);
+  variantCommands.windows += '\n# Edited in Visual';
+  await assertVariantCode('windows');
+  await action('save');
+  const editedVariantSource = await readFile(codeVariantFile, 'utf8');
+  for (const command of Object.values(variantCommands)) assert.ok(editedVariantSource.includes(command.split('\n')[0]), 'Saving retains every variant command');
+  await menuAction('close-tab');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(codeVariantFile)}`);
+  await action('open');
+  await action('visual');
+  assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-zone=windows] .code-block pre code').textContent"), variantCommands.windows);
+  assert.equal(await ui("document.querySelector('.visual-surface [data-publishing-zone=linux] .code-block pre code').textContent"), variantCommands.linux);
+  await menuAction('close-tab');
+  console.log('PASS: code-only variants inside numbered steps render in Visual/Split/Preview, switch through shared choices and Show and edit, and retain every code body after Visual edits and save/reopen');
+
+  const tabbedVariantFile = path.join(publishingRoot, 'docs', 'tabbed-variant.md');
+  const tabbedCommands = ['sudo crm configure primitive rsc_ASCS_ENSA2', 'sudo crm configure primitive rsc_ASCS_ENSA1'];
+  const tabbedVariantSource = ':::selector title="Choose a platform"\n- [Platform](#variant/platform)\n- [Other](#variant/other)\n:::selector-end\n\n' +
+    '1. Create the services.\n   :::zone pivot="platform"\n' +
+    tabbedCommands.map((code, index) => `   #### [ENSA${2 - index}](#tab/ensa${2 - index})\n   \`\`\`bash\n   ${code}\n   \`\`\``).join('\n\n') +
+    '\n   :::zone-end\n\n2. Continue setup.\n';
+  await writeFile(tabbedVariantFile, tabbedVariantSource);
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(tabbedVariantFile)}`);
+  await action('open');
+  await action('visual');
+  const tabbedZone = '.visual-surface [data-publishing-zone="platform"]';
+  const tabbedCode = id => `${tabbedZone} [data-publishing-panel-id="${id}"] .code-block pre code`;
+  await waitFor(async () => ui(`document.querySelectorAll(${JSON.stringify(tabbedZone + ' [data-publishing-tab]')}).length === 2`), 'implicit tabs in a list variant');
+  await ui("document.querySelector('.visual-surface [data-publishing-choice=platform]').click()");
+  for (const [index, id] of ['ensa2', 'ensa1'].entries()) {
+    assert.ok((await ui(`document.querySelector(${JSON.stringify(tabbedCode(id))}).textContent`)).includes(tabbedCommands[index]));
+  }
+  await ui(`document.querySelector(${JSON.stringify(tabbedZone + ' [data-tab-id="ensa1"]')}).click()`);
+  assert.equal(await ui(`document.querySelector(${JSON.stringify(tabbedZone + ' [data-publishing-panel-id="ensa1"]')}).hidden`), false);
+  await action('edit-split');
+  assert.equal(await ui("document.querySelector('#source-editor').value"), tabbedVariantSource);
+  assert.equal(await ui(`document.querySelectorAll(${JSON.stringify(tabbedZone + ' [data-publishing-tab]')}).length`), 2);
+  await action('preview');
+  await waitFor(async () => ui("document.querySelectorAll('.document-preview [data-publishing-zone=platform] [data-publishing-tab]').length === 2"), 'implicit tabs in Preview');
+  assert.doesNotMatch(await ui("document.querySelector('.document-preview').textContent"), /Unclosed tabs|Directive not rendered/);
+  await action('visual');
+  await ui(`document.querySelector(${JSON.stringify(tabbedZone + ' [data-tab-id="ensa1"]')}).click()`);
+  await ui(`(() => {
+    const code=document.querySelector(${JSON.stringify(tabbedCode('ensa1'))});
+    const range=document.createRange();range.selectNodeContents(code);range.collapse(false);
+    code.closest('.tiptap').focus();getSelection().removeAllRanges();getSelection().addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+  })()`);
+  await browser.call('Input.insertText', {text:'\n# Edited in Visual'}, sessionId);
+  await action('save');
+  const savedTabbedVariant = await readFile(tabbedVariantFile, 'utf8');
+  for (const command of tabbedCommands) assert.ok(savedTabbedVariant.includes(command));
+  assert.ok(savedTabbedVariant.includes('# Edited in Visual'));
+  await menuAction('close-tab');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(tabbedVariantFile)}`);
+  await action('open');
+  await action('visual');
+  await waitFor(async () => ui(`document.querySelectorAll(${JSON.stringify(tabbedZone + ' [data-publishing-tab]')}).length === 2`), 'reopened implicit tabs');
+  assert.ok((await ui(`document.querySelector(${JSON.stringify(tabbedCode('ensa1'))}).textContent`)).includes('# Edited in Visual'));
+  assert.ok((await ui(`document.querySelector(${JSON.stringify(tabbedCode('ensa2'))}).textContent`)).includes(tabbedCommands[0]));
+  await menuAction('close-tab');
+  console.log('PASS: list variants with implicit tabs render in Visual/Split/Preview and retain both panels after editing and reopening');
+
   const sharedVariantsFile = path.join(publishingRoot, 'shared-variant-groups.yml');
   await writeFile(sharedVariantsFile, 'groups: []\n');
   await action('new');

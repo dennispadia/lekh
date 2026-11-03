@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.7
+
+- Keep variant content and code editable in Visual and Split, including zones following list text and nested tab examples.
+- Add Azure CLI to the code-language picker and preserve its syntax highlighting in previews and exports.
+- Explain when an export destination may be open or locked, with guidance for retrying or choosing another filename.
+- Guard the genuine 0.9.6 -> 0.9.7 hosted upgrade matrix.
+
 ## 0.9.6
 
 - Hide Markdown comments in reader Preview, including included content, while keeping source and code examples unchanged.

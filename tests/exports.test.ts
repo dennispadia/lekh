@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { toDocx, toPrintHTML, imageDimensions } from '../lib/export.js';
+import { toDocx, toOfflineHTML, toPrintHTML, imageDimensions } from '../lib/export.js';
 import { unzipEntries } from './zip.js';
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
@@ -92,6 +92,21 @@ test('PDF and Word export syntax colors without editor controls or altered code'
     [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)].map(([, text]) =>
       text.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')).join(''));
   assert.deepEqual(lines, ['const answer = 42;', ' ', '  console.log("Hello & <world>");']);
+});
+
+test('Azure CLI fences retain code and shell colors in HTML, PDF markup and Word', async () => {
+  const code = '# Azure CLI\naz vmss create --resource-group "$group" --name "demo"';
+  const markdown = `\`\`\`azurecli\n${code}\n\`\`\`\n`;
+  for (const html of [await toPrintHTML(markdown, null), await toOfflineHTML(markdown, null)]) {
+    assert.match(html, /hljs-comment/);
+    assert.match(html, /hljs-string/);
+    assert.match(html.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'), /az vmss create --resource-group "\$group" --name "demo"/);
+  }
+  const xml = unzipEntries(await toDocx(markdown, async () => { throw new Error('Unexpected image'); }))
+    .get('word/document.xml')!.toString();
+  assert.match(xml, /<w:color w:val="6A737D"/);
+  assert.match(xml, /<w:color w:val="0A3069"/);
+  assert.match(xml.replace(/<[^>]+>/g, '').replace(/&quot;/g, '"'), /az vmss create --resource-group "\$group" --name "demo"/);
 });
 
 test('Word defines rich typography instead of relying on the consumer default heading styles', async () => {

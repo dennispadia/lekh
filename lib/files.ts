@@ -16,6 +16,26 @@ export async function atomicWrite(file: string, data: string | Buffer): Promise<
   }
 }
 
+export function exportWriteError(file: string, error: unknown): Error {
+  if (!(error instanceof Error)) return new Error(String(error));
+  if (!('code' in error) || !['EPERM', 'EACCES', 'EBUSY', 'EROFS'].includes(String(error.code))) return error;
+  const name = path.basename(file);
+  if ('syscall' in error && error.syscall === 'rename') {
+    const application = path.extname(file).toLowerCase() === '.docx' ? 'Word or another app' : 'another app';
+    return new Error(
+      `Could not replace "${name}". The destination may be open or locked by ${application}. ` +
+      'Close the file and export again, or choose a different filename. ' +
+      'If it is already closed, check write permissions and file-sync restrictions.',
+      { cause: error },
+    );
+  }
+  return new Error(
+    `Could not export "${name}". Check that the selected folder allows writing, or choose another folder. ` +
+    'File-sync restrictions or read-only access may also prevent saving.',
+    { cause: error },
+  );
+}
+
 export async function atomicWriteIfUnchanged(file: string, expected: string, data: string): Promise<void> {
   const temporary = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   try {

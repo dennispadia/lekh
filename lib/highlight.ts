@@ -1,8 +1,10 @@
-import hljs from 'highlight.js';
+import hljs, { type LanguageFn } from 'highlight.js';
 import { all, createLowlight } from 'lowlight';
 import { escapeHTML } from './markdown.js';
 
-const highlighter = createLowlight(all);
+const azureCLI: LanguageFn = api => ({ ...all.bash(api), name: 'Azure CLI', aliases: ['azure-cli'] });
+hljs.registerLanguage('azurecli', azureCLI);
+const highlighter = createLowlight({ ...all, azurecli: azureCLI });
 
 export const codeLanguages = highlighter.listLanguages().map(id => ({
   id,

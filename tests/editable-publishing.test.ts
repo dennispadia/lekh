@@ -13,6 +13,7 @@ import { EditorState, NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { closeHistory, history, undo } from '@tiptap/pm/history';
 import { AlertNode } from '../src/alert-node.js';
 import { PublishingNode } from '../src/publishing-node.js';
+import { LanguageCodeBlock } from '../src/code-block.js';
 import { EditablePublishing } from '../src/editable-publishing.js';
 import { prepareVariantInsertion, reachableVariantChoices, selectInsertedVariant, validateSourceVariantInsertion, validateVariantAssignment, variantInsertionPosition } from '../src/publishing-insert.js';
 import { editablePublishingBlockAtStart, includeMarkdown } from '../lib/publishing.js';
@@ -23,7 +24,7 @@ import { toDocx, toOfflineHTML, toPrintHTML } from '../lib/export.js';
 function fixture() {
   let schema: Schema;
   const extensions = [
-    StarterKit.configure({ trailingNode: false, link: { openOnClick: false } }), Image,
+    StarterKit.configure({ trailingNode: false, codeBlock: false, link: { openOnClick: false } }), LanguageCodeBlock, Image,
     TableKit, TaskList, TaskItem.configure({ nested: true }),
     AlertNode.configure({ schema: () => schema }), EditablePublishing.configure({ schema: () => schema }), PublishingNode,
   ];
@@ -46,6 +47,132 @@ function changeText(doc: ModelNode, text: string, addition = ' edited'): ModelNo
 }
 const selector = ':::selector title="Choose an option"\n- [Availability Zones](#variant/zones)\n- [Scale Set](#variant/scale-set)\n:::selector-end';
 const zone = ':::zone pivot="zones"\n## Availability\n\nEditable **rich** content.\n:::zone-end';
+
+test('code-only variant bodies retain their editable code with the desktop language extension', () => {
+  const { parse, manager } = fixture();
+  for (const spacing of ['', '\n']) {
+    const code = 'sudo zypper -n install sbd';
+    const raw = `:::zone pivot="sbd-shared-disk"\n${spacing}\`\`\`bash\n${code}\n\`\`\`\n${spacing}:::zone-end`;
+    for (const context of ['document', 'list', 'quote']) {
+      const source = context === 'list' ? `1. Install fencing packages.\n\n${raw.split('\n').map(line => `   ${line}`).join('\n')}`
+        : context === 'quote' ? raw.split('\n').map(line => `> ${line}`).join('\n') : raw;
+      const doc = parse(source);
+      const zones: ModelNode[] = [];
+      doc.descendants(node => { if (node.type.name === 'lekhZone') zones.push(node); });
+      assert.equal(zones.length, 1, source);
+      assert.equal(zones[0].textContent, code, `Variant content in ${context}`);
+      const codeBlock = Array.from({ length: zones[0].childCount }, (_, index) => zones[0].child(index)).find(node => node.type.name === 'codeBlock');
+      assert.ok(codeBlock);
+      assert.equal(codeBlock.attrs.language, 'bash');
+      const reopenedCode: string[] = [];
+      parse(manager.serialize(doc.toJSON())).descendants(node => {
+        if (node.type.name === 'codeBlock') reopenedCode.push(node.textContent);
+      });
+      assert.deepEqual(reopenedCode, [code], 'Code survives serialization and reopening without whitespace changes');
+      if (context === 'document') assert.equal(manager.serialize(doc.toJSON()).trimEnd(), raw);
+      const edited = changeText(doc, code);
+      assert.ok(manager.serialize(edited.toJSON()).includes(`${code} edited`));
+    }
+  }
+});
+
+test('indented backtick and tilde fences retain language, whitespace and following content', () => {
+  const { parse, manager } = fixture();
+  const code = 'def setup():\n    return "ready"';
+  for (const fence of ['```', '~~~']) {
+    for (const indent of ['', ' ', '  ', '   ']) {
+      const doc = parse(`Before.\n\n${indent}${fence}python\n${code.split('\n').map(line => indent + line).join('\n')}\n${indent}${fence}\n\nAfter.`);
+      assert.equal(doc.child(1).type.name, 'codeBlock');
+      assert.equal(doc.child(1).attrs.language, 'python');
+      assert.equal(doc.child(1).textContent, code);
+      const reloaded = parse(manager.serialize(changeText(doc, 'Before.').toJSON()));
+      assert.equal(reloaded.child(1).textContent, code);
+      assert.ok(reloaded.textContent.endsWith('After.'));
+    }
+  }
+  const indented = parse('    not a fenced block\n    keep indentation');
+  assert.equal(indented.firstChild?.type.name, 'codeBlock');
+  assert.equal(indented.firstChild?.textContent, 'not a fenced block\nkeep indentation');
+});
+
+test('editing one fenced variant inside list items retains every alternative on reopen', () => {
+  const { parse, manager } = fixture();
+  const commands = ['sudo zypper -n install sbd', 'sudo zypper -n install sbd open-iscsi'];
+  for (const [prefix, indent] of [['1. ', '   '], ['- ', '  '], ['- [ ] ', '  ']]) {
+    const source = `${prefix}Install fencing packages.\n\n` + commands.map((code, index) =>
+      [`:::zone pivot="variant-${index}"`, '```bash', code, '```', ':::zone-end'].map(line => indent + line).join('\n'))
+      .join('\n\n') + `\n\n${prefix === '1. ' ? '2. ' : prefix}Configure DNS.`;
+    const edited = changeText(parse(source), commands[0], '\n# Edited in Visual');
+    const saved = manager.serialize(edited.toJSON());
+    const reopened = parse(saved);
+    const zones: ModelNode[] = [];
+    reopened.descendants(node => { if (node.type.name === 'lekhZone') zones.push(node); });
+    assert.equal(zones.length, 2, saved);
+    assert.deepEqual(zones.map(node => node.textContent), [commands[0] + '\n# Edited in Visual', commands[1]]);
+    assert.ok(reopened.textContent.endsWith('Configure DNS.'));
+  }
+});
+
+test('a zone directly after list text contains both implicit DocFX tabs without a terminator', () => {
+  const { parse, manager } = fixture();
+  const commands = ['sudo crm configure primitive rsc_ASCS_ENSA2', 'sudo crm configure primitive rsc_ASCS_ENSA1'];
+  const source = '1. Create the ASCS and ERS services.\n   :::zone pivot="azurefiles"\n' +
+    commands.map((code, index) => `   #### [ENSA${2 - index}](#tab/ensa${2 - index})\n   \`\`\`bash\n   ${code}\n   \`\`\``).join('\n\n') +
+    '\n   :::zone-end\n\n2. Continue setup.';
+  const doc = parse(source);
+  assert.equal(types(doc).filter(type => type === 'lekhZone').length, 1);
+  assert.equal(types(doc).filter(type => type === 'lekhTabs').length, 1);
+  assert.equal(types(doc).filter(type => type === 'lekhTab').length, 2);
+  assert.ok(!types(doc).includes('lekhPublishing'), 'Valid zone boundaries and tab panels never become unsupported blocks');
+  for (const code of commands) assert.ok(doc.textContent.includes(code));
+  const saved = manager.serialize(changeText(doc, commands[0]).toJSON());
+  const reopened = parse(saved);
+  assert.equal(types(reopened).filter(type => type === 'lekhZone').length, 1, saved);
+  assert.equal(types(reopened).filter(type => type === 'lekhTab').length, 2, saved);
+  assert.ok(!types(reopened).includes('lekhPublishing'), saved);
+  for (const code of [commands[0] + ' edited', commands[1]]) assert.ok(reopened.textContent.includes(code));
+});
+
+test('zone examples inside list code fences remain literal when a real zone follows', () => {
+  const { parse, manager } = fixture();
+  for (const fence of ['```', '~~~']) {
+    for (const newline of ['\n', '\r\n']) {
+      for (const includeZone of [false, true]) {
+        const lines = [
+          '1. Read the example.',
+          `   ${fence}markdown`,
+          '   :::zone pivot="literal"',
+          '   Example',
+          '   :::zone-end',
+          `   ${fence}`,
+          ...(includeZone ? ['   :::zone pivot="real"', '   Actual content.', '   :::zone-end'] : []),
+          '',
+          '2. Continue.',
+          '',
+          'After the list.',
+        ];
+        const doc = parse(lines.join(newline));
+        doc.check();
+        const codes: ModelNode[] = [];
+        const zones: ModelNode[] = [];
+        doc.descendants(node => {
+          if (node.type.name === 'codeBlock') codes.push(node);
+          if (node.type.name === 'lekhZone') zones.push(node);
+        });
+        assert.equal(codes.length, 1);
+        assert.deepEqual(codes[0].textContent.split('\n').map(line => line.trimStart()),
+          [':::zone pivot="literal"', 'Example', ':::zone-end']);
+        assert.equal(zones.length, Number(includeZone));
+        if (includeZone) assert.match(zones[0].textContent, /Actual content\./);
+        assert.ok(!types(doc).includes('lekhPublishing'));
+        assert.ok(doc.textContent.endsWith('After the list.'));
+        const reopened = parse(manager.serialize(doc.toJSON()));
+        assert.ok(reopened.textContent.includes('After the list.'));
+        assert.equal(types(reopened).filter(type => type === 'lekhZone').length, Number(includeZone));
+      }
+    }
+  }
+});
 
 test('all supported publishing bodies are real model content, not opaque source atoms', () => {
   const { parse } = fixture();

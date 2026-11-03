@@ -32,6 +32,23 @@ test('highlighting colors selected languages without changing code, whitespace, 
   }
 });
 
+test('Azure CLI has a distinct searchable fence language with shell highlighting and no alias collisions', () => {
+  assert.deepEqual(codeLanguages.find(language => language.id === 'azurecli'), {
+    id: 'azurecli', label: 'Azure CLI', aliases: ['azure-cli'],
+  });
+  for (const query of ['azurecli', 'Azure CLI', 'azure-cli']) {
+    assert.ok(findCodeLanguages(query).some(language => language.id === 'azurecli'));
+  }
+  assert.equal(resolveCodeLanguage('AZURECLI'), 'azurecli');
+  assert.equal(resolveCodeLanguage('azure-cli'), 'azurecli');
+  for (const alias of ['bash', 'sh']) assert.equal(resolveCodeLanguage(alias), 'bash');
+  const code = '# Example\naz vmss create --resource-group "$group" --name "demo"\n';
+  assert.match(highlightedHTML(code, 'azurecli'), /hljs-comment|hljs-string/);
+  assert.equal(highlightedSegments(code, 'azurecli').map(segment => segment.text).join(''), code);
+  assert.deepEqual(highlightedSegments(code, 'azurecli'), highlightedSegments(code, 'bash'));
+  assert.ok(editorHighlighter.highlight('azurecli', code).children.some(node => node.type === 'element'));
+});
+
 test('plain text, unlabeled, and unknown code never get guessed or lose their contents', () => {
   const code = 'const answer = "<script>alert(1)</script>";\n  # comment\n';
   for (const language of [undefined, '', 'text', 'plaintext', 'not-a-language']) {

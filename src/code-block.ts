@@ -9,6 +9,16 @@ interface LanguageCodeOptions extends CodeBlockLowlightOptions {
 }
 
 export const LanguageCodeBlock = CodeBlockLowlight.extend<LanguageCodeOptions>({
+  parseMarkdown(token, helpers) {
+    if (!this.parent) throw new Error('The code-block Markdown parser is missing its base configuration.');
+    // CommonMark permits up to three spaces before a fence, including inside list items.
+    const indent = /^( {1,3})(?=`{3,}|~{3,})/.exec(token.raw ?? '')?.[1].length ?? 0;
+    // Marked compensates for backtick indentation, but not tilde indentation.
+    const text = indent && /^ {1,3}~/.test(token.raw ?? '')
+      ? token.text?.split('\n').map(line => line.replace(new RegExp(`^ {0,${indent}}`), '')).join('\n')
+      : token.text;
+    return this.parent({ ...token, text, raw: token.raw?.slice(indent) }, helpers);
+  },
   addOptions() {
     const parent = this.parent?.();
     if (!parent) throw new Error('The code-block extension is missing its base configuration.');
