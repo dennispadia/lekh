@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import type Token from 'markdown-it/lib/token.mjs';
 import { atomicWrite, atomicWriteIfUnchanged, exportWriteError, readMarkdown } from '../lib/files.js';
 import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES, type AuthorizedImageRoots } from '../lib/images.js';
+import { learnPathStatuses } from '../lib/learn-paths.js';
 import { documentPreviewTokensHTML, headingAnchor, isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
 import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
 import { toDocx, toOfflineHTML, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
@@ -691,6 +692,11 @@ function installIPC(): void {
     assertAccess();
     return interactive;
   });
+  handle('learn:check-paths', async (id: unknown, sources: unknown) => {
+    const document = documentFor(id);
+    const roots = [imageRoots.get(String(id))?.root, includeRoots.get(String(id))?.root].filter((root): root is string => Boolean(root));
+    return learnPathStatuses(sources, document.path, roots);
+  });
   handle('document:save', async (id: unknown, content: unknown, saveAs: unknown) => {
     const document = documentFor(id);
     const currentPath = document.path;
@@ -827,6 +833,7 @@ function viewAndToolsItems(): MenuItemConstructorOptions[] {
     { label: 'Split / Unsplit files', click: () => action('split') },
     { type: 'separator' },
     { label: 'Writing assistance', click: () => action('writing-assistance') },
+    { label: 'Learn checks', click: () => action('learn-checks') },
     { label: 'Getting started', click: () => action('help') },
   ];
 }
@@ -967,6 +974,7 @@ function createWindow(): void {
       { id: 'view-preview', label: 'Preview', click: send('preview') },
       { id: 'view-preview-source', label: 'Show Markdown beside preview', type: 'checkbox', enabled: false, click: send('preview-source') },
       { label: 'Writing assistance', click: send('writing-assistance') },
+      { label: 'Learn checks', click: send('learn-checks') },
       { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+Shift+B', click: send('sidebar') },
       { label: 'Focus mode', accelerator: 'F9', click: send('focus') },
       { label: 'Split with...', click: send('split') },

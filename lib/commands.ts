@@ -71,6 +71,7 @@ export function commandEntries(hasVariantSelector = false): CommandEntry[] {
     { id: 'next-tab', label: 'Next tab', group: 'View', shortcut: 'Ctrl+Tab' },
     { id: 'previous-tab', label: 'Previous tab', group: 'View', shortcut: 'Ctrl+Shift+Tab' },
     { id: 'writing-assistance', label: 'Writing assistance', group: 'Review', keywords: 'grammar spelling harper' },
+    { id: 'learn-checks', label: 'Learn checks', group: 'Review', keywords: 'microsoft learn docfx validate alt text missing image include metadata' },
     { id: 'document-stats', label: 'Document statistics', group: 'Review', keywords: 'word count characters reading time' },
     { id: 'clear-recent', label: 'Clear recent files', group: 'Tools' },
     { id: 'shortcuts', label: 'Keyboard shortcuts', group: 'Help', shortcut: 'F1' },

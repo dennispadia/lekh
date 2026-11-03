@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('lekh', {
   revokeIncludeFolder: (id) => ipcRenderer.invoke('includes:revoke-folder', id),
   previewIncludes: (id, content) => ipcRenderer.invoke('includes:preview', id, content),
   includesRequireInteractiveExport: (id, content) => ipcRenderer.invoke('includes:interactive', id, content),
+  checkLearnPaths: (id, paths) => ipcRenderer.invoke('learn:check-paths', id, paths),
   onIncludeAccessChanged: (listener) => ipcRenderer.on('includes:access-changed', (_event, id) => listener(id)),
   prepareVariantConfiguration: (id, content) => ipcRenderer.invoke('variant-config:prepare', id, content),
   chooseVariantConfigFile: (id) => ipcRenderer.invoke('variant-config:choose-file', id),

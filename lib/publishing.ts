@@ -317,7 +317,7 @@ function docfxTabs(first: string, read: (index: number) => string | undefined, k
     const nextHeading = /^( {0,3})(#{1,6})(?:[ \t]+|$)/.exec(line);
     if (!nextHeading) continue;
     const tab = tabPattern.exec(line);
-    if (tab && nextHeading[1].length === indent && nextHeading[2].length === level) {
+    if (tab && nextHeading[1].length >= indent && nextHeading[2].length === level) {
       tabs.at(-1)!.to = cursor;
       tabs.push({ label: publishingLabel(tab[1]), from: cursor + 1, to: cursor + 1 });
     } else if (nextHeading[2].length <= level) {
@@ -519,6 +519,7 @@ export type EditablePublishingBlock = {
   attributes?: Record<string, string>;
   syntax?: 'heading' | 'directive';
   panels?: { label: string; id: string; level: number; body: string }[];
+  reason?: string;
 };
 
 /** Shared boundaries and validation keep editable blocks consistent with previews/exports. */
@@ -531,6 +532,7 @@ export function editablePublishingBlockAtStart(source: string): EditablePublishi
     body: block.kind === 'metadata' ? rawRange(lines, 1, block.end - 1) : block.body,
     title: block.title, variant: block.variant, variants: block.variants,
     options: block.options, attributes: block.attributes,
+    ...(block.reason ? { reason: block.reason } : {}),
     ...(block.tabs ? {
       syntax: tabPattern.test(lines.text[0]) ? 'heading' as const : 'directive' as const,
       panels: block.tabs.map((tab, index) => {
@@ -562,14 +564,14 @@ export function firstPublishingBlock(source: string): number {
   return match?.index ?? -1;
 }
 
-export function publishingBlockRanges(markdown: string): { from: number; to: number; raw: string; kind: string }[] {
+export function publishingBlockRanges(markdown: string): { from: number; to: number; raw: string; kind: string; reason?: string }[] {
   const lines = makeLines(markdown);
-  const result: { from: number; to: number; raw: string; kind: string }[] = [];
+  const result: { from: number; to: number; raw: string; kind: string; reason?: string }[] = [];
   for (let cursor = 0; cursor < lines.text.length;) {
     const block = !lines.literal.has(cursor) && inspect(lines, cursor, lines.text.length, cursor === 0);
     if (!block) { cursor++; continue; }
     const raw = rawRange(lines, cursor, block.end);
-    result.push({ from: lines.starts[cursor], to: lines.starts[block.end], raw, kind: block.kind });
+    result.push({ from: lines.starts[cursor], to: lines.starts[block.end], raw, kind: block.kind, ...(block.reason ? { reason: block.reason } : {}) });
     cursor = block.end;
   }
   return result;

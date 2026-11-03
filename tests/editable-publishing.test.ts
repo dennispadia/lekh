@@ -48,12 +48,60 @@ function changeText(doc: ModelNode, text: string, addition = ' edited'): ModelNo
 const selector = ':::selector title="Choose an option"\n- [Availability Zones](#variant/zones)\n- [Scale Set](#variant/scale-set)\n:::selector-end';
 const zone = ':::zone pivot="zones"\n## Availability\n\nEditable **rich** content.\n:::zone-end';
 
+test('tight nested list zones following a fenced-code step do not leak directive markers', () => {
+  const { parse, manager } = fixture();
+  const source = [
+    '7. Create services.',
+    '   1. Enable maintenance.',
+    '      ```bash',
+    '      maintenance=true',
+    '      ```',
+    '   1. Create the services.',
+    '      :::zone pivot="azurefiles"',
+    '      #### [ENSA2](#tab/ensa2)',
+    '      ```bash', '      first-command', '      ```',
+    '      #### [ENSA1](#tab/ensa1)',
+    '      ```bash', '      second-command', '      ```',
+    '      ---',
+    '      :::zone-end',
+    '      :::zone pivot="anf"',
+    '      #### [ENSA2](#tab/ensa2)',
+    '      Other steps.',
+    '      #### [ENSA1](#tab/ensa1)',
+    '      Alternative steps.',
+    '      ---',
+    '      :::zone-end',
+    '   1. Finish.',
+  ].join('\n');
+  for (const raw of [source, source.replace(/\n/g, '\r\n')]) {
+    const doc = parse(raw);
+    assert.equal(types(doc).filter(type => type === 'lekhZone').length, 2);
+    assert.ok(!types(doc).includes('lekhPublishing'), 'No opaque closing directive');
+    assert.doesNotMatch(doc.textContent, /:::zone/);
+    const reopened = parse(manager.serialize(changeText(doc, 'first-command').toJSON()));
+    assert.equal(types(reopened).filter(type => type === 'lekhZone').length, 2);
+    assert.match(reopened.textContent, /first-command edited/);
+    assert.ok(!types(reopened).includes('lekhPublishing'));
+  }
+});
+
+test('tight-zone list repair does not change directive examples inside code', () => {
+  const { parse } = fixture();
+  const example = '1. Example step\n   :::zone pivot="example"\n   Example body.\n   :::zone-end';
+  const source = `\`\`\`markdown\n${example}\n\`\`\`\n\n1. Real step.\n   :::zone pivot="real"\n   Real body.\n   :::zone-end\n`;
+  const doc = parse(source);
+  const codes: string[] = [];
+  doc.descendants(node => { if (node.type.name === 'codeBlock') codes.push(node.textContent); });
+  assert.deepEqual(codes, [example]);
+  assert.equal(types(doc).filter(type => type === 'lekhZone').length, 1);
+});
+
 test('complex images with colon-suffixed end markers remain editable and survive reopening', () => {
   const { parse, manager } = fixture();
   const source = ':::image type="complex" source="../../articles/diagram.png" alt-text="A diagram.":::\nLong **description**.\n:::image-end:::\n\nFollowing paragraph.';
   const doc = parse(source);
   assert.ok(types(doc).includes('lekhImageDescription'));
-  assert.ok(!types(doc).includes('publishingBlock'));
+  assert.ok(!types(doc).includes('lekhPublishing'));
   const edited = changeText(doc, 'description');
   const reopened = parse(manager.serialize(edited.toJSON()));
   assert.ok(types(reopened).includes('lekhImageDescription'));
@@ -144,6 +192,22 @@ test('a zone directly after list text contains both implicit DocFX tabs without 
   assert.equal(types(reopened).filter(type => type === 'lekhTab').length, 2, saved);
   assert.ok(!types(reopened).includes('lekhPublishing'), saved);
   for (const code of [commands[0] + ' edited', commands[1]]) assert.ok(reopened.textContent.includes(code));
+});
+
+test('DocFX tabs inside a numbered zone item retain both variants before a horizontal-rule terminator', () => {
+  const { parse } = fixture();
+  const source = ':::zone pivot="nfs"\n' +
+    '1. Configure ENSA specific properties and constraints.\n' +
+    '   #### [ENSA2](#tab/ensa2)\n   ```bash\n   sudo crm configure property priority-fencing-delay=30\n   ```\n' +
+    '   #### [ENSA1](#tab/ensa1)\n   ```bash\n   sudo crm_attribute --delete --name priority-fencing-delay\n' +
+    '   sudo crm configure location loc_sap_NW1_failover_to_ers \\\\\n     rsc_sap_NW1_ASCS00 rule 2000: runs_ers_NW1 eq 1\n   ```\n' +
+    '   ---\n' +
+    ':::zone-end\n';
+  const doc = parse(source);
+  assert.equal(types(doc).filter(type => type === 'lekhZone').length, 1);
+  assert.equal(types(doc).filter(type => type === 'lekhTabs').length, 1);
+  assert.equal(types(doc).filter(type => type === 'lekhTab').length, 2, JSON.stringify(doc.toJSON()));
+  assert.ok(!types(doc).includes('lekhPublishing'), JSON.stringify(doc.toJSON()));
 });
 
 test('zone examples inside list code fences remain literal when a real zone follows', () => {

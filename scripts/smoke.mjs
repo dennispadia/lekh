@@ -2480,7 +2480,7 @@ try {
     await menuAction('close-tab');
   }
   await selectTab(beforeCompactTabs);
-  await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1600,900)");
+  await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1800,900)");
   await delay(150);
   assert.equal(await ui("document.querySelector('#toolbar-overflow').children.length"), 0, 'Widening restores all original controls');
   assert.ok(await ui("document.querySelector('.toolbar [data-command=quote]') !== null"), 'Restored toolbar command is not duplicated');
@@ -3837,6 +3837,33 @@ try {
     await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320,900)");
     console.log('PASS: feature guide screenshots show editable alerts in Light/Dark, grouped icon tools, and Visual-scoped selectors with readable Dark tabs');
   }
+
+  const learnFixture = '---\ntitle: Learn checks\n---\n\n# Learn checks\n\n![](media/missing.png)\n\n[!INCLUDE [shared](../outside-learn.md)]\n';
+  const learnDocument = path.join(temporary, 'Learn checks.md');
+  await writeFile(learnDocument, learnFixture);
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(learnDocument)}; smokeIncludeChoice=1`);
+  await action('open');
+  await action('learn-checks');
+  await waitFor(async () => ui("document.querySelectorAll('#learn-issues li').length === 4 && !document.querySelector('#learn-status').textContent.startsWith('Checking')"), 'Learn publishing suggestions');
+  const learnResults = await ui("document.querySelector('#learn-issues').textContent");
+  assert.match(learnResults, /missing a description/);
+  assert.match(learnResults, /no alt text/);
+  assert.match(learnResults, /file not found/);
+  assert.match(learnResults, /outside the allowed folders/);
+  for (const view of ['visual', 'source', 'edit-split', 'preview']) {
+    await action(view);
+    assert.equal(await ui("document.querySelector('#learn-panel').hidden"), false, `Learn checks remain open in ${view}`);
+    assert.equal(await ui("document.querySelector('#learn-issues').textContent"), learnResults, `Suggestions remain consistent in ${view}`);
+  }
+  await ui("[...document.querySelectorAll('.learn-jump')].find(button => button.textContent.includes('no alt text')).click()");
+  assert.equal(await ui("document.querySelector('#source-editor').selectionStart"), learnFixture.indexOf('![]'), 'Learn issue navigation points to the exact source line');
+  assert.equal(await ui("document.activeElement.id"), 'source-editor');
+  assert.equal(await readFile(learnDocument, 'utf8'), learnFixture, 'Learn checks and navigation never rewrite the saved file');
+  await ui("document.querySelector('#learn-close').click()");
+  assert.equal(await ui("document.querySelector('#learn-panel').hidden"), true);
+  await menuAction('close-tab');
+  await main.evaluate('smokeIncludeChoice=0');
+  console.log('PASS: Learn checks report metadata, alt text and scoped path issues consistently across Visual, Markdown, Split and Preview without changing source');
 
   const grammarFixture = '# Grammar check\n\nWe made a error. We made a error.\n\nShe could of gone.\n\n`We made a error.`\n\n```text\nWe made a error.\n```\n\n[Link](https://example.com/a-error)\n';
   const grammarCRLF = path.join(temporary, 'Grammar CRLF.md');
