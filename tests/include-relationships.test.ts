@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink, readFile, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { includeReferences } from '../lib/include-relationships.js';
@@ -37,7 +37,7 @@ test('arbitrary repository layouts group direct references, follow indirect cons
     await file('loop.md', include('loop.md'));
     await file('node_modules/ignored.md', include('../shared%20bits/common.md'));
     await file('.git/ignored.md', include('../shared%20bits/common.md'));
-    assert.equal(await validateWorkspace(root, a), root);
+    assert.equal(await validateWorkspace(root, a), await realpath(root));
     const before = await readFile(a);
     const index = await scanRepository(root);
     const report = await relationshipReport(index, target, '# Shared', null);
