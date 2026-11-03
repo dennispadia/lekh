@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type Token from 'markdown-it/lib/token.mjs';
-import { atomicWrite, atomicWriteIfUnchanged, readMarkdown } from '../lib/files.js';
+import { atomicWrite, atomicWriteIfUnchanged, exportWriteError, readMarkdown } from '../lib/files.js';
 import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES, type AuthorizedImageRoots } from '../lib/images.js';
 import { documentPreviewTokensHTML, headingAnchor, isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
 import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
@@ -794,7 +794,8 @@ function installIPC(): void {
     assertAccess();
     const data = await exportWithDiagrams(prepared, currentPath, format, imageAccess, tokens);
     assertAccess();
-    await atomicWrite(selection.filePath, data);
+    try { await atomicWrite(selection.filePath, data); }
+    catch (error) { throw exportWriteError(selection.filePath, error); }
     return selection.filePath;
   });
   handle('app:external', async (url: unknown) => {

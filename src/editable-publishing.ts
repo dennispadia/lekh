@@ -2,7 +2,7 @@ import { Extension, Node, type Editor, type JSONContent, type MarkdownParseHelpe
 import type { Node as ModelNode, Schema } from '@tiptap/pm/model';
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { closeHistory } from '@tiptap/pm/history';
-import { editablePublishingBlockAtStart, firstPublishingBlock, includeMarkdown, parseIncludeDirective, publishingMarkdownLabel as label, type EditablePublishingBlock } from '../lib/publishing.js';
+import { editablePublishingBlockAtStart, firstPublishingBlock, includeMarkdown, parseIncludeDirective, publishingBlockRanges, publishingMarkdownLabel as label, type EditablePublishingBlock } from '../lib/publishing.js';
 import { imageDisplayURL } from '../lib/markdown.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
 import { reachableVariantChoices, validateVariantAssignment } from './publishing-insert.js';
@@ -299,13 +299,20 @@ function container(name: string, kind: 'zone' | 'steps' | 'callout') {
     parseMarkdown: (token, helpers) => remember(helpers.createNode(name, {
       variants: token.variants ?? ['first'], variant: token.variant ?? 'checklist', title: token.title ?? '',
     }, children(token.tokens ?? [], helpers)), token.raw ?? '', token.tokens ?? []),
-    renderMarkdown(node, helpers) {
+    renderMarkdown(node, helpers, context) {
+      const inList = context.parentType === 'listItem' || context.parentType === 'taskItem';
       const raw = original(node, this.options.schema?.() ?? null);
-      if (raw !== null) return raw;
+      if (raw !== null) {
+        // Separate directives from list paragraphs without doubling Marked's residual padding.
+        const indent = inList ? /^ {1,3}/.exec(raw)?.[0].length ?? 0 : 0;
+        const markdown = indent ? raw.replace(new RegExp(`^ {0,${indent}}`, 'gm'), '') : raw;
+        return inList ? `\n${markdown}` : markdown;
+      }
       const content = body(node, helpers);
-      if (kind === 'zone') return `:::zone pivot="${node.attrs?.variants.join(',')}"\n${content}\n:::zone-end`;
-      if (kind === 'steps') return `:::steps\n${content}\n:::steps-end`;
-      return `> [!div class="${quote(node.attrs?.variant)}"]${node.attrs?.title ? ` ${String(node.attrs.title).replace(/[\r\n]+/g, ' ')}` : ''}\n${content.split(/\r?\n/).map(line => line ? `> ${line}` : '>').join('\n')}`;
+      const markdown = kind === 'zone' ? `:::zone pivot="${node.attrs?.variants.join(',')}"\n${content}\n:::zone-end`
+        : kind === 'steps' ? `:::steps\n${content}\n:::steps-end`
+        : `> [!div class="${quote(node.attrs?.variant)}"]${node.attrs?.title ? ` ${String(node.attrs.title).replace(/[\r\n]+/g, ' ')}` : ''}\n${content.split(/\r?\n/).map(line => line ? `> ${line}` : '>').join('\n')}`;
+      return inList ? `\n${markdown}` : markdown;
     },
     addNodeView() {
       const options = this.options;
@@ -823,6 +830,25 @@ export const EditablePublishing = Extension.create<Options>({
         return { name: 'lekhPublishingTokenizer', level: 'block' as const, start: firstPublishingBlock,
           tokenize: (source: string, _tokens: MarkdownToken[], lexer: { blockTokens: (source: string) => MarkdownToken[] }) => {
             const block = editablePublishingBlockAtStart(source);
+            if (!block && /^ {0,3}(?:\d+[.)]|[*+-])\s/.test(source)) {
+              const nextZone = publishingBlockRanges(source).find(range => range.kind === 'zone' && range.from > 0);
+              if (nextZone) {
+                const boundary = nextZone.from;
+                const beforeBlock = source.slice(0, boundary);
+                if (!/\r?\n[ \t]*\r?\n$/.test(beforeBlock)) {
+                  // Marked absorbs directives after tight-list prose; separate the blocks only for parsing.
+                  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+                  const parsed = lexer.blockTokens(`${beforeBlock}${newline}${source.slice(boundary)}`);
+                  const list = parsed[0];
+                  const hasZone = (tokens: MarkdownToken[]): boolean => tokens.some(token =>
+                    token.type === 'lekhZone' || hasZone(token.tokens ?? []) || hasZone(token.items ?? []));
+                  if (list?.type === 'list' && typeof list.raw === 'string' && hasZone([list])) {
+                    const rawLength = list.raw.length - newline.length;
+                    return { ...list, raw: source.slice(0, rawLength) };
+                  }
+                }
+              }
+            }
             if (!block || block.kind === 'unsupported' || block.kind === 'callout' && !['checklist', 'nextstepaction'].includes(block.variant ?? '')) return undefined;
             if (depth >= 12) return undefined;
             const include = block.kind === 'include' ? parseIncludeDirective(block.raw) : null;

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { atomicWrite, atomicWriteIfUnchanged, readMarkdown } from '../lib/files.js';
+import { atomicWrite, atomicWriteIfUnchanged, exportWriteError, readMarkdown } from '../lib/files.js';
 import { readImage } from '../lib/images.js';
 
 test('atomic writes replace content and leave no temporary files', async () => {
@@ -33,6 +33,37 @@ test('conditional atomic writes preserve concurrent changes', async () => {
     assert.equal(await readFile(file, 'utf8'), 'version: two\n');
     assert.deepEqual(await readdir(root), ['shared.yml']);
   } finally { await rm(root, { recursive: true }); }
+});
+
+test('blocked export replacements explain possible locks and how to recover without claiming certainty', () => {
+  for (const code of ['EPERM', 'EACCES', 'EBUSY', 'EROFS']) {
+    for (const extension of ['docx', 'pdf', 'html']) {
+      const file = path.join(os.tmpdir(), `report.${extension}`);
+      const original = Object.assign(new Error('raw rename error exposing a temporary path'), { code, syscall: 'rename' });
+      const error = exportWriteError(file, original);
+      assert.match(error.message, new RegExp(`Could not replace "report\\.${extension}"`));
+      assert.match(error.message, /may be open or locked/);
+      assert.match(error.message, /Close the file and export again/);
+      assert.match(error.message, /different filename/);
+      assert.match(error.message, /write permissions and file-sync restrictions/);
+      assert.doesNotMatch(error.message, /raw rename error|temporary path/);
+      if (extension === 'docx') assert.match(error.message, /Word/);
+      assert.equal(error.cause, original);
+    }
+  }
+});
+
+test('export folder failures give folder guidance and unrelated errors keep their identity', () => {
+  const denied = Object.assign(new Error('access denied'), { code: 'EACCES', syscall: 'open' });
+  const error = exportWriteError('report.docx', denied);
+  assert.match(error.message, /selected folder allows writing/);
+  assert.doesNotMatch(error.message, /open or locked|Close the file/);
+  assert.equal(error.cause, denied);
+  for (const code of ['ENOSPC', 'ENOENT', 'EIO']) {
+    const original = Object.assign(new Error(code), { code, syscall: 'rename' });
+    assert.equal(exportWriteError('report.docx', original), original);
+  }
+  assert.equal(exportWriteError('report.docx', 'Unexpected failure').message, 'Unexpected failure');
 });
 
 test('reading refuses binary files and invalid UTF-8 rather than corrupting them', async () => {
