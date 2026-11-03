@@ -82,6 +82,16 @@ without an account, server, download, or network request. Existing spelling sugg
 
 Close the panel to keep writing with underlines, or disable checking to stop the worker and remove grammar underlines.
 
+### Learn checks
+
+Open **Learn checks** from the Review toolbar, More tools, the View menu, command palette, or right-click **View and tools**. It is an optional panel, not a fifth editor mode, and stays available in Visual, Markdown, Split and Preview.
+
+- Checks missing or empty image alt text, relative image and include paths, missing title or description fields in existing metadata, and publishing blocks Lekh cannot render.
+- Results refresh as you edit. Select a result to go to its Markdown line, or choose **Check again** after changing files on disk.
+- Local paths are checked only inside the document folder and project folders already allowed for that document. **Allow folder…** grants access using the existing image/include folder permissions; save an untitled document before checking relative paths.
+- Code examples and HTML comment blocks are excluded. Remote URLs, site-relative URLs and nested include contents are not validated. Missing front matter is not flagged because reusable includes need not have it. At most 500 local paths and 500 syntax suggestions are reported, with a notice when truncated.
+- Everything runs locally. Checks never change text or block saving or exports. These are limited authoring suggestions, not the Microsoft Learn build validator, a style checker, or a guarantee of publishing compatibility.
+
 ### Publishing blocks and reader-friendly documents
 
 The toolbar has one **Insert** section: **Image**, **Table** and **Code** buttons, plus **Alerts**, **Structure**, and **Interactive** menus with icons and labels. **Structure** contains table of contents, Mermaid diagrams, horizontal rules, image descriptions, document metadata and Include. **Interactive** contains tabbed examples and variant selectors, with a reminder that these require HTML export. There is no separate Blocks insertion category.

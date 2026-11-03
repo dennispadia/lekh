@@ -27,6 +27,7 @@ import { renderMermaidBlocks } from './diagrams.js';
 import { ContextMenu } from './context-menu.js';
 import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
+import { LearnChecksPanel } from './learn-checks-panel.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
 import { prepareVariantInsertion, selectInsertedVariant, validateSourceVariantInsertion, variantInsertionPosition } from './publishing-insert.js';
 import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, projectVariantOptions, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
@@ -40,6 +41,7 @@ import { synchronizeDocumentScroll } from './synchronized-scroll.js';
 import './style.css';
 
 let writingAssistance: WritingAssistance | undefined;
+let learnPanel: LearnChecksPanel | undefined;
 let slashMenu: SlashMenu | undefined;
 let slashDismissed = '';
 const syntaxStyle = document.createElement('style');
@@ -93,6 +95,7 @@ const icons = {
   diagram: '<rect x="8" y="2" width="8" height="5" rx="1"/><rect x="2" y="17" width="7" height="5" rx="1"/><rect x="15" y="17" width="7" height="5" rx="1"/><path d="M12 7v5H5v5m7-5h7v5"/>',
   blocks: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="8" height="7" rx="2"/><rect x="15" y="14" width="6" height="7" rx="2"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
+  learn: '<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 3v2h6V3M8.5 12l2 2 4-4M9 17h6"/>',
   command: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="m7 10 3 2-3 2M12 15h5"/>',
   html: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 13l-2 2 2 2m6-4 2 2-2 2"/>',
   word: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 11l1.5 6 1.5-4 1.5 4 1.5-6"/>',
@@ -157,7 +160,7 @@ app.innerHTML = `
       ${group('insert', 'Insert', `${group('insert-extra', 'Insert', `<button type="button" data-action="image" title="Insert image (Ctrl+Shift+I)" aria-label="Insert image">${icon('image')}<span>Image</span></button><button type="button" data-action="table" title="Insert table (Ctrl+T)" aria-label="Insert table">${icon('table')}<span>Table</span></button><button type="button" data-command="codeblock" title="Code block (Ctrl+Shift+K)" aria-label="Code block">${icon('codeblock')}<span>Code</span></button><button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span>${icon('chevron')}</button>`, 'labelled toolbar-insert-extra')}<button type="button" data-action="structure-menu" aria-label="Insert structure" title="Table of contents, diagrams, metadata and image descriptions" aria-haspopup="menu" aria-controls="structure-menu" aria-expanded="false">${icon('contents')}<span>Structure</span>${icon('chevron')}</button><button type="button" data-action="interactive-menu" aria-label="Insert interactive content" title="Tabbed examples and variants (HTML export only)" aria-haspopup="menu" aria-controls="interactive-menu" aria-expanded="false">${publishingIcon('tabs')}<span>Interactive</span>${icon('chevron')}</button>`, 'labelled')}
       <div class="toolbar-more"><button type="button" data-action="format-menu" aria-label="More tools and views" title="More tools and views" aria-haspopup="menu" aria-controls="format-menu" aria-expanded="false">${icon('more')}</button></div>
       <span class="toolbar-spacer"></span>
-      ${group('review', 'Review', `<button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
+      ${group('review', 'Review', `<button type="button" data-action="learn-checks" class="learn-control" aria-controls="learn-panel" aria-expanded="false" aria-pressed="false" aria-label="Learn checks" title="Learn checks: Microsoft Learn publishing suggestions">${icon('learn')}<span>Learn checks</span><b class="learn-badge" aria-hidden="true" hidden>0</b></button><button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
     </div>
     <div id="view-hint" class="view-hint"><span id="view-hint-text"><strong>Visual:</strong> Edit the document as it appears.</span><label id="preview-source-option" hidden><input id="preview-source" type="checkbox" />Show Markdown beside preview</label></div>
     <div id="table-tools" hidden><span>TABLE</span>${button('row', '+ Row')}${button('column', '+ Column')}${button('delete-row', 'Remove row')}${button('delete-column', 'Remove column')}${button('delete-table', 'Remove table')}</div>
@@ -169,6 +172,11 @@ app.innerHTML = `
     </section>
     <div id="recovery-banner" hidden>Unsaved drafts from your last session are available. ${button('recover', 'Recover drafts')}${button('dismiss-recovery', 'Dismiss')}</div>
     <div class="canvas" id="canvas"><article class="paper" id="visual-editor" aria-label="Visual Markdown editor"></article><textarea id="source-editor" aria-label="Markdown source" spellcheck="false" hidden></textarea></div>
+    <section id="learn-panel" hidden aria-labelledby="learn-title">
+      <div class="learn-header"><strong id="learn-title">Learn checks</strong><span id="learn-status" role="status" aria-live="polite"></span><button type="button" id="learn-check">Check again</button><button type="button" id="learn-close" aria-label="Close Learn checks">Close</button></div>
+      <p class="learn-note">Microsoft Learn publishing suggestions: alt text, local image and include paths, metadata, and publishing blocks. Checks run on this device and never change your text.</p>
+      <ul id="learn-issues" aria-label="Learn check results"></ul>
+    </section>
     <section id="writing-panel" hidden aria-labelledby="writing-title">
       <div class="writing-header"><strong id="writing-title">Writing assistance</strong><label><input id="writing-enabled" type="checkbox" />Enable offline English grammar checks</label><button type="button" id="writing-check">Check again</button><button type="button" id="writing-close" aria-label="Close writing assistance">Close</button></div>
       <p class="writing-note">Powered by Harper, entirely on this device. Suggestions never change your text unless you apply them. English only; suggestions may be imperfect.</p>
@@ -180,7 +188,7 @@ app.innerHTML = `
   ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
   <div id="structure-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Structure" hidden>${structureMenuHTML}</div>
   <div id="interactive-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Interactive" hidden>${interactiveMenuHTML}</div>
-  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('help', 'Getting started', 'help')}</div>
+  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('learn-checks', 'Learn checks')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-include-dialog" aria-labelledby="publishing-include-title"><form method="dialog">
     <h2 id="publishing-include-title">Insert include</h2>
@@ -1867,6 +1875,7 @@ function update(): void {
   }
   if (!element('find-panel').hidden) scheduleSearch();
   writingAssistance?.schedule();
+  learnPanel?.schedule();
 }
 
 function changed(content: string, record = true): void {
@@ -2585,6 +2594,7 @@ async function dispatch(action: string): Promise<void> {
         tab.previewMarkdown = undefined;
         refreshPreview(tab);
       }
+      learnPanel?.refresh();
       notify('Project-folder image access has been stopped for this document.');
       break;
     }
@@ -2593,11 +2603,13 @@ async function dispatch(action: string): Promise<void> {
         refreshPublishingFiles();
         refreshLocalImages(documentId);
         invalidateExportCheck();
+        learnPanel?.refresh();
         notify('Project images and variant labels are allowed within the selected folder for this document and session.');
       }
       break;
     }
     case 'writing-assistance': writingAssistance?.open(); break;
+    case 'learn-checks': learnPanel?.open(); break;
     case 'document-stats': {
       const words = wordCount(markdown);
       const tokens = parser.parse(markdown, {});
@@ -3359,6 +3371,7 @@ element('canvas').addEventListener('keydown', event => {
 window.lekh.onIncludeAccessChanged(id => {
   refreshPublishingFiles(id);
   refreshLocalImages(id);
+  if (id === documentId) learnPanel?.refresh();
 });
 window.lekh.onAction(action => {
   if (action === 'open-pending') {
@@ -3395,6 +3408,24 @@ void run(async () => {
       source.focus();
       source.setRangeText(replacement, from, to, 'end');
       changed(source.value);
+    },
+    report: message => notify(message, true),
+  });
+  learnPanel = new LearnChecksPanel({
+    context: () => activeTab ? { id: documentId, markdown, path: documentPath ?? null } : undefined,
+    checkPaths: async (id, paths) => unwrap(await window.lekh.checkLearnPaths(id, paths)),
+    jump: line => {
+      useSource();
+      const lines = markdown.split('\n');
+      const target = Math.min(Math.max(1, line), lines.length);
+      const offset = lines.slice(0, target - 1).join('\n').length + (target > 1 ? 1 : 0);
+      source.focus();
+      source.setSelectionRange(offset, offset);
+      source.scrollTop = Math.max(0, (target - 1) * 24 - 50);
+    },
+    allowFolder: async kind => {
+      if (kind === 'image') await dispatch('allow-image-folder');
+      else if (unwrap(await window.lekh.allowIncludeFolder(documentId))) notify('Local includes are allowed within the selected folder for this document and session.');
     },
     report: message => notify(message, true),
   });

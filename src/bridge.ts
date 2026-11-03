@@ -50,6 +50,7 @@ export interface LekhAPI {
   revokeIncludeFolder: (id: string) => Promise<Result<void>>;
   previewIncludes: (id: string, content: string) => Promise<Result<string>>;
   includesRequireInteractiveExport: (id: string, content: string) => Promise<Result<boolean>>;
+  checkLearnPaths: (id: string, paths: string[]) => Promise<Result<LearnPathStatus[]>>;
   onIncludeAccessChanged: (listener: (id: string) => void) => void;
   prepareVariantConfiguration: (id: string, content: string) => Promise<Result<string>>;
   chooseVariantConfigFile: (id: string) => Promise<Result<ChosenVariantConfigFile | null>>;
@@ -80,3 +81,4 @@ declare global {
   interface Window { lekh: LekhAPI }
 }
 import type { Theme } from '../lib/themes.js';
+import type { LearnPathStatus } from '../lib/learn-checks.js';

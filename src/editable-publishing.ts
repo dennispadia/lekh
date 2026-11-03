@@ -3,7 +3,7 @@ import type { Node as ModelNode, Schema } from '@tiptap/pm/model';
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { closeHistory } from '@tiptap/pm/history';
 import { editablePublishingBlockAtStart, firstPublishingBlock, includeMarkdown, parseIncludeDirective, publishingBlockRanges, publishingMarkdownLabel as label, type EditablePublishingBlock } from '../lib/publishing.js';
-import { imageDisplayURL } from '../lib/markdown.js';
+import { imageDisplayURL, parser } from '../lib/markdown.js';
 import { publishingIcon } from '../lib/publishing-icons.js';
 import { reachableVariantChoices, validateVariantAssignment } from './publishing-insert.js';
 import { choosePublishingVariant, initializePublishing, publishingHTML, refreshPublishingVariants } from './publishing-view.js';
@@ -832,9 +832,21 @@ export const EditablePublishing = Extension.create<Options>({
           tokenize: (source: string, _tokens: MarkdownToken[], lexer: { blockTokens: (source: string) => MarkdownToken[] }) => {
             const block = editablePublishingBlockAtStart(source);
             if (!block && /^ {0,3}(?:\d+[.)]|[*+-])\s/.test(source)) {
-              const nextZone = publishingBlockRanges(source).find(range => range.kind === 'zone' && range.from > 0);
-              if (nextZone) {
-                const boundary = nextZone.from;
+              let boundary = publishingBlockRanges(source).find(range => range.kind === 'zone' && range.from > 0)?.from;
+              // Nested list items can hide a tight zone from the top-level block scanner.
+              const candidates = [...source.matchAll(/^( {0,3})(?:\d+[.)]|[*+-])[ \t]+[^\r\n]*\r?\n( +)(?=:::zone\b)/gm)];
+              if (candidates.length) {
+                const literals = parser.parse(source, {}).filter(token => token.map && ['fence', 'code_block', 'html_block'].includes(token.type));
+                for (const candidate of candidates) {
+                  if (candidate[2].length <= candidate[1].length) continue;
+                  const offset = candidate.index + candidate[0].length - candidate[2].length;
+                  const line = source.slice(0, offset).split('\n').length - 1;
+                  if (literals.some(token => token.map![0] <= line && line < token.map![1])) continue;
+                  const dedented = source.slice(offset).replace(new RegExp(`^ {0,${candidate[2].length}}`, 'gm'), '');
+                  if (editablePublishingBlockAtStart(dedented)?.kind === 'zone') boundary = Math.min(boundary ?? offset, offset);
+                }
+              }
+              if (boundary !== undefined) {
                 const beforeBlock = source.slice(0, boundary);
                 if (!/\r?\n[ \t]*\r?\n$/.test(beforeBlock)) {
                   // Marked absorbs directives after tight-list prose; separate the blocks only for parsing.

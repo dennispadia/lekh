@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.9
+
+- Add an optional Learn checks panel across Visual, Markdown, Split and Preview, with source-line navigation, alt-text and metadata suggestions, scoped image/include path checks, and publishing-block diagnostics.
+- Expose Learn checks through the toolbar, command palette, View and right-click menus, with explicit folder-access recovery and no automatic source changes.
+- Keep implicit DocFX tabs nested in numbered lists editable and consistent across editing views.
+- Preserve both variant zones when tabbed examples immediately follow a nested numbered step, including steps after fenced code.
+- Guard the genuine 0.9.8 -> 0.9.9 hosted upgrade matrix.
+
 ## 0.9.8
 
 - Retry editable directive images immediately after project-folder access is granted, including in Split view.

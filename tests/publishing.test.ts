@@ -328,6 +328,18 @@ test('implicit DocFX tabs end with their list item or zone and retain following 
   await assert.rejects(() => toPrintHTML(source, null), /Word and PDF export.*HTML/);
 });
 
+test('implicit DocFX tabs inside a numbered list retain both peers and following list items', () => {
+  const source = '1. Configure ENSA specific properties and constraints.\n' +
+    '   #### [ENSA2](#tab/ensa2)\n   ```bash\n   sudo crm configure property priority-fencing-delay=30\n   ```\n' +
+    '   #### [ENSA1](#tab/ensa1)\n   ```bash\n   sudo crm_attribute --delete --name priority-fencing-delay\n   ```\n\n' +
+    '1. Enable the nodes and take the cluster out of maintenance mode.\n   ```bash\n   sudo crm node online sap-cl1\n   ```\n';
+  const html = documentPreviewHTML(source, '');
+  assert.match(html, /data-publishing-tab="0">ENSA2/);
+  assert.match(html, /data-publishing-tab="1">ENSA1/);
+  assert.match(html, /Enable the nodes and take the cluster out of maintenance mode/);
+  assert.doesNotMatch(html, /Unclosed tabs|publishing-unsupported/);
+});
+
 test('implicit tabs require multiple peers and stop before same or higher non-tab headings or EOF', () => {
   const tabs = '#### [One](#tab/one)\nFirst body\n\n##### Nested detail\nDetails\n\n#### [Two](#tab/two)\nSecond body\n';
   for (const following of ['', '#### Next same-level section\nArticle content\n', '### Next parent section\nArticle content\n']) {
@@ -461,7 +473,7 @@ test('source selection ranges exclude fenced, indented-code and comment lookalik
   const source = before + block + '\r\n' + unknown;
   assert.deepEqual(publishingBlockRanges(source), [
     { from: before.length, to: before.length + block.length, raw: block, kind: 'callout' },
-    { from: before.length + block.length + 2, to: source.length, raw: unknown, kind: 'unsupported' },
+    { from: before.length + block.length + 2, to: source.length, raw: unknown, kind: 'unsupported', reason: 'Directive not rendered; original source retained.' },
   ]);
   const nested = ':::zone pivot="one"\n> [!TIP]\n> Nested\n:::zone-end\n';
   assert.deepEqual(publishingBlockRanges(nested), [{ from: 0, to: nested.length, raw: nested, kind: 'zone' }]);
