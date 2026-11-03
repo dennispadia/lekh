@@ -65,7 +65,7 @@ test('distribution uses the public npm registry and ships notices without develo
   assert.equal(manifest.name, 'lekh');
   assert.equal(lock.name, manifest.name);
   assert.equal(lock.packages[''].name, manifest.name);
-  assert.equal(manifest.version, '0.9.9');
+  assert.equal(manifest.version, '0.9.10');
   assert.equal(manifest.build.appId, 'com.lekh.desktop');
   assert.equal(manifest.build.productName, 'Lekh - Markdown editor');
   assert.equal(manifest.build.msi.shortcutName, 'Lekh');

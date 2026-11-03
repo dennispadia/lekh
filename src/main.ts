@@ -28,6 +28,7 @@ import { ContextMenu } from './context-menu.js';
 import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
 import { LearnChecksPanel } from './learn-checks-panel.js';
+import { IncludeRelationshipsPanel } from './include-relationships-panel.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
 import { prepareVariantInsertion, selectInsertedVariant, validateSourceVariantInsertion, variantInsertionPosition } from './publishing-insert.js';
 import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, projectVariantOptions, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
@@ -42,6 +43,7 @@ import './style.css';
 
 let writingAssistance: WritingAssistance | undefined;
 let learnPanel: LearnChecksPanel | undefined;
+let relationshipsPanel: IncludeRelationshipsPanel | undefined;
 let slashMenu: SlashMenu | undefined;
 let slashDismissed = '';
 const syntaxStyle = document.createElement('style');
@@ -160,7 +162,7 @@ app.innerHTML = `
       ${group('insert', 'Insert', `${group('insert-extra', 'Insert', `<button type="button" data-action="image" title="Insert image (Ctrl+Shift+I)" aria-label="Insert image">${icon('image')}<span>Image</span></button><button type="button" data-action="table" title="Insert table (Ctrl+T)" aria-label="Insert table">${icon('table')}<span>Table</span></button><button type="button" data-command="codeblock" title="Code block (Ctrl+Shift+K)" aria-label="Code block">${icon('codeblock')}<span>Code</span></button><button type="button" data-action="alerts-menu" aria-label="Insert alert" title="Note, Tip, Important, Caution and Warning" aria-haspopup="menu" aria-controls="alerts-menu" aria-expanded="false">${publishingIcon('note')}<span>Alerts</span>${icon('chevron')}</button>`, 'labelled toolbar-insert-extra')}<button type="button" data-action="structure-menu" aria-label="Insert structure" title="Table of contents, diagrams, metadata and image descriptions" aria-haspopup="menu" aria-controls="structure-menu" aria-expanded="false">${icon('contents')}<span>Structure</span>${icon('chevron')}</button><button type="button" data-action="interactive-menu" aria-label="Insert interactive content" title="Tabbed examples and variants (HTML export only)" aria-haspopup="menu" aria-controls="interactive-menu" aria-expanded="false">${publishingIcon('tabs')}<span>Interactive</span>${icon('chevron')}</button>`, 'labelled')}
       <div class="toolbar-more"><button type="button" data-action="format-menu" aria-label="More tools and views" title="More tools and views" aria-haspopup="menu" aria-controls="format-menu" aria-expanded="false">${icon('more')}</button></div>
       <span class="toolbar-spacer"></span>
-      ${group('review', 'Review', `<button type="button" data-action="learn-checks" class="learn-control" aria-controls="learn-panel" aria-expanded="false" aria-pressed="false" aria-label="Learn checks" title="Learn checks: Microsoft Learn publishing suggestions">${icon('learn')}<span>Learn checks</span><b class="learn-badge" aria-hidden="true" hidden>0</b></button><button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
+      ${group('review', 'Review', `<button type="button" data-action="learn-checks" class="learn-control" aria-controls="learn-panel" aria-expanded="false" aria-pressed="false" aria-label="Learn checks" title="Learn checks: Microsoft Learn publishing suggestions">${icon('learn')}<span>Learn checks</span><b class="learn-badge" aria-hidden="true" hidden>0</b></button>${button('include-relationships', 'Include relationships', 'link', 'icon-only')}<button type="button" data-action="writing-assistance" class="icon-only grammar-control" aria-label="Writing assistance" title="Writing assistance: offline grammar checks">${icon('check')}<span>Writing assistance</span></button>${button('undo', 'Undo', 'undo', 'icon-only')}${button('redo', 'Redo', 'redo', 'icon-only')}`)}
     </div>
     <div id="view-hint" class="view-hint"><span id="view-hint-text"><strong>Visual:</strong> Edit the document as it appears.</span><label id="preview-source-option" hidden><input id="preview-source" type="checkbox" />Show Markdown beside preview</label></div>
     <div id="table-tools" hidden><span>TABLE</span>${button('row', '+ Row')}${button('column', '+ Column')}${button('delete-row', 'Remove row')}${button('delete-column', 'Remove column')}${button('delete-table', 'Remove table')}</div>
@@ -171,7 +173,20 @@ app.innerHTML = `
       ${button('find-previous', 'Previous')}${button('find-next', 'Find next')}${button('replace-one', 'Replace')}${button('replace-all', 'Replace all')}<span id="find-result" role="status"></span>${button('find-close', 'Close')}
     </section>
     <div id="recovery-banner" hidden>Unsaved drafts from your last session are available. ${button('recover', 'Recover drafts')}${button('dismiss-recovery', 'Dismiss')}</div>
+    <div class="document-workspace">
     <div class="canvas" id="canvas"><article class="paper" id="visual-editor" aria-label="Visual Markdown editor"></article><textarea id="source-editor" aria-label="Markdown source" spellcheck="false" hidden></textarea></div>
+    <aside id="relationships-panel" hidden aria-labelledby="relationships-title">
+      <div class="relationships-heading"><strong id="relationships-title">Include relationships</strong><button type="button" id="relationships-close" aria-label="Close include relationships">Close</button></div>
+      <p id="relationships-target"></p>
+      <div class="relationships-tools"><button type="button" id="relationships-workspace">Choose workspace\u2026</button><button type="button" id="relationships-refresh">Refresh</button><button type="button" id="relationships-revoke" hidden>Forget workspace</button></div>
+      <p id="relationships-status" role="status" aria-live="polite">Choose a workspace to scan local Markdown files.</p>
+      <button type="button" id="relationships-back" hidden>Back to article's includes</button>
+      <button type="button" id="relationships-this-file">Where is this file used?</button>
+      <input id="relationships-search" type="search" aria-label="Filter include relationships" placeholder="Filter files\u2026" />
+      <div id="relationships-results"></div>
+      <p class="relationships-note">Local Markdown includes only. Results cover the approved folder, not other repositories. Git metadata and node_modules are excluded. No cloud service, publishing configuration, site-relative paths or cross-repository mappings are interpreted.</p>
+    </aside>
+    </div>
     <section id="learn-panel" hidden aria-labelledby="learn-title">
       <div class="learn-header"><strong id="learn-title">Learn checks</strong><span id="learn-status" role="status" aria-live="polite"></span><button type="button" id="learn-check">Check again</button><button type="button" id="learn-close" aria-label="Close Learn checks">Close</button></div>
       <p class="learn-note">Microsoft Learn publishing suggestions: alt text, local image and include paths, metadata, and publishing blocks. Checks run on this device and never change your text.</p>
@@ -188,7 +203,7 @@ app.innerHTML = `
   ${`<div id="alerts-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Alerts" hidden>${publishingTemplates.filter(item => item.category === 'alerts').map(item => templateItem(item.id)).join('')}</div>`}
   <div id="structure-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Structure" hidden>${structureMenuHTML}</div>
   <div id="interactive-menu" class="dropdown view-menu publishing-insert-menu" role="menu" aria-label="Interactive" hidden>${interactiveMenuHTML}</div>
-  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('learn-checks', 'Learn checks')}${button('help', 'Getting started', 'help')}</div>
+  <div id="format-menu" class="dropdown view-menu" role="menu" hidden><div id="toolbar-overflow" role="group" aria-label="More editing tools" hidden></div>${button('split', 'Split with another file...', 'split', 'split-control')}${button('writing-assistance', 'Writing assistance')}${button('learn-checks', 'Learn checks')}${button('include-relationships', 'Include relationships')}${button('help', 'Getting started', 'help')}</div>
   <div id="notification" role="status" hidden></div>
   <dialog id="publishing-include-dialog" aria-labelledby="publishing-include-title"><form method="dialog">
     <h2 id="publishing-include-title">Insert include</h2>
@@ -1876,6 +1891,7 @@ function update(): void {
   if (!element('find-panel').hidden) scheduleSearch();
   writingAssistance?.schedule();
   learnPanel?.schedule();
+  relationshipsPanel?.schedule();
 }
 
 function changed(content: string, record = true): void {
@@ -2610,6 +2626,7 @@ async function dispatch(action: string): Promise<void> {
     }
     case 'writing-assistance': writingAssistance?.open(); break;
     case 'learn-checks': learnPanel?.open(); break;
+    case 'include-relationships': relationshipsPanel?.open(); break;
     case 'document-stats': {
       const words = wordCount(markdown);
       const tokens = parser.parse(markdown, {});
@@ -3373,6 +3390,12 @@ window.lekh.onIncludeAccessChanged(id => {
   refreshLocalImages(id);
   if (id === documentId) learnPanel?.refresh();
 });
+window.addEventListener('lekh-show-relationships', event => {
+  const { id, source: includeSource, open } = (event as CustomEvent<{ id: string; source: string; open: boolean }>).detail;
+  if (!tabs.some(tab => tab.id === id)) return;
+  if (id !== documentId) activateTab(id);
+  relationshipsPanel?.open(open, includeSource);
+});
 window.lekh.onAction(action => {
   if (action === 'open-pending') {
     pendingExternalOpen = true;
@@ -3426,6 +3449,26 @@ void run(async () => {
     allowFolder: async kind => {
       if (kind === 'image') await dispatch('allow-image-folder');
       else if (unwrap(await window.lekh.allowIncludeFolder(documentId))) notify('Local includes are allowed within the selected folder for this document and session.');
+    },
+    report: message => notify(message, true),
+  });
+  relationshipsPanel = new IncludeRelationshipsPanel({
+    context: id => {
+      const tab = id ? tabs.find(tab => tab.id === id) : activeTab;
+      return tab ? { id: tab.id, path: tab.path, markdown: tab.id === documentId ? markdown : tab.markdown } : undefined;
+    },
+    query: async (id, content, source, refresh) => unwrap(await window.lekh.includeRelationships(id, content, source, refresh)),
+    workspace: async (id, revoke) => unwrap(await window.lekh.relationshipWorkspace(id, revoke)),
+    openFile: async (id, file, line) => {
+      const opened = unwrap(await window.lekh.openRelationship(id, file));
+      addTab(opened.id, opened.content, opened.path.split(/[\\/]/).at(-1)!, opened.path);
+      useSource();
+      const lines = markdown.split('\n');
+      const target = Math.min(Math.max(1, line), lines.length);
+      const offset = lines.slice(0, target - 1).join('\n').length + (target > 1 ? 1 : 0);
+      source.focus(); source.setSelectionRange(offset, offset);
+      source.scrollTop = Math.max(0, (target - 1) * 24 - 50);
+      return opened;
     },
     report: message => notify(message, true),
   });

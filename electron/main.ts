@@ -8,6 +8,7 @@ import type Token from 'markdown-it/lib/token.mjs';
 import { atomicWrite, atomicWriteIfUnchanged, exportWriteError, readMarkdown } from '../lib/files.js';
 import { readImage, imageMime, embeddedImage, storeImage, MAX_IMAGE_BYTES, type AuthorizedImageRoots } from '../lib/images.js';
 import { learnPathStatuses } from '../lib/learn-paths.js';
+import { relationshipReport, scanRepository, validateWorkspace, withinWorkspace, type RepositoryIndex } from '../lib/repository-index.js';
 import { documentPreviewTokensHTML, headingAnchor, isSafeLink, parser, requiresInteractiveExport } from '../lib/markdown.js';
 import { IncludeAccessPrompts, resolveIncludes, suggestedIncludeFolder } from '../lib/includes.js';
 import { toDocx, toOfflineHTML, toPrintHTML, type DiagramImageLoader } from '../lib/export.js';
@@ -37,6 +38,8 @@ const documents = new Map<string, NativeDocument>();
 // Grant identity changes even when the same folder is authorized again.
 const imageRoots = new Map<string, { root: string }>();
 const includeRoots = new Map<string, { root: string }>();
+interface RelationshipWorkspace { root: string; index?: RepositoryIndex; pending?: Promise<RepositoryIndex>; request?: number }
+const relationshipWorkspaces = new Map<string, RelationshipWorkspace>();
 const includePrompts = new IncludeAccessPrompts();
 const pendingVariantFiles = new Map<string, { id: string; document: NativeDocument; documentPath: string | null; file: string; content: string; label: string }>();
 const sharedVariantFiles = new Map<string, string>();
@@ -566,6 +569,7 @@ function installIPC(): void {
     documents.delete(String(id));
     imageRoots.delete(String(id));
     includeRoots.delete(String(id));
+    relationshipWorkspaces.delete(String(id));
     includePrompts.forget(String(id));
     sharedVariantFiles.delete(String(id));
     for (const [token, pending] of pendingVariantFiles) if (pending.id === String(id)) pendingVariantFiles.delete(token);
@@ -697,6 +701,60 @@ function installIPC(): void {
     const roots = [imageRoots.get(String(id))?.root, includeRoots.get(String(id))?.root].filter((root): root is string => Boolean(root));
     return learnPathStatuses(sources, document.path, roots);
   });
+  handle('relationships:workspace', async (id: unknown, revoke: unknown) => {
+    const document = documentFor(id);
+    if (typeof revoke !== 'boolean') throw new Error('Invalid workspace request.');
+    if (revoke) { relationshipWorkspaces.delete(String(id)); return null; }
+    const currentPath = document.path;
+    if (!currentPath) throw new Error('Save this document before choosing a relationship workspace.');
+    const selected = await dialog.showOpenDialog(window, {
+      title: 'Choose a workspace to scan Markdown include relationships',
+      buttonLabel: 'Allow local Markdown scan', properties: ['openDirectory'],
+      defaultPath: includeRoots.get(String(id))?.root ?? path.dirname(currentPath),
+    });
+    if (selected.canceled) return null;
+    const root = await validateWorkspace(selected.filePaths[0], currentPath);
+    if (documentFor(id) !== document || document.path !== currentPath) throw new Error('The document changed. Choose the workspace again.');
+    const cached = [...relationshipWorkspaces.values()].find(workspace => samePath(workspace.root, root) && workspace.index);
+    relationshipWorkspaces.set(String(id), { root, index: cached?.index });
+    return root;
+  });
+  handle('relationships:query', async (id: unknown, content: unknown, source: unknown, refresh: unknown) => {
+    const document = documentFor(id);
+    contentArgument(content);
+    if ((source !== null && (typeof source !== 'string' || source.length > 4096)) || typeof refresh !== 'boolean') throw new Error('Invalid relationship request.');
+    const grant = relationshipWorkspaces.get(String(id));
+    if (!grant || !document.path) return null;
+    const currentPath = document.path;
+    const request = grant.request = (grant.request ?? 0) + 1;
+    const assertAccess = () => {
+      if (documents.get(String(id)) !== document || document.path !== currentPath || relationshipWorkspaces.get(String(id)) !== grant) {
+        throw new Error('Workspace access or the document changed. Choose the workspace again.');
+      }
+    };
+    if (refresh && !grant.pending) grant.index = undefined;
+    if (!grant.index) {
+      if (!grant.pending) grant.pending = scanRepository(grant.root, { assertAccess });
+      const pending = grant.pending;
+      try { grant.index = await pending; }
+      finally { if (grant.pending === pending) grant.pending = undefined; }
+    }
+    assertAccess();
+    if (request !== grant.request) return null;
+    return relationshipReport(grant.index, currentPath, content, source, assertAccess);
+  });
+  handle('relationships:open', async (id: unknown, relative: unknown) => {
+    const document = documentFor(id), grant = relationshipWorkspaces.get(String(id));
+    if (!grant?.index || !document.path || typeof relative !== 'string' || relative.length > 4096 || path.isAbsolute(relative)) throw new Error('Refresh relationships before opening a matching article.');
+    const currentPath = document.path;
+    const file = await realpath(path.resolve(grant.root, relative));
+    if (!withinWorkspace(grant.root, file) || ![...grant.index.files.values()].some(entry => samePath(entry.file, file))) throw new Error('Choose a Markdown article listed in this workspace.');
+    const content = await readMarkdown(file);
+    if (documents.get(String(id)) !== document || document.path !== currentPath || relationshipWorkspaces.get(String(id)) !== grant) throw new Error('Workspace access changed. Refresh relationships.');
+    const opened = await openDocument(file, content);
+    if (!relationshipWorkspaces.has(opened.id)) relationshipWorkspaces.set(opened.id, { root: grant.root, index: grant.index });
+    return opened;
+  });
   handle('document:save', async (id: unknown, content: unknown, saveAs: unknown) => {
     const document = documentFor(id);
     const currentPath = document.path;
@@ -741,6 +799,7 @@ function installIPC(): void {
       includeRoots.delete(String(id));
       includePrompts.forget(String(id));
     }
+    if (currentPath && !samePath(file, currentPath)) relationshipWorkspaces.delete(String(id));
     document.path = file;
     document.diskContent = content;
     const sharedVariantFile = sharedVariantFiles.get(String(id));
@@ -834,6 +893,7 @@ function viewAndToolsItems(): MenuItemConstructorOptions[] {
     { type: 'separator' },
     { label: 'Writing assistance', click: () => action('writing-assistance') },
     { label: 'Learn checks', click: () => action('learn-checks') },
+    { label: 'Include relationships', click: () => action('include-relationships') },
     { label: 'Getting started', click: () => action('help') },
   ];
 }
@@ -975,6 +1035,7 @@ function createWindow(): void {
       { id: 'view-preview-source', label: 'Show Markdown beside preview', type: 'checkbox', enabled: false, click: send('preview-source') },
       { label: 'Writing assistance', click: send('writing-assistance') },
       { label: 'Learn checks', click: send('learn-checks') },
+      { label: 'Include relationships', click: send('include-relationships') },
       { label: 'Toggle sidebar', accelerator: 'CmdOrCtrl+Shift+B', click: send('sidebar') },
       { label: 'Focus mode', accelerator: 'F9', click: send('focus') },
       { label: 'Split with...', click: send('split') },

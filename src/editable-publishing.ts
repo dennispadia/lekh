@@ -9,6 +9,7 @@ import { reachableVariantChoices, validateVariantAssignment } from './publishing
 import { choosePublishingVariant, initializePublishing, publishingHTML, refreshPublishingVariants } from './publishing-view.js';
 import { renderMermaidBlocks } from './diagrams.js';
 import { containsResolvedReference, inlineDestinations, referenceDefinitions, snapshot, withoutSource } from './publishing-source.js';
+import { relationshipControl } from './relationship-control.js';
 
 interface Options {
   schema: (() => Schema) | null;
@@ -708,7 +709,8 @@ const IncludeNode = Node.create<Options>({
       const fields = document.createElement('div');
       const name = field(context, 'Include title', () => String(context.node.attrs.label), value => set({ label: value }), false, true);
       const source = field(context, 'Include path', () => String(context.node.attrs.source), value => set({ source: value }), false, true);
-      fields.append(name.wrapper, source.wrapper); details.append(summary, fields); header.append(title, details);
+      const relationships = relationshipControl(options.documentId, () => String(context.node.attrs.source));
+      fields.append(name.wrapper, source.wrapper); details.append(summary, fields); header.append(title, relationships.dom, details);
       const preview = document.createElement('article');
       preview.className = 'publishing-include-preview'; preview.setAttribute('aria-label', 'Included content');
       preview.textContent = 'Loading included content...';
@@ -746,7 +748,7 @@ const IncludeNode = Node.create<Options>({
       return { dom, ...ignoreControls(dom),
         update: updated => {
           if (updated.type !== node.type) return false;
-          context.node = updated; name.refresh(); source.refresh();
+          context.node = updated; name.refresh(); source.refresh(); relationships.refresh();
           title.textContent = `Include: ${String(updated.attrs.label)}`;
           const nextSource = String(updated.attrs.source);
           if (nextSource !== lastSource) {
@@ -757,7 +759,7 @@ const IncludeNode = Node.create<Options>({
           }
           return true;
         },
-        destroy: () => { destroyed = true; clearTimeout(timer); window.removeEventListener('lekh-publishing-refresh', onRefresh); },
+        destroy: () => { destroyed = true; clearTimeout(timer); relationships.destroy(); window.removeEventListener('lekh-publishing-refresh', onRefresh); },
       };
     };
   },

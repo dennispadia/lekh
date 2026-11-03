@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.10
+
+- Add a repository-independent, permission-scoped local Markdown include relationship index.
+- Show focused consumers from Visual include-header checkboxes, with grouped source lines, collapsed indirect chains, include selection, filtering, refresh and explicit workspace revocation across editing views.
+- Expose include relationships in the Review toolbar, More tools, command palette, View and right-click menus without changing document source.
+- Validate the genuine published 0.9.9 -> 0.9.10 installer upgrade, rollback, running-app recheck, same-version rejection and repair on a GitHub-hosted Windows runner.
+
 ## 0.9.9
 
 - Add an optional Learn checks panel across Visual, Markdown, Split and Preview, with source-line navigation, alt-text and metadata suggestions, scoped image/include path checks, and publishing-block diagnostics.

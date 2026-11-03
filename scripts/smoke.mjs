@@ -3865,6 +3865,50 @@ try {
   await main.evaluate('smokeIncludeChoice=0');
   console.log('PASS: Learn checks report metadata, alt text and scoped path issues consistently across Visual, Markdown, Split and Preview without changing source');
 
+  const relationshipRoot = path.join(temporary, 'relationships-custom-layout');
+  await mkdir(path.join(relationshipRoot, 'shared'), { recursive: true });
+  const relationshipText = '# Relationship article\n\n[!INCLUDE [First](shared/first.md)]\n\n[!INCLUDE [First again](shared/first.md)]\n\n[!INCLUDE [Second](shared/second.md)]\n';
+  const relationshipFile = path.join(relationshipRoot, 'article.md');
+  await writeFile(relationshipFile, relationshipText);
+  await writeFile(path.join(relationshipRoot, 'shared', 'first.md'), 'First shared paragraph.');
+  await writeFile(path.join(relationshipRoot, 'shared', 'second.md'), 'Second shared paragraph.');
+  await writeFile(path.join(relationshipRoot, 'consumer.md'), '# Consumer\n\n[!INCLUDE [Article](article.md)]\n');
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(relationshipFile)}`);
+  await action('open');
+  await action('visual');
+  await waitFor(async () => ui("document.querySelectorAll('#visual-editor .include-relationship-control input').length === 3"), 'Visual relationship checkboxes');
+  await ui("document.querySelector('#visual-editor .include-relationship-control input').click()");
+  await waitFor(async () => ui("document.querySelector('#relationships-status').textContent.includes('Choose a workspace')"), 'relationship workspace opt-in');
+  assert.equal(await ui("document.querySelector('#relationships-panel').hidden"), false);
+  assert.equal(await ui("document.querySelectorAll('.relationship-consumer').length"), 0);
+  await main.evaluate(`smokeOpenPath=${JSON.stringify(relationshipRoot)}`);
+  await ui("document.querySelector('#relationships-workspace').click()");
+  await waitFor(async () => ui("document.querySelectorAll('#relationships-results > .relationship-list > .relationship-consumer').length === 1"), 'indexed direct consumers');
+  assert.equal(await ui("document.querySelectorAll('.relationship-consumer .relationship-line').length"), 3, 'Repeated source references group under one direct article, plus an indirect consumer');
+  assert.equal(await ui("document.querySelector('#relationships-results details').open"), false, 'Indirect consumers start collapsed');
+  for (const view of ['source', 'edit-split', 'visual']) {
+    await action(view);
+    assert.equal(await ui("document.querySelector('#relationships-panel').hidden"), false);
+    assert.equal(await ui("document.querySelector('#source-editor').value"), relationshipText, 'Relationships do not change document Markdown');
+  }
+  await ui("document.querySelectorAll('#visual-editor .include-relationship-control input')[2].click()");
+  await waitFor(async () => ui("document.querySelector('#relationships-target').textContent === 'shared/second.md' && document.querySelectorAll('.relationship-consumer').length === 2"), 'switch focused include');
+  assert.equal(await ui("document.querySelectorAll('#visual-editor .include-relationship-control input:checked').length"), 1);
+  await ui("document.querySelector('#relationships-back').click()");
+  assert.equal(await ui("document.querySelectorAll('.relationship-include').length"), 2, 'Include list groups repeated file usage');
+  await ui("document.querySelector('.relationship-include').click()");
+  await waitFor(async () => ui("document.querySelector('#relationships-target').textContent === 'shared/first.md' && document.querySelector('.relationship-line') !== null"), 'restored focused include');
+  await ui("document.querySelector('.relationship-line').click()");
+  await waitFor(async () => ui("document.activeElement.id === 'source-editor'"), 'consumer line navigation');
+  assert.equal(await ui("document.querySelector('#source-editor').selectionStart"), relationshipText.indexOf('[!INCLUDE'));
+  await ui("document.querySelector('#relationships-revoke').click()");
+  await waitFor(async () => ui("document.querySelectorAll('.relationship-consumer').length === 0 && document.querySelector('#relationships-status').textContent.includes('Choose a workspace')"), 'workspace revocation clears results');
+  await ui("document.querySelector('#relationships-close').click()");
+  assert.equal(await ui("document.querySelectorAll('.include-relationship-control input:checked').length"), 0);
+  assert.equal(await readFile(relationshipFile, 'utf8'), relationshipText);
+  await menuAction('close-tab');
+  console.log('PASS: scoped relationship workspace, Visual checkboxes, grouped direct lines, collapsed indirect usage, view switching, include switching, navigation, revocation and unchanged source');
+
   const grammarFixture = '# Grammar check\n\nWe made a error. We made a error.\n\nShe could of gone.\n\n`We made a error.`\n\n```text\nWe made a error.\n```\n\n[Link](https://example.com/a-error)\n';
   const grammarCRLF = path.join(temporary, 'Grammar CRLF.md');
   await writeFile(grammarCRLF, grammarFixture.replace(/\n/g, '\r\n'));

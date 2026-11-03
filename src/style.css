@@ -318,6 +318,29 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; container-t
 #writing-toggle, footer .status-button { font-size: inherit; padding: 3px 5px; color: inherit; }
 #save-status { justify-content: flex-start; }
 #learn-panel { border-top: 1px solid var(--line); padding: 10px 20px; background: var(--paper); max-height: 260px; overflow: auto; flex-shrink: 0; font-size: 12px; }
+.document-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.document-workspace > .canvas { min-width: 0; }
+#relationships-panel { width: clamp(280px, 30vw, 390px); flex-shrink: 0; border-left: 1px solid var(--line); background: var(--paper); padding: 14px; overflow: auto; font-size: 12px; }
+.relationships-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.relationships-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.relationships-tools button, #relationships-back, #relationships-this-file { font-size: 11px; padding: 5px 7px; border: 1px solid var(--line); margin-bottom: 5px; }
+#relationships-target { font: 11px/1.6 Consolas, monospace; overflow-wrap: anywhere; padding: 8px; background: var(--soft); border-radius: 4px; }
+#relationships-status, .relationships-note, .relationship-reference-count { color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+#relationships-search { width: 100%; margin: 8px 0; padding: 7px; border: 1px solid var(--line); border-radius: 4px; color: var(--text); background: var(--paper); }
+.relationship-list { list-style: none; padding: 0; margin: 0; }
+.relationship-consumer, .relationship-include { padding: 10px; margin: 8px 0; border: 1px solid var(--line); border-radius: 5px; overflow-wrap: anywhere; }
+.relationship-include { width: 100%; text-align: left; white-space: normal; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; background: var(--soft); }
+.relationship-include span { font-size: 11px; color: var(--muted); }
+.relationship-line { font-size: 11px; color: var(--accent); background: var(--soft); padding: 4px 8px; margin: 3px 4px 0 0; border: 1px solid var(--line); }
+.relationship-chain { font: 10px/1.6 Consolas, monospace; overflow-wrap: anywhere; color: var(--muted); }
+.relationship-warning { border-left: 3px solid var(--accent); background: var(--soft); padding: 8px; font-size: 11px; overflow-wrap: anywhere; }
+#relationships-results summary { cursor: pointer; padding: 10px 0; color: var(--accent); }
+.include-relationship-control { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; white-space: nowrap; color: var(--accent); }
+.include-relationship-control input { accent-color: var(--accent); }
+@media (max-width: 800px) {
+  .document-workspace { flex-direction: column; }
+  #relationships-panel { width: 100%; max-height: 40%; border-left: 0; border-top: 1px solid var(--line); }
+}
 .learn-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 #learn-status { flex: 1; min-width: 160px; }
 .learn-note { color: var(--muted); margin: 6px 0; }

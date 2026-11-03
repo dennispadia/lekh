@@ -51,6 +51,9 @@ export interface LekhAPI {
   previewIncludes: (id: string, content: string) => Promise<Result<string>>;
   includesRequireInteractiveExport: (id: string, content: string) => Promise<Result<boolean>>;
   checkLearnPaths: (id: string, paths: string[]) => Promise<Result<LearnPathStatus[]>>;
+  relationshipWorkspace: (id: string, revoke: boolean) => Promise<Result<string | null>>;
+  includeRelationships: (id: string, content: string, source: string | null, refresh: boolean) => Promise<Result<RelationshipReport | null>>;
+  openRelationship: (id: string, file: string) => Promise<Result<OpenedFile>>;
   onIncludeAccessChanged: (listener: (id: string) => void) => void;
   prepareVariantConfiguration: (id: string, content: string) => Promise<Result<string>>;
   chooseVariantConfigFile: (id: string) => Promise<Result<ChosenVariantConfigFile | null>>;
@@ -82,3 +85,4 @@ declare global {
 }
 import type { Theme } from '../lib/themes.js';
 import type { LearnPathStatus } from '../lib/learn-checks.js';
+import type { RelationshipReport } from '../lib/include-relationships.js';
