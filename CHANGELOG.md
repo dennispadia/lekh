@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.8
+
+- Accept closing directive markers with trailing colons, including `:::image-end:::`, without losing complex image descriptions or following content.
+- Preserve complex image descriptions through Visual edits and reopening.
+- Guard the genuine 0.9.7 -> 0.9.8 hosted upgrade matrix.
+
 ## 0.9.7
 
 - Keep variant content and code editable in Visual and Split, including zones following list text and nested tab examples.

@@ -48,6 +48,19 @@ function changeText(doc: ModelNode, text: string, addition = ' edited'): ModelNo
 const selector = ':::selector title="Choose an option"\n- [Availability Zones](#variant/zones)\n- [Scale Set](#variant/scale-set)\n:::selector-end';
 const zone = ':::zone pivot="zones"\n## Availability\n\nEditable **rich** content.\n:::zone-end';
 
+test('complex images with colon-suffixed end markers remain editable and survive reopening', () => {
+  const { parse, manager } = fixture();
+  const source = ':::image type="complex" source="../../articles/diagram.png" alt-text="A diagram.":::\nLong **description**.\n:::image-end:::\n\nFollowing paragraph.';
+  const doc = parse(source);
+  assert.ok(types(doc).includes('lekhImageDescription'));
+  assert.ok(!types(doc).includes('publishingBlock'));
+  const edited = changeText(doc, 'description');
+  const reopened = parse(manager.serialize(edited.toJSON()));
+  assert.ok(types(reopened).includes('lekhImageDescription'));
+  assert.match(reopened.textContent, /description edited/);
+  assert.match(reopened.textContent, /Following paragraph\./);
+});
+
 test('code-only variant bodies retain their editable code with the desktop language extension', () => {
   const { parse, manager } = fixture();
   for (const spacing of ['', '\n']) {

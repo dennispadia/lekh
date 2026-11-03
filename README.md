@@ -67,6 +67,8 @@
 | **Include** | Insert a title and path with **Structure > Include** to show shared local Markdown in Visual, Preview and exports without rewriting the source. |
 | **Metadata** | One YAML box for any front-matter keys, kept out of the article body. |
 
+The supported `:::` directive names are `image`, `zone`, `selector`, `tabs`, `tab` and `steps`. Images support `content`, `icon` and `complex` types; complex images include a long description. Closing markers accept both forms, for example `:::image-end` and `:::image-end:::`.
+
 ### Workspace and safety
 
 | | |
