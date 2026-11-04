@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, shell, type IpcMainInvokeEvent, type MenuItemConstructorOptions, type MessageBoxOptions } from 'electron';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -21,6 +21,7 @@ import { addVariantMetadata, appendVariantGroupEntry, prepareVariantConfiguratio
 import { publishingTemplates, variantInsertionTemplate } from '../lib/publishing-templates.js';
 import { hasInteractivePublishing, interactiveExportMessage, type PublishingMeta } from '../lib/publishing.js';
 import type { ContextMenuItem, EditorContext, OpenedFile, Result } from '../src/bridge.js';
+import { appDialogs, installMessageDialogs } from './message-dialog.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'lekh-image', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName(productName);
@@ -110,7 +111,7 @@ async function remember(file: string): Promise<void> {
   try { await atomicWrite(recentPath(), JSON.stringify(recentFiles)); }
   catch (error) {
     console.error('Could not update recent files:', error);
-    await dialog.showMessageBox(window, { type: 'warning', message: 'Your document is safe, but the recent-file list could not be updated.', detail: String(error) });
+    await appDialogs.showMessageBox(window, { type: 'warning', message: 'Your document is safe, but the recent-file list could not be updated.', detail: String(error) });
   }
 }
 
@@ -396,7 +397,7 @@ async function prepareDocument(id: unknown, content: string, preview = false): P
     const suggested = suggestedIncludeFolder(resolvedDocument, includeGrant ? [...candidates, includeGrant.root] : candidates);
     if (suggested) {
       const allowed = await includePrompts.request(String(id), suggested, async () => {
-        const answer = await dialog.showMessageBox(window, {
+        const answer = await appDialogs.showMessageBox(window, {
           type: 'question',
           message: 'Allow this document to load shared files?',
           detail: `This document refers to Markdown includes outside its folder, including:\n${candidates[0]}\n\nAllow local Markdown includes and their images within:\n${suggested}\n\nAccess applies only to this document and ends when it is closed or saved in another folder.`,
@@ -788,7 +789,7 @@ function installIPC(): void {
         return child.type === 'image' && !/^[a-z][a-z\d+.-]*:/i.test(source);
       }));
       if (relativeImages) {
-        const approval = await dialog.showMessageBox(window, {
+        const approval = await appDialogs.showMessageBox(window, {
           type: 'warning', message: 'This document uses relative image paths.',
           detail: 'Saving in another folder will not copy the image files. Copy the images to the same relative locations in the new folder, or cancel and use Insert image to embed them first.',
           buttons: ['Save in new folder', 'Cancel'], defaultId: 1, cancelId: 1,
@@ -817,7 +818,7 @@ function installIPC(): void {
       try { await rememberVariantAssociation(file, sharedVariantFile); }
       catch (error) {
         console.error('Could not remember the shared selector file for this document:', error);
-        await dialog.showMessageBox(window, {
+        await appDialogs.showMessageBox(window, {
           type: 'warning',
           message: 'The article was saved, but its shared selector file could not be remembered.',
           detail: 'Choose the shared file again after reopening this article.\n\n' + String(error),
@@ -829,7 +830,7 @@ function installIPC(): void {
   });
   handle('document:confirm', async (name: unknown) => {
     if (typeof name !== 'string') throw new Error('Missing document name.');
-    const result = await dialog.showMessageBox(window, {
+    const result = await appDialogs.showMessageBox(window, {
       type: 'question', message: `Save changes to "${name}" before continuing?`,
       detail: 'Unsaved changes will be lost if you choose Discard.',
       buttons: ['Save', 'Discard', 'Cancel'], defaultId: 0, cancelId: 2, noLink: true,
@@ -875,7 +876,7 @@ function installIPC(): void {
   });
   handle('app:external', async (url: unknown) => {
     if (typeof url !== 'string' || !isSafeLink(url)) throw new Error('Only web and email links can be opened.');
-    const approval = await dialog.showMessageBox(window, {
+    const approval = await appDialogs.showMessageBox(window, {
       message: 'Open this link in your default application?', detail: url,
       buttons: ['Open link', 'Cancel'], defaultId: 1, cancelId: 1,
     });
@@ -918,6 +919,7 @@ function createWindow(): void {
       sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: true,
     },
   });
+  installMessageDialogs(window);
   window.webContents.on('did-start-loading', () => { rendererReady = false; });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('context-menu', (_event, parameters) => {
@@ -1058,12 +1060,13 @@ function createWindow(): void {
       { label: 'Previous tab', accelerator: 'Ctrl+Shift+Tab', click: send('previous-tab') },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' },
     ] },
-    { label: '&Help', submenu: [{ label: 'Getting started', click: send('help') }, { label: 'Keyboard shortcuts', accelerator: 'F1', click: send('shortcuts') }, { label: `About ${productName}`, click: () => { void dialog.showMessageBox(window, { message: productTitle, detail: `Version ${app.getVersion()}\nA local-first Markdown editor. Built with Electron and Tiptap.\nNo account or cloud connection required.` }); } }] },
+    { label: '&Help', submenu: [{ label: 'Getting started', click: send('help') }, { label: 'Keyboard shortcuts', accelerator: 'F1', click: send('shortcuts') }, { label: `About ${productName}`, click: () => { void appDialogs.showMessageBox(window, { message: productTitle, detail: `Version ${app.getVersion()}\nA local-first Markdown editor. Built with Electron and Tiptap.\nNo account or cloud connection required.` }); } }] },
   ]));
   void window.loadURL(entryURL);
 }
 
 if (primaryInstance) void app.whenReady().then(async () => {
+  const startupMessages: MessageBoxOptions[] = [];
   if (process.platform === 'win32') app.setAppUserModelId('com.lekh.desktop');
   try {
     const saved: unknown = JSON.parse(await readFile(recentPath(), 'utf8'));
@@ -1073,13 +1076,13 @@ if (primaryInstance) void app.whenReady().then(async () => {
       try { await atomicWrite(recentPath(), JSON.stringify(recentFiles)); }
       catch (error) {
         console.error('Could not shorten recent-file history:', error);
-        dialog.showErrorBox('Recent-file history could not be updated', String(error));
+        startupMessages.push({ type: 'error', message: 'Recent-file history could not be updated', detail: String(error) });
       }
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.error('Could not load recent files:', error);
-      dialog.showErrorBox('Recent files could not be loaded', String(error));
+      startupMessages.push({ type: 'error', message: 'Recent files could not be loaded', detail: String(error) });
     }
   }
   try {
@@ -1095,7 +1098,7 @@ if (primaryInstance) void app.whenReady().then(async () => {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
       console.error('Could not load shared selector file associations:', error);
-      dialog.showErrorBox('Shared selector files could not be remembered', String(error));
+      startupMessages.push({ type: 'error', message: 'Shared selector files could not be remembered', detail: String(error) });
     }
   }
   protocol.handle('lekh-image', async request => {
@@ -1117,6 +1120,9 @@ if (primaryInstance) void app.whenReady().then(async () => {
   });
   installIPC();
   createWindow();
+  window.webContents.once('did-finish-load', () => {
+    for (const message of startupMessages) void appDialogs.showMessageBox(window, message);
+  });
 }).catch(error => {
   console.error('Application startup failed:', error);
   dialog.showErrorBox(`${productName} could not start`, String(error));

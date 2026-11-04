@@ -2,7 +2,7 @@
 
 A local-first Windows desktop application for writing Markdown with a friendly visual editor and exporting to interactive HTML, Word and PDF.
 
-This guide describes Lekh's interactive offline HTML export, fully editable Visual publishing blocks, independently placed variant content, synchronized scrolling, and offline grammar checking. See the [latest verified release](https://github.com/dennispadia/lekh/releases/latest) for the installer.
+This guide describes Lekh's interactive offline HTML export, fully editable Visual publishing blocks, independently placed variant content, synchronized scrolling, offline grammar checking, Learn checks, and local include relationships. See the [latest verified release](https://github.com/dennispadia/lekh/releases/latest) for the installer.
 
 ## Open the application
 
@@ -14,7 +14,7 @@ For a source checkout, double-click **Launch.cmd** in the project root. The deve
 
 Lekh uses a standalone `%APPDATA%\Lekh` profile for preferences, recent files, Chromium storage, and recovery drafts. Application files install to `%LOCALAPPDATA%\lekh`. **An existing Lekh profile is retained during upgrades; saved Markdown files can be opened normally.** It does not import another product's profile, use migration aliases, or uninstall another product. Its independent MSI upgrade code stays stable for future Lekh releases. Choose it explicitly for `.md` file associations if desired.
 
-The 0.9.5 release passed genuine **0.9.4 -> 0.9.5** upgrade tests on a clean Windows runner, including automatic upgrades with Lekh closed and a single recheck after closing a running editor. Old registration and payload removal were verified before the new payload stage. Cancellation after removal restored the exact old registration and every old payload byte. Upgrade, repair and uninstall preserved seeded profile settings and a recovery sentinel. See [build and validation details](BUILDING.md#build-outputs).
+The [0.9.10 release](https://github.com/dennispadia/lekh/releases/tag/v0.9.10) passed genuine **0.9.9 -> 0.9.10** upgrade tests on a clean Windows runner, including automatic upgrades with Lekh closed, same-version rejection with the editor closed or open, and a single recheck after closing a running editor. Old registration and payload removal were verified before the new payload stage. Cancellation after removal restored the exact old registration and every old payload byte. Upgrade, repair and uninstall preserved seeded profile settings and a recovery sentinel. See the [verified Windows build](https://github.com/dennispadia/lekh/actions/runs/41700413433) and [build and validation details](BUILDING.md#build-outputs).
 
 No Microsoft Word, Pandoc, account, or internet connection is required to edit or export documents after setup. Images hosted on websites are deliberately not downloaded.
 
@@ -39,6 +39,12 @@ The app is a local development build and is **not code-signed**. It is not a Mic
 5. Choose **Export → Interactive HTML**, **Word document**, or **PDF document** to create a separate document. Documents containing tabbed examples or variants require HTML.
 
 Export uses the **active tab's** current text, including unsaved edits. Exporting does not save or replace the Markdown source.
+
+### Icon colors and dialogs
+
+Starting with 0.9.11, icons use coordinated Light and Dark palettes: blue formatting, green insertion/file actions, purple review, and blue-gray navigation. Alerts retain their semantic colors, and destructive icons use the caution color. Toolbar icons, publishing blocks, slash-menu icons, and right-click icons share the same treatment; labels and shapes still identify actions without relying on color. Disabled and filled-button icons prioritize readability, and Windows high-contrast mode uses system colors.
+
+Application dialogs follow the selected theme, including shared-folder permission, Save/Discard/Cancel, external-link confirmation, Save As warnings, profile-history errors, and About. Shared-folder permission still defaults to **Not now**; Escape cancels without granting access. Long paths wrap in a detail card. Requests are shown one at a time, and a reload or closed window cancels outstanding confirmations. Insert/link/table/variant/help dialogs use the same themed headers, fields, and action layout. Windows file/folder pickers and the installer remain native/system surfaces. Fatal startup and renderer-crash alerts also stay native, so an unavailable editor cannot hide an error.
 
 ### Working with multiple files
 
@@ -90,6 +96,8 @@ Open **Learn checks** from the Review toolbar, More tools, the View menu, comman
 - Results refresh as you edit. Select a result to go to its Markdown line, or choose **Check again** after changing files on disk.
 - Local paths are checked only inside the document folder and project folders already allowed for that document. **Allow folder…** grants access using the existing image/include folder permissions; save an untitled document before checking relative paths.
 - Code examples and HTML comment blocks are excluded. Remote URLs, site-relative URLs and nested include contents are not validated. Missing front matter is not flagged because reusable includes need not have it. At most 500 local paths and 500 syntax suggestions are reported, with a notice when truncated.
+- Alt-text checks detect empty descriptions, not their quality; `:::image` directives marked `type="icon"` are exempt. Reference-style Markdown image destinations are not resolved for file-existence checks.
+- Checks do not validate ordinary hyperlinks or cross-references, full metadata schemas, shared zone-pivot configuration consistency, technical accuracy, or Microsoft writing-style rules. No Microsoft Learn MCP or cloud service is called.
 - Everything runs locally. Checks never change text or block saving or exports. These are limited authoring suggestions, not the Microsoft Learn build validator, a style checker, or a guarantee of publishing compatibility.
 
 ### Include relationships

@@ -1,3 +1,4 @@
+import { iconTone } from './icon-colors.js';
 const paths: Record<string, string> = {
   note: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.5"/>',
   tip: '<path d="M8 16c0-2-3-3-3-7a7 7 0 0 1 14 0c0 4-3 5-3 7M8 16h8M9 19h6M10 22h4"/>',
@@ -19,5 +20,5 @@ const paths: Record<string, string> = {
 };
 
 export function publishingIcon(kind: string): string {
-  return `<svg class="publishing-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[kind] ?? paths.block}</svg>`;
+  return `<svg class="publishing-icon" data-icon-tone="${iconTone(kind)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${paths[kind] ?? paths.block}</svg>`;
 }

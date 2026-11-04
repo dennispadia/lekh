@@ -37,6 +37,7 @@ await writeFile(startupFile, '# Opened from Explorer\n\nStartup document with sp
 const legacyRecentFiles = Array.from({length:8}, (_, index) => path.join(temporary, `Earlier ${index}.md`));
 await mkdir(path.join(temporary, 'profile'));
 await writeFile(path.join(temporary, 'profile', 'recent-files.json'), JSON.stringify(legacyRecentFiles));
+await writeFile(path.join(temporary, 'profile', 'shared-variant-files.json'), 'invalid startup configuration');
 const child = spawn(executable, [
   ...(packaged ? [] : ['.']),
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding',
@@ -133,6 +134,12 @@ async function runChecks() {
   }
   const electron = "process.getBuiltinModule('module').createRequire(process.cwd() + '\\\\package.json')('electron')";
   await main.evaluate(`globalThis.smokeElectron = ${electron}`);
+  await waitFor(async () => ui("document.querySelector('#app-message-dialog')?.open"), 'themed startup error');
+  assert.match(await ui("document.querySelector('#app-message-dialog').textContent"), /Shared selector files could not be remembered/);
+  assert.equal(await ui("document.querySelector('#app-message-dialog').dataset.kind"), 'error');
+  await ui("document.querySelector('#app-message-dialog button').click()");
+  await waitFor(async () => ui("!document.querySelector('#app-message-dialog').open"), 'startup error dismissal');
+  console.log('PASS: nonfatal profile startup errors use the themed dialog without preventing document startup');
   await waitFor(async () => ui(`document.querySelector('#filename').textContent === ${JSON.stringify(path.basename(startupFile))}`), 'cold-launch file opens after renderer initialization');
   assert.match(await ui("document.querySelector('#visual-editor').textContent"), /Opened from Explorer/);
   assert.equal(await ui("document.querySelectorAll('.document-tab').length"), 1, 'Explorer launch has no redundant blank or welcome tab');
@@ -161,6 +168,183 @@ async function runChecks() {
   await waitFor(async () => ui("document.querySelector('#filename').textContent === 'Smoke baseline.md' && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'generic regression fixture');
   await ui("document.querySelector('.document-tab:not(.selected) .tab-close').click()");
   await waitFor(async () => ui("document.querySelectorAll('.document-tab').length === 1 && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'pristine blank closes without prompting');
+  await main.evaluate(`globalThis.smokeDialogs = process.getBuiltinModule('module').createRequire(process.cwd() + '\\\\package.json')(smokeElectron.app.getAppPath() + '\\\\build\\\\electron\\\\message-dialog.js').appDialogs`);
+  const captureUI = async name => {
+    if (!process.env.LEKH_SCREENSHOT) return;
+    const shot = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
+    await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), name + '.png'), Buffer.from(shot.data, 'base64'));
+  };
+  const themeAction = async theme => {
+    await main.evaluate(`smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action', 'theme:${theme}')`);
+    await waitFor(async () => ui(`document.documentElement.dataset.theme === '${theme}' && document.querySelector('#app').getAttribute('aria-busy') === 'false'`), 'popup theme ' + theme);
+  };
+  const nativeCases = [
+    { type: 'question', message: 'Allow this document to load shared files?', detail: 'This document includes files outside its own folder.\n\nAllow access within:\nC:\\Example\\Learn workspace\\articles-and-shared-content\n\nPermission applies only to this document. It ends when you close the document or save it in another folder.', buttons: ['Allow folder', 'Not now'], defaultId: 1, cancelId: 1 },
+    { type: 'question', message: 'Save changes to "Example.md" before continuing?', detail: 'Unsaved changes will be lost if you choose Discard.', buttons: ['Save', 'Discard', 'Cancel'], defaultId: 0, cancelId: 2 },
+    { type: 'info', message: 'Open this link in your default application?', detail: 'https://example.com/article?title=<untrusted-text>', buttons: ['Open link', 'Cancel'], defaultId: 1, cancelId: 1 },
+    { type: 'warning', message: 'This document uses relative image paths.', detail: 'Saving in another folder will not copy the image files. Copy the images to the same relative locations in the new folder, or cancel and use Insert image to embed them first.', buttons: ['Save in new folder', 'Cancel'], defaultId: 1, cancelId: 1 },
+    { type: 'warning', message: 'Your document is safe, but the recent-file list could not be updated.', detail: 'The local history could not be written.' },
+    { type: 'warning', message: 'The article was saved, but its shared selector file could not be remembered.', detail: 'Choose the shared file again after reopening this article.' },
+    { type: 'info', message: 'Lekh - Markdown editor', detail: 'Version 0.9.11\nA local-first Markdown editor. Built with Electron and Tiptap.\nNo account or cloud connection required.' },
+    { type: 'error', message: 'Could not complete this action', detail: '<img src=x onerror=alert(1)>\n\nC:\\' + 'Long shared folder name\\'.repeat(30), buttons: ['Close'] },
+  ];
+  const dialogIds = await ui("[...document.querySelectorAll('dialog:not(#app-message-dialog)')].map(dialog => dialog.id)");
+  for (const theme of ['light', 'dark']) {
+    await themeAction(theme);
+    await main.evaluate(`smokeElectron.BrowserWindow.getAllWindows()[0].setSize(${theme === 'light' ? 1320 : 900}, 900)`);
+    await delay(200);
+    for (const id of dialogIds) {
+      const state = await ui(`(() => {
+        const dialog = document.getElementById(${JSON.stringify(id)});
+        dialog.showModal();
+        const style = getComputedStyle(dialog), root = getComputedStyle(document.documentElement);
+        const rect = dialog.getBoundingClientRect();
+        return { background: style.backgroundColor, text: style.color,
+          expectedBackground: root.getPropertyValue('--paper').trim(), expectedText: root.getPropertyValue('--text').trim(),
+          icon: !!dialog.querySelector('h2 svg[data-icon-tone]'), width: rect.width, height: rect.height,
+          viewportWidth: innerWidth, viewportHeight: innerHeight,
+          scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth };
+      })()`);
+      const rgb = hex => `rgb(${hex.slice(1).match(/../g).map(value => parseInt(value, 16)).join(', ')})`;
+      assert.equal(state.background, rgb(state.expectedBackground), `${id} ${theme} background`);
+      assert.equal(state.text, rgb(state.expectedText), `${id} ${theme} text`);
+      assert.equal(state.icon, true, `${id} colored header icon`);
+      assert.ok(state.width < state.viewportWidth && state.height < state.viewportHeight, `${id} fits the viewport`);
+      assert.ok(state.scrollWidth <= state.clientWidth + 1, `${id} does not overflow horizontally`);
+      await captureUI(`dialog-${id}-${theme}`);
+      await ui(`document.getElementById(${JSON.stringify(id)}).close('cancel')`);
+    }
+    for (const [index, options] of nativeCases.entries()) {
+      await ui("document.querySelector('#view-visual').focus()");
+      await main.evaluate(`globalThis.smokeRealResponse = null; void smokeDialogs.showMessageBox(smokeElectron.BrowserWindow.getAllWindows()[0], ${JSON.stringify(options)}).then(result => { smokeRealResponse = result.response; })`);
+      await waitFor(async () => ui("document.querySelector('#app-message-dialog').open"), 'real themed message ' + index);
+      const state = await ui(`(() => {
+        const dialog = document.querySelector('#app-message-dialog');
+        return { text: dialog.textContent, buttons: [...dialog.querySelectorAll('button')].map(button => button.textContent),
+          focused: document.activeElement.dataset.response,
+          injected: !!dialog.querySelector('#app-message-detail img'), scrollWidth: dialog.scrollWidth, clientWidth: dialog.clientWidth };
+      })()`);
+      assert.match(state.text, new RegExp(options.message.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      assert.deepEqual(state.buttons, options.buttons ?? ['OK']);
+      assert.equal(state.focused, String(options.defaultId ?? 0));
+      assert.equal(state.injected, false, 'Messages and paths are text, not HTML');
+      assert.ok(state.scrollWidth <= state.clientWidth + 1, 'Long paths wrap within the message card');
+      await captureUI(`message-${index}-${theme}`);
+      const requestId = await ui("document.querySelector('#app-message-dialog button').dataset.response");
+      await ui("window.lekh.answerMessageBox('stale-request', 0)");
+      await delay(50);
+      assert.equal(await ui("document.querySelector('#app-message-dialog').open"), true, 'Stale answers cannot dismiss an active prompt');
+      if (index === 1) {
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, text: '\r' }, sessionId);
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 }, sessionId);
+      } else {
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+      }
+      await waitFor(async () => (await main.evaluate('smokeRealResponse')) !== null, 'themed message answer');
+      assert.equal(await main.evaluate('smokeRealResponse'), index === 1 ? 0 : options.cancelId ?? 0);
+      assert.equal(await ui("document.activeElement.id"), 'view-visual', 'Closing restores the original focus');
+      assert.equal(requestId, '0');
+    }
+    for (const name of ['tabs-menu', 'save-menu', 'export-menu', 'alerts-menu', 'structure-menu', 'interactive-menu', 'format-menu']) {
+      if (!await ui(`!!document.querySelector('[data-action="${name}"]')?.offsetWidth`)) continue;
+      await ui(`document.querySelector('[data-action="${name}"]').click()`);
+      await waitFor(async () => ui(`!document.getElementById('${name}').hidden`), 'themed dropdown ' + name);
+      const surface = await ui(`(() => {
+        const menu = document.getElementById('${name}'), rect = menu.getBoundingClientRect();
+        return { background: getComputedStyle(menu).backgroundColor, inside: rect.left >= 0 && rect.right <= innerWidth + 1,
+          colors: [...menu.querySelectorAll('svg[data-icon-tone]')].filter(svg => !svg.closest('button:disabled')).map(svg => ({
+            actual: getComputedStyle(svg).color, expected: getComputedStyle(document.documentElement).getPropertyValue('--icon-' + svg.dataset.iconTone).trim()
+          })) };
+      })()`);
+      assert.equal(surface.background, theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(23, 25, 25)', name + ' themed surface');
+      assert.equal(surface.inside, true, name + ' remains within the window');
+      for (const color of surface.colors) {
+        const rgb = `rgb(${color.expected.slice(1).match(/../g).map(value => parseInt(value, 16)).join(', ')})`;
+        assert.equal(color.actual, rgb, name + ' grouped icon colors');
+      }
+      await captureUI(`dropdown-${name}-${theme}`);
+      await ui(`document.querySelector('[data-action="${name}"]').click()`);
+    }
+  }
+  // Exercise real include permission logic, not just a dialog fixture.
+  const permissionRoot = path.join(temporary, 'permission-project');
+  await mkdir(path.join(permissionRoot, 'articles'), { recursive: true });
+  await mkdir(path.join(permissionRoot, 'includes'));
+  const permissionFile = path.join(permissionRoot, 'articles', 'permission.md');
+  const permissionMarkdown = '# Shared article\n\n[!INCLUDE [Shared example](../includes/example.md)]\n';
+  await writeFile(permissionFile, permissionMarkdown);
+  await writeFile(path.join(permissionRoot, 'includes', 'example.md'), 'Explicitly approved shared content.\n');
+  for (const theme of ['light', 'dark']) {
+    await themeAction(theme);
+    for (const choice of ['not-now', 'allow', 'escape']) {
+      await main.evaluate(`smokeElectron.dialog.showOpenDialog = async () => ({canceled:false,filePaths:[${JSON.stringify(permissionFile)}]}); smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action','open')`);
+      await waitFor(async () => ui("document.querySelector('#app-message-dialog').open"), 'actual shared-file permission');
+      assert.equal(await ui("document.activeElement.textContent"), 'Not now');
+      await captureUI(`permission-${choice}-${theme}`);
+      if (choice === 'escape') {
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+        await browser.call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+      } else await ui(`document.querySelector('#app-message-dialog [data-response="${choice === 'allow' ? 0 : 1}"]').click()`);
+      await waitFor(async () => ui("document.querySelector('#filename').textContent === 'permission.md' && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'permission outcome');
+      if (choice === 'allow') await waitFor(async () => ui("document.querySelector('#visual-editor').textContent.includes('Explicitly approved shared content.')"), 'approved include renders');
+      assert.equal(await ui("document.querySelector('#visual-editor').textContent.includes('Explicitly approved shared content.')"), choice === 'allow');
+      await ui("document.querySelector('.document-tab.selected .tab-close').click()");
+      await waitFor(async () => ui("document.querySelector('#filename').textContent === 'Smoke baseline.md' && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'permission document closes');
+    }
+  }
+  assert.equal(await readFile(permissionFile, 'utf8'), permissionMarkdown);
+  for (const [index, value] of ['save', 'discard', 'cancel'].entries()) {
+    await ui("globalThis.smokeConfirmed = null; void window.lekh.confirmUnsaved('Unsaved example.md').then(result => { smokeConfirmed = result; })");
+    await waitFor(async () => ui("document.querySelector('#app-message-dialog').open"), 'real unsaved confirmation');
+    await ui(`document.querySelector('#app-message-dialog [data-response="${index}"]').click()`);
+    await waitFor(async () => ui("smokeConfirmed !== null"), 'real unsaved decision');
+    assert.deepEqual(await ui("smokeConfirmed"), { ok: true, value });
+  }
+  await main.evaluate("globalThis.smokeOriginalExternal = smokeElectron.shell.openExternal; globalThis.smokeConfirmedURLs = []; smokeElectron.shell.openExternal = async url => { smokeConfirmedURLs.push(url); }");
+  for (const index of [1, 0]) {
+    await ui("globalThis.smokeOpenedExternal = null; void window.lekh.openExternal('https://example.com/theme-check').then(result => { smokeOpenedExternal = result; })");
+    await waitFor(async () => ui("document.querySelector('#app-message-dialog').open"), 'real external-link confirmation');
+    assert.equal(await ui("document.activeElement.textContent"), 'Cancel');
+    await ui(`document.querySelector('#app-message-dialog [data-response="${index}"]').click()`);
+    await waitFor(async () => ui("smokeOpenedExternal !== null"), 'external-link decision');
+    assert.equal(await ui("smokeOpenedExternal.ok"), true);
+    assert.deepEqual(await main.evaluate('smokeConfirmedURLs'), index === 1 ? [] : ['https://example.com/theme-check']);
+  }
+  await main.evaluate("smokeElectron.shell.openExternal = smokeOriginalExternal");
+  await main.evaluate(`globalThis.smokeReloadResponses = null; void Promise.all([smokeDialogs.showMessageBox(smokeElectron.BrowserWindow.getAllWindows()[0], ${JSON.stringify(nativeCases[0])}), smokeDialogs.showMessageBox(smokeElectron.BrowserWindow.getAllWindows()[0], ${JSON.stringify(nativeCases[1])})]).then(results => { smokeReloadResponses = results.map(result => result.response); })`);
+  await waitFor(async () => ui("document.querySelector('#app-message-dialog').open"), 'queued confirmations');
+  assert.equal(await ui("document.querySelectorAll('#app-message-dialog[open]').length"), 1);
+  await browser.call('Page.reload', {}, sessionId);
+  await waitForReload(async () => ui("document.querySelector('#filename')?.textContent === 'Untitled.md' && document.querySelector('#app')?.getAttribute('aria-busy') === 'false'"), 'message cancellation on reload');
+  assert.deepEqual(await main.evaluate('smokeReloadResponses'), [1, 2], 'Reload resolves active and queued confirmations with their safe cancellation choices');
+  await main.evaluate(`smokeElectron.dialog.showOpenDialog = async () => ({canceled:false,filePaths:[${JSON.stringify(baseline)}]}); smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action','open')`);
+  await waitFor(async () => ui("document.querySelector('#filename').textContent === 'Smoke baseline.md' && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'baseline restored after reload');
+  await ui("document.querySelector('.document-tab:not(.selected) .tab-close').click()");
+  await waitFor(async () => ui("document.querySelectorAll('.document-tab').length === 1 && document.querySelector('#app').getAttribute('aria-busy') === 'false'"), 'reloaded blank tab closes');
+  await themeAction('light');
+  await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].setSize(1320, 900)");
+  await main.evaluate(`smokeElectron.dialog.showOpenDialog = async () => ({canceled:false,filePaths:[${JSON.stringify(baseline)}]})`);
+  console.log(`PASS: all ${dialogIds.length} renderer dialogs and 8 message types match Light/Dark themes; safe Enter/Escape, focus restore, long paths, text-only details, actual shared-file Allow/Not now/Escape, Save/Discard/Cancel, external-link decisions, queued requests and reload cancellation`);
+  if (process.env.LEKH_UI_SMOKE_ONLY === '1') {
+    await main.evaluate("smokeElectron.BrowserWindow.getAllWindows()[0].webContents.send('app:action','insert:publishing-tabs')");
+    await waitFor(async () => ui("document.querySelectorAll('.publishing-icon-tool[data-icon-tone]').length >= 3"), 'inline publishing icon controls');
+    for (const theme of ['light', 'dark']) {
+      await themeAction(theme);
+      await delay(200);
+      const colors = await ui(`Array.from(document.querySelectorAll('.publishing-icon-tool[data-icon-tone]:not(:disabled)')).map(button => ({
+        actual: getComputedStyle(button).color,
+        expected: getComputedStyle(document.documentElement).getPropertyValue('--icon-' + button.dataset.iconTone).trim()
+      }))`);
+      assert.ok(colors.length >= 3);
+      for (const color of colors) {
+        assert.equal(color.actual, `rgb(${color.expected.slice(1).match(/../g).map(value => parseInt(value, 16)).join(', ')})`, theme + ' inline add/remove color');
+      }
+      await captureUI(`colored-interface-${theme}`);
+    }
+    console.log('PASS: inline publishing add/remove symbols use the actual insertion/caution palette in both themes');
+    return;
+  }
   const imageChoices = `(() => {
     window.smokeImageStorage = 'embedded';
     setInterval(() => {
@@ -189,7 +373,7 @@ async function runChecks() {
   await main.evaluate(`globalThis.smokeElectron = ${electron}; globalThis.smokeSavePath = null; globalThis.smokeSaveCalls = 0; globalThis.smokeOpenPath = null; globalThis.smokeChoice = 2; globalThis.smokeChoices = []; globalThis.smokeIncludeChoice = 0; globalThis.smokeIncludeQuestions = []; globalThis.smokeHoldInclude = false; globalThis.smokeResolveInclude = null;
     smokeElectron.dialog.showSaveDialog = async () => { smokeSaveCalls++; return smokeSavePath ? ({canceled:false,filePath:smokeSavePath}) : ({canceled:true}); };
     smokeElectron.dialog.showOpenDialog = async () => smokeOpenPath ? ({canceled:false,filePaths:[smokeOpenPath]}) : ({canceled:true,filePaths:[]});
-    smokeElectron.dialog.showMessageBox = async (_window, options) => {
+    smokeDialogs.showMessageBox = async (_window, options) => {
       if (options?.message === 'Allow this document to load shared files?') {
         smokeIncludeQuestions.push(options);
         if (smokeHoldInclude) return await new Promise(resolve => { smokeResolveInclude = resolve; });
@@ -1642,8 +1826,8 @@ try {
   await main.evaluate(`
     globalThis.smokeExternalURLs = [];
     globalThis.smokeExternalPrompts = [];
-    globalThis.smokeMessageBox = smokeElectron.dialog.showMessageBox;
-    smokeElectron.dialog.showMessageBox = async (...args) => {
+    globalThis.smokeMessageBox = smokeDialogs.showMessageBox;
+    smokeDialogs.showMessageBox = async (...args) => {
       const options = args.at(-1);
       if (options.message === 'Open this link in your default application?') smokeExternalPrompts.push(options.detail);
       return smokeMessageBox(...args);
@@ -4358,6 +4542,15 @@ try {
     for (const theme of ['light', 'dark']) {
       await menuAction(`theme:${theme}`);
       await delay(200);
+      const inlineColors = await ui(`Array.from(document.querySelectorAll('.publishing-icon-tool[data-icon-tone]:not(:disabled)')).map(button => ({
+        actual: getComputedStyle(button).color,
+        expected: getComputedStyle(document.documentElement).getPropertyValue('--icon-' + button.dataset.iconTone).trim()
+      }))`);
+      assert.ok(inlineColors.length >= 3, 'Tabbed examples expose colored inline add/remove symbols');
+      for (const color of inlineColors) {
+        const rgb = `rgb(${color.expected.slice(1).match(/../g).map(value => parseInt(value, 16)).join(', ')})`;
+        assert.equal(color.actual, rgb, theme + ' inline publishing symbol color');
+      }
       const full = await browser.call('Page.captureScreenshot', { format: 'png' }, sessionId);
       await writeFile(path.join(path.dirname(process.env.LEKH_SCREENSHOT), `grouped-toolbar-${theme}.png`), Buffer.from(full.data, 'base64'));
     }

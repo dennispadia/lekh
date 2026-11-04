@@ -29,6 +29,8 @@ import { GrammarHighlights } from './grammar-highlights.js';
 import { WritingAssistance } from './writing-assistance.js';
 import { LearnChecksPanel } from './learn-checks-panel.js';
 import { IncludeRelationshipsPanel } from './include-relationships-panel.js';
+import { iconTone } from '../lib/icon-colors.js';
+import { installMessageDialog } from './message-dialog.js';
 import { PublishingHeadings, PublishingNode, setPublishingHeadings } from './publishing-node.js';
 import { prepareVariantInsertion, selectInsertedVariant, validateSourceVariantInsertion, variantInsertionPosition } from './publishing-insert.js';
 import { choosePublishingVariant, forgetPublishingDocument, initializePublishing, projectVariantOptions, publishingHTML, refreshPublishingVariants, revealPublishingElement, setProjectVariantLabels } from './publishing-view.js';
@@ -107,7 +109,7 @@ const icons = {
   down: '<path d="m6 9 6 6 6-6"/>',
 };
 type Icon = keyof typeof icons;
-const icon = (name: Icon) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
+const icon = (name: Icon) => `<svg data-icon-tone="${iconTone(name)}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name]}</svg>`;
 const button = (action: string, label: string, name?: Icon, className = '') => `<button type="button" data-action="${action}" class="${className}" title="${label}">${name ? icon(name) : ''}<span>${label}</span></button>`;
 const formatButton = (command: Icon, label: string) => `<button type="button" data-command="${command}" title="${label}" aria-label="${label}">${icon(command)}<span>${label}</span></button>`;
 const group = (id: string, caption: string, controls: string, className = '') => `<div class="toolbar-group ${className}" data-group="${id}" role="group" aria-label="${caption}"><div class="group-controls">${controls}</div><span class="group-caption" aria-hidden="true">${caption}</span></div>`;
@@ -3396,6 +3398,7 @@ window.addEventListener('lekh-show-relationships', event => {
   if (id !== documentId) activateTab(id);
   relationshipsPanel?.open(open, includeSource);
 });
+installMessageDialog(icon);
 window.lekh.onAction(action => {
   if (action === 'open-pending') {
     pendingExternalOpen = true;

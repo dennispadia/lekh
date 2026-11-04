@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('lekh', {
+  onMessageBox: (listener) => {
+    ipcRenderer.on('app:message-box', (_event, message) => listener(message));
+    ipcRenderer.send('app:message-box-ready');
+  },
+  answerMessageBox: (id, response) => ipcRenderer.send('app:message-box-response', id, response),
   open: (recentPath) => ipcRenderer.invoke('document:open', recentPath),
   openPending: () => ipcRenderer.invoke('document:open-pending'),
   save: (id, content, saveAs) => ipcRenderer.invoke('document:save', id, content, saveAs),

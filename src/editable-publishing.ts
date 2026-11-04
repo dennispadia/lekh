@@ -172,6 +172,7 @@ function tool(text: string, action: () => void): HTMLButtonElement {
 function iconTool(title: string, symbol: string, action: () => void): HTMLButtonElement {
   const button = tool(symbol, action);
   button.className = 'publishing-icon-tool';
+  button.dataset.iconTone = symbol === '+' ? 'insert' : 'caution';
   button.setAttribute('aria-label', title);
   button.title = title;
   return button;

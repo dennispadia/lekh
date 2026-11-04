@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.11
+
+- Apply coordinated Light/Dark colors to interface icons, including toolbar, right-click, slash-menu and inline publishing controls, with readable disabled/filled states and high-contrast support.
+- Replace application message boxes with themed, queued dialogs for shared-folder permission, unsaved changes, external links, Save As warnings and About; preserve safe defaults and cancel requests on reload or window closure.
+- Unify editing dialogs with colored headers, themed detail cards, responsive fields, scrolling and consistent actions. Windows file/folder pickers remain native.
+- Validate the genuine published 0.9.10 -> 0.9.11 installer upgrade, rollback, running-app recheck, same-version rejection and repair on a GitHub-hosted Windows runner.
+
 ## 0.9.10
 
 - Add a repository-independent, permission-scoped local Markdown include relationship index.

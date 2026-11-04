@@ -39,6 +39,8 @@ export interface EditorContextMenu {
   items: ContextMenuItem[];
 }
 export interface LekhAPI {
+  onMessageBox: (listener: (message: AppMessageBox) => void) => void;
+  answerMessageBox: (id: string, response: number) => void;
   open: (recentPath?: string) => Promise<Result<OpenedFile | null>>;
   openPending: () => Promise<Result<Result<OpenedFile>[]>>;
   save: (id: string, content: string, saveAs: boolean) => Promise<Result<{ path: string } | null>>;
@@ -86,3 +88,4 @@ declare global {
 import type { Theme } from '../lib/themes.js';
 import type { LearnPathStatus } from '../lib/learn-checks.js';
 import type { RelationshipReport } from '../lib/include-relationships.js';
+import type { AppMessageBox } from '../lib/message-box.js';
